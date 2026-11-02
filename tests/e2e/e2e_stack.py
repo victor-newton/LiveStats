@@ -190,6 +190,9 @@ class E2EStack:
             return
         self.started = False
         try:
+            extras = docker("ps", "-aq", "--filter", "label=livestats-t8-extra=1", check=False).stdout.split()
+            if extras:
+                docker("rm", "-f", *extras, check=False)
             self.compose("down", "-v", "--remove-orphans", check=False, timeout=300)
             for image in IMAGES.values():
                 docker("rmi", "-f", image, check=False)

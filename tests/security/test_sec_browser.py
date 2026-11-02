@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from e2e_browser import chromium_context, ui_login, watch_dialogs
@@ -10,6 +12,19 @@ from e2e_stack import LIVE_INTERVAL, SLOT_URL, USERNAME, header, wait_until
 from sec_support import JSON_HEADERS, cors_headers, first_with_status, flood, openapi_routes
 
 pytestmark = [pytest.mark.e2e, pytest.mark.docker]
+
+class _BlankPage(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        return
+
+    def do_GET(self):  # noqa: N802
+        body = b"<!doctype html><title>outra origem</title><p>x</p>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
 
 XSS_ALERT = "<img src=x onerror=alert(1)>"
 XSS_FLAG = "<img src=x onerror=window.__xss=1>"
@@ -114,31 +129,28 @@ def test_sec_23_credenciais_e_admin_sem_cors_em_todas_as_rotas_e_no_navegador(st
     for r in (r403, r404, r429):
         assert cors_headers(r) == []
 
-    # --- navegador: de OUTRA origem, fetch com credentials:'include' a rota publica de dados FALHA; sem credenciais funciona
-    blank = "<!doctype html><title>outra origem</title><p>x</p>"
-    with chromium_context() as ctx:
-        ctx.route("http://localhost:8080/__outra_origem", lambda route: route.fulfill(status=200, content_type="text/html", body=blank))
-        page = ctx.new_page()
-        page.goto("http://localhost:8080/__outra_origem")
-        target = "http://127.0.0.1:8080/api/public/subscribers"
-        without = page.evaluate(
-            "async (u) => { try { const r = await fetch(u); return {ok: true, status: r.status, body: await r.text()}; }"
-            " catch (e) { return {ok: false, err: String(e)}; } }", target)
-        assert without["ok"] is True and without["status"] == 200, without  # CORS * permite leitura sem credenciais
-        assert json.loads(without["body"])["inscritos"]
-        with_credentials = page.evaluate(
-            "async (u) => { try { const r = await fetch(u, {credentials: 'include'}); return {ok: true, status: r.status}; }"
-            " catch (e) { return {ok: false, err: String(e)}; } }", target)
-        assert with_credentials["ok"] is False, f"fetch com credenciais de outra origem NAO deveria funcionar: {with_credentials}"
-
-        # o admin nao pode ser lido de outra origem, nem sem credenciais (nao ha Access-Control-Allow-Origin)
-        for url in ("http://127.0.0.1:8081/api/admin/session", "http://127.0.0.1:8081/api/admin/workers/status"):
-            ctx.route("http://localhost:8081/__outra_origem", lambda route: route.fulfill(status=200, content_type="text/html", body=blank))
-            admin_page = ctx.new_page()
-            admin_page.goto("http://localhost:8081/__outra_origem")
-            for creds in ("omit", "include"):
-                result = admin_page.evaluate(
-                    "async ([u, c]) => { try { const r = await fetch(u, {credentials: c}); return {ok: true, status: r.status}; }"
-                    " catch (e) { return {ok: false, err: String(e)}; } }", [url, creds])
-                assert result["ok"] is False, (url, creds, result)
-            admin_page.close()
+    # --- navegador: de OUTRA origem (servidor local qualquer, sem CSP), fetch com credentials:'include' a rota publica FALHA
+    page_server = ThreadingHTTPServer(("127.0.0.1", 0), _BlankPage)
+    threading.Thread(target=page_server.serve_forever, daemon=True).start()
+    other_origin = f"http://127.0.0.1:{page_server.server_address[1]}/"
+    probe = (
+        "async ([u, c]) => { try { const r = await fetch(u, c ? {credentials: c} : {});"
+        " return {ok: true, status: r.status, body: await r.text()}; } catch (e) { return {ok: false, err: String(e)}; } }"
+    )
+    try:
+        with chromium_context() as ctx:
+            page = ctx.new_page()
+            page.goto(other_origin)
+            target = "http://127.0.0.1:8080/api/public/subscribers"
+            without = page.evaluate(probe, [target, None])
+            assert without["ok"] is True and without["status"] == 200, without  # CORS * permite leitura sem credenciais
+            assert json.loads(without["body"])["inscritos"]
+            with_credentials = page.evaluate(probe, [target, "include"])
+            assert with_credentials["ok"] is False, f"fetch com credenciais de outra origem NAO deveria funcionar: {with_credentials}"
+            # o admin nao pode ser lido de outra origem, nem com nem sem credenciais (nao ha Access-Control-Allow-Origin)
+            for url in ("http://127.0.0.1:8081/api/admin/session", "http://127.0.0.1:8081/api/admin/workers/status"):
+                for creds in ("omit", "include"):
+                    result = page.evaluate(probe, [url, creds])
+                    assert result["ok"] is False, (url, creds, result)
+    finally:
+        page_server.shutdown()
