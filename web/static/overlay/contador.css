@@ -1,0 +1,42 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  overflow: hidden;
+}
+#contador {
+  font-family: 'YouTube Sans', 'Roboto', sans-serif;
+  font-size: 80px;
+  font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: -2px;
+  display: flex;
+  gap: 0;
+  align-items: center;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
+}
+.digito-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  height: 1em;
+  overflow: hidden;
+  position: relative;
+}
+.digito-inner {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.digito-inner span {
+  height: 1em;
+  line-height: 1em;
+  display: block;
+  text-align: center;
+}
+.separador {
+  display: inline-block;
+  padding: 0 1px;
+}
