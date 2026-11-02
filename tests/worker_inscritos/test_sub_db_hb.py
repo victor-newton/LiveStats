@@ -10,11 +10,12 @@ import threading
 import time
 
 import pytest
+from nacl.public import PrivateKey
 
 from worker_inscritos import healthcheck
 from worker_inscritos.config import ConfigError, load_config
 from worker_inscritos.store import StatusRow, Store, connect, iso_utc, schema_ready, wait_for_schema
-from sub_support import REPO_ROOT, cookie, create_db, query
+from sub_support import REPO_ROOT, cookie, create_db, insert_cookie_set, query
 
 PASTA_WORKER = REPO_ROOT / "worker_inscritos"
 
@@ -143,6 +144,17 @@ def test_sub_hb_01_heartbeat_tambem_nas_falhas_e_sem_cookies(env, make_worker, a
     worker.step()
     estado, hb, ok, falhas, *_ = status_row(env)[0]
     assert (estado, hb, ok, falhas) == ("degraded", 1_800_000_010, None, 1)
+
+
+def test_sub_hb_01_heartbeat_continua_com_cookies_que_nao_decifram(env, make_worker):
+    relogio = RelogioManual(1_800_000_000.0)
+    insert_cookie_set(env.db, PrivateKey.generate().public_key, [cookie("a", "1")])
+    worker = make_worker(clock=relogio)
+    worker.step()
+    assert status_row(env)[0][:2] == ("error", 1_800_000_000)
+    relogio.t += 5
+    worker.step()  # mesmo conjunto, mesmo erro: o heartbeat nao pode parar
+    assert status_row(env)[0][:2] == ("error", 1_800_000_005)
 
 
 def test_sub_hb_01_encerrar_grava_stopped(env, make_worker):

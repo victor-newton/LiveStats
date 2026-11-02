@@ -86,6 +86,8 @@ def test_sub_ck_03_ciphertext_de_outra_chave(env, make_worker, add_cookies, capl
     assert status(env) == ("error", "decrypt_failed", "decrypt_failed", None)
     assert query(env.db, "SELECT * FROM subscriber_reading") == []
     assert not worker.session.started
+    assert "outra chave" in caplog.text  # key_id diferente: nem tenta decifrar
+    assert "falha ao decifrar" not in caplog.text
     _sem_segredos(env, caplog)
 
     # um conjunto novo e valido recupera
@@ -106,6 +108,7 @@ def test_sub_ck_03_ciphertext_corrompido_com_key_id_correto(env, make_worker, ca
 
     assert status(env) == ("error", "decrypt_failed", "decrypt_failed", None)
     assert query(env.db, "SELECT * FROM subscriber_reading") == []
+    assert "falha ao decifrar" in caplog.text
     _sem_segredos(env, caplog)
 
 
