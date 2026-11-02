@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "source": "youtube-data-api-v3",
+    "synthetic": true,
+    "recorded_at": null,
+    "http_status": 200,
+    "content_type": "text/html; charset=UTF-8",
+    "request": {"endpoint": "videos"},
+    "note": "Pagina HTML com status 200 (ex.: portal cativo ou proxy no caminho); impossivel de provocar na API real."
+  },
+  "body_text": "<html><head><title>Acesso a rede</title></head><body>Faca login para continuar</body></html>\n"
+}

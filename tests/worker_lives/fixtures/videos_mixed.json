@@ -1,0 +1,248 @@
+{
+  "meta": {
+    "source": "youtube-data-api-v3",
+    "synthetic": false,
+    "recorded_at": "2026-11-02T11:42:53Z",
+    "http_status": 200,
+    "content_type": "application/json; charset=UTF-8",
+    "request": {
+      "endpoint": "videos",
+      "part": "statistics,snippet,liveStreamingDetails",
+      "id": "At5J757Nqgo,dXjFZapxqcc,zrxGZ-XpKnw"
+    }
+  },
+  "body": {
+    "kind": "youtube#videoListResponse",
+    "etag": "vgsq0qQgiaezZRwUWozIzUSyD88",
+    "items": [
+      {
+        "kind": "youtube#video",
+        "etag": "2CyBL56bw61_EkwVzjd5Ukv6vag",
+        "id": "At5J757Nqgo",
+        "snippet": {
+          "publishedAt": "2026-11-02T10:53:54Z",
+          "channelId": "UCs-6sCz2LJm1PrWQN4ErsPw",
+          "title": "AO VIVO: PALMEIRAS E GRÊMIO ABREM VANTAGEM NA COPA DO BRASIL; ESQUENTA PRA SEMANA DE CHAMPIONS!",
+          "description": "Vem pra Live do André Henning",
+          "thumbnails": {
+            "default": {
+              "url": "https://i.ytimg.com/vi/At5J757Nqgo/default.jpg?v=6ae86e19",
+              "width": 120,
+              "height": 90
+            },
+            "medium": {
+              "url": "https://i.ytimg.com/vi/At5J757Nqgo/mqdefault.jpg?v=6ae86e19",
+              "width": 320,
+              "height": 180
+            },
+            "high": {
+              "url": "https://i.ytimg.com/vi/At5J757Nqgo/hqdefault.jpg?v=6ae86e19",
+              "width": 480,
+              "height": 360
+            },
+            "standard": {
+              "url": "https://i.ytimg.com/vi/At5J757Nqgo/sddefault.jpg?v=6ae86e19",
+              "width": 640,
+              "height": 480
+            },
+            "maxres": {
+              "url": "https://i.ytimg.com/vi/At5J757Nqgo/maxresdefault.jpg?v=6ae86e19",
+              "width": 1280,
+              "height": 720
+            },
+            "fhd": {
+              "url": "https://i.ytimg.com/vi/At5J757Nqgo/fhddefault.jpg?v=6ae86e19",
+              "width": 1920,
+              "height": 1080
+            }
+          },
+          "channelTitle": "TNT Sports Brasil",
+          "tags": [
+            "Live do André Henning",
+            "André Henning",
+            "Palmeiras",
+            "melhroes momentos",
+            "flamengo",
+            "vasco",
+            "brasileirao",
+            "champiosn league",
+            "gremio",
+            "atletico",
+            "corinthians",
+            "barcelona",
+            "real madrid",
+            "leila",
+            "abel",
+            "barboza",
+            "piero",
+            "tati",
+            "clara",
+            "ricardinho",
+            "andré",
+            "taynah",
+            "octavio"
+          ],
+          "categoryId": "17",
+          "liveBroadcastContent": "live",
+          "defaultLanguage": "pt-PT",
+          "localized": {
+            "title": "AO VIVO: PALMEIRAS E GRÊMIO ABREM VANTAGEM NA COPA DO BRASIL; ESQUENTA PRA SEMANA DE CHAMPIONS!",
+            "description": "Vem pra Live do André Henning"
+          },
+          "defaultAudioLanguage": "pt-BR"
+        },
+        "statistics": {
+          "viewCount": "4877",
+          "likeCount": "643",
+          "favoriteCount": "0",
+          "commentCount": "0"
+        },
+        "liveStreamingDetails": {
+          "actualStartTime": "2026-11-02T11:22:09Z",
+          "scheduledStartTime": "2026-11-02T11:30:00Z",
+          "concurrentViewers": "3374",
+          "activeLiveChatId": "Cg0KC0F0NUo3NTdOcWdvKicKGFVDcy02c0N6MkxKbTFQcldRTjRFcnNQdxILQXQ1Sjc1N05xZ28"
+        }
+      },
+      {
+        "kind": "youtube#video",
+        "etag": "cp7SHKQ9BPKX1QnLtfnZjmfn8Rw",
+        "id": "dXjFZapxqcc",
+        "snippet": {
+          "publishedAt": "2026-10-29T13:21:34Z",
+          "channelId": "UC0KU8F9jJqSLS11LRXvFWmg",
+          "title": "The Division 2: Echoes of Central Park Launch Livestream",
+          "description": "One last briefing before you head into Echoes of Central Park. Meet part of the squad behind DLC 3 as they go deep on Creative Direction, Level Design, Narrative Design, and Environment Art, with the stories and design choices that shaped the new experience. Tune in live and get ready for launch.\n\nAbout The Division 2:\nTom Clancy's The Division 2 is a shooter RPG with a thrilling campaign fully playable in co-op and multiple PVP modes.\n\nIn The Division 2, save your country in Washington, DC, and in the Warlords of New York expansion, hunt down Aaron Keener, a former Agent who has taken control of New York.\n\n#Ubisoft #TheDivision2\nLearn more about Ubisoft: www.ubisoftgroup.com\n\n© Ubisoft Entertainment. All Rights Reserved. Ubisoft and the Ubisoft logo are registered trademarks in the US and/or other countries.",
+          "thumbnails": {
+            "default": {
+              "url": "https://i.ytimg.com/vi/dXjFZapxqcc/default.jpg?v=6ae3485f",
+              "width": 120,
+              "height": 90
+            },
+            "medium": {
+              "url": "https://i.ytimg.com/vi/dXjFZapxqcc/mqdefault.jpg?v=6ae3485f",
+              "width": 320,
+              "height": 180
+            },
+            "high": {
+              "url": "https://i.ytimg.com/vi/dXjFZapxqcc/hqdefault.jpg?v=6ae3485f",
+              "width": 480,
+              "height": 360
+            },
+            "standard": {
+              "url": "https://i.ytimg.com/vi/dXjFZapxqcc/sddefault.jpg?v=6ae3485f",
+              "width": 640,
+              "height": 480
+            },
+            "maxres": {
+              "url": "https://i.ytimg.com/vi/dXjFZapxqcc/maxresdefault.jpg?v=6ae3485f",
+              "width": 1280,
+              "height": 720
+            }
+          },
+          "channelTitle": "Ubisoft",
+          "categoryId": "20",
+          "liveBroadcastContent": "upcoming",
+          "defaultLanguage": "en",
+          "localized": {
+            "title": "The Division 2: Echoes of Central Park Launch Livestream",
+            "description": "One last briefing before you head into Echoes of Central Park. Meet part of the squad behind DLC 3 as they go deep on Creative Direction, Level Design, Narrative Design, and Environment Art, with the stories and design choices that shaped the new experience. Tune in live and get ready for launch.\n\nAbout The Division 2:\nTom Clancy's The Division 2 is a shooter RPG with a thrilling campaign fully playable in co-op and multiple PVP modes.\n\nIn The Division 2, save your country in Washington, DC, and in the Warlords of New York expansion, hunt down Aaron Keener, a former Agent who has taken control of New York.\n\n#Ubisoft #TheDivision2\nLearn more about Ubisoft: www.ubisoftgroup.com\n\n© Ubisoft Entertainment. All Rights Reserved. Ubisoft and the Ubisoft logo are registered trademarks in the US and/or other countries."
+          },
+          "defaultAudioLanguage": "en"
+        },
+        "statistics": {
+          "viewCount": "0",
+          "likeCount": "90",
+          "favoriteCount": "0",
+          "commentCount": "0"
+        },
+        "liveStreamingDetails": {
+          "scheduledStartTime": "2026-11-02T15:00:00Z"
+        }
+      },
+      {
+        "kind": "youtube#video",
+        "etag": "pAPrqrSHQ6jbLkew4mYkxsRdCmY",
+        "id": "zrxGZ-XpKnw",
+        "snippet": {
+          "publishedAt": "2020-12-20T03:29:12Z",
+          "channelId": "UCQlaArsZfebRbb70iXm6usg",
+          "title": "ALOK presents ALIVE (Livestream Show)",
+          "description": "Spotify https://bit.ly/alokspotify\nOfficial playlist: http://bit.ly/FollowThisIsAlok\r\nInstagram https://www.instagram.com/alok/\nFacebook https://www.facebook.com/livealok/\r\nTikTok https://www.tiktok.com/@alok\nTwitter https://twitter.com/alokoficial\n\nALIVE - Live especial de fim de ano do Alok\n\n\n#Alive #Alok",
+          "thumbnails": {
+            "default": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/default.jpg",
+              "width": 120,
+              "height": 90
+            },
+            "medium": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/mqdefault.jpg",
+              "width": 320,
+              "height": 180
+            },
+            "high": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/hqdefault.jpg",
+              "width": 480,
+              "height": 360
+            },
+            "standard": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/sddefault.jpg",
+              "width": 640,
+              "height": 480
+            },
+            "maxres": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/maxresdefault.jpg",
+              "width": 1280,
+              "height": 720
+            }
+          },
+          "channelTitle": "Alok",
+          "tags": [
+            "Alok",
+            "Alive",
+            "live do alok",
+            "live",
+            "live fim de ano alok",
+            "laive",
+            "laive do alok",
+            "alive alok",
+            "alok livestream",
+            "livestream show",
+            "alok live stream",
+            "livestream alok",
+            "live alok",
+            "alok live",
+            "final de ano",
+            "Live especial de fim de ano do Alok",
+            "alok remix",
+            "free fire alok",
+            "alok free fire"
+          ],
+          "categoryId": "10",
+          "liveBroadcastContent": "none",
+          "defaultLanguage": "pt-PT",
+          "localized": {
+            "title": "ALOK presents ALIVE (Livestream Show)",
+            "description": "Spotify https://bit.ly/alokspotify\nOfficial playlist: http://bit.ly/FollowThisIsAlok\r\nInstagram https://www.instagram.com/alok/\nFacebook https://www.facebook.com/livealok/\r\nTikTok https://www.tiktok.com/@alok\nTwitter https://twitter.com/alokoficial\n\nALIVE - Live especial de fim de ano do Alok\n\n\n#Alive #Alok"
+          },
+          "defaultAudioLanguage": "pt"
+        },
+        "statistics": {
+          "viewCount": "15233501",
+          "likeCount": "625436",
+          "favoriteCount": "0",
+          "commentCount": "13807"
+        },
+        "liveStreamingDetails": {
+          "actualStartTime": "2020-12-19T23:58:18Z",
+          "actualEndTime": "2020-12-20T03:05:45Z",
+          "scheduledStartTime": "2020-12-20T00:00:00Z"
+        }
+      }
+    ],
+    "pageInfo": {
+      "totalResults": 3,
+      "resultsPerPage": 3
+    }
+  }
+}
