@@ -1,7 +1,7 @@
 """Chromium via Playwright: lancamento, injecao de cookies, carga do Studio e leitura do contador.
 
 Seguranca (ARCHITECTURE.md D16, S3, S4, V7):
-- Playwright controla o Chromium por PIPE (`--remote-debugging-pipe`); nao existe `--remote-debugging-port`.
+- Playwright controla o Chromium por PIPE (`--remote-debugging-pipe`); sem porta TCP de depuracao remota.
 - Contexto efemero (`launch` + `new_context`): sem diretorio de perfil persistente.
 - `--no-sandbox` e a compensacao do container nao-root sem capabilities (D16); o container e o sandbox.
 - Print de debug so se `debug_dir` for informado (DEBUG_SCREENSHOT=1), em /tmp/debug.
@@ -29,7 +29,7 @@ USER_AGENT = (
 )
 VIEWPORT = {"width": 1280, "height": 900}
 
-# Mesmos argumentos do scraper original, menos --remote-debugging-port (V7) e --user-agent (vai no contexto).
+# Mesmos argumentos do scraper original, menos a porta TCP de depuracao remota (V7) e --user-agent (vai no contexto).
 CHROMIUM_ARGS = [
     "--no-sandbox",
     "--disable-dev-shm-usage",
