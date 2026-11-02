@@ -1,0 +1,37 @@
+# Atualizacoes automaticas de dependencias (PRs semanais).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: pip
+    directory: "/api"
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: "/worker_lives"
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: "/worker_inscritos"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: "/api"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/worker_lives"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/worker_inscritos"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/web"
+    schedule:
+      interval: weekly

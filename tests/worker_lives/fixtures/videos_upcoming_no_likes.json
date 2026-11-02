@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "source": "youtube-data-api-v3",
+    "synthetic": false,
+    "recorded_at": "2026-11-02T11:42:53Z",
+    "http_status": 200,
+    "content_type": "application/json; charset=UTF-8",
+    "request": {
+      "endpoint": "videos",
+      "part": "statistics,snippet,liveStreamingDetails",
+      "id": "5dzFmvKHmYY"
+    }
+  },
+  "body": {
+    "kind": "youtube#videoListResponse",
+    "etag": "PG_3UzcKNU_YiawDDWWWGk9pCgM",
+    "items": [
+      {
+        "kind": "youtube#video",
+        "etag": "XXvwxCbZuHLnn9-WfenPePX5gIY",
+        "id": "5dzFmvKHmYY",
+        "snippet": {
+          "publishedAt": "2026-10-31T02:21:48Z",
+          "channelId": "UCvdwhh_fDyWccR42-rReZLw",
+          "title": "AO VIVO: WW - 02/11/2026",
+          "description": "Assista AO VIVO ao WW desta segunda-feira, 02 de novembro de 2026. #CNNBrasil \n\nInscreva-se no canal da CNN Brasil no YouTube.\n\nACOMPANHE A CNN BRASIL TAMBÉM NAS OUTRAS PLATAFORMAS:\n\nPodcasts: https://www.cnnbrasil.com.br/podcasts/\nNewsletters: https://newsletter.cnnbrasil.com.br\nFacebook: https://www.facebook.com/cnnbrasil\nTwitter: https://www.twitter.com/cnnbrasil\nInstagram: https://www.instagram.com/cnnbrasil",
+          "thumbnails": {
+            "default": {
+              "url": "https://i.ytimg.com/vi/5dzFmvKHmYY/default.jpg?v=6ae550be",
+              "width": 120,
+              "height": 90
+            },
+            "medium": {
+              "url": "https://i.ytimg.com/vi/5dzFmvKHmYY/mqdefault.jpg?v=6ae550be",
+              "width": 320,
+              "height": 180
+            },
+            "high": {
+              "url": "https://i.ytimg.com/vi/5dzFmvKHmYY/hqdefault.jpg?v=6ae550be",
+              "width": 480,
+              "height": 360
+            },
+            "standard": {
+              "url": "https://i.ytimg.com/vi/5dzFmvKHmYY/sddefault.jpg?v=6ae550be",
+              "width": 640,
+              "height": 480
+            },
+            "maxres": {
+              "url": "https://i.ytimg.com/vi/5dzFmvKHmYY/maxresdefault.jpg?v=6ae550be",
+              "width": 1280,
+              "height": 720
+            }
+          },
+          "channelTitle": "CNN Brasil",
+          "tags": [
+            "cnn",
+            "cnn ao vivo",
+            "cnn ao vivo agora",
+            "cnn ao vivo agora online",
+            "cnn brasil",
+            "cnn brasil ao vivo",
+            "cnn brasil ao vivo agora hoje",
+            "cnn brasil notícias",
+            "jornal cnn brasil",
+            "notícias",
+            "notícias ao vivo",
+            "notícias de hoje",
+            "últimas notícias cnn brasil",
+            "cnn brasil ao vivo agora",
+            "jornal ao vivo",
+            "ao vivo",
+            "cnn brasil ao vivo agora online",
+            "análises cnn",
+            "ao vivo cnn",
+            "programação cnn",
+            "jornal cnn ao vivo agora",
+            "ww",
+            "william waack"
+          ],
+          "categoryId": "25",
+          "liveBroadcastContent": "upcoming",
+          "defaultLanguage": "pt-BR",
+          "localized": {
+            "title": "AO VIVO: WW - 02/11/2026",
+            "description": "Assista AO VIVO ao WW desta segunda-feira, 02 de novembro de 2026. #CNNBrasil \n\nInscreva-se no canal da CNN Brasil no YouTube.\n\nACOMPANHE A CNN BRASIL TAMBÉM NAS OUTRAS PLATAFORMAS:\n\nPodcasts: https://www.cnnbrasil.com.br/podcasts/\nNewsletters: https://newsletter.cnnbrasil.com.br\nFacebook: https://www.facebook.com/cnnbrasil\nTwitter: https://www.twitter.com/cnnbrasil\nInstagram: https://www.instagram.com/cnnbrasil"
+          },
+          "defaultAudioLanguage": "pt-BR"
+        },
+        "statistics": {
+          "viewCount": "8",
+          "favoriteCount": "0",
+          "commentCount": "0"
+        },
+        "liveStreamingDetails": {
+          "scheduledStartTime": "2026-11-03T01:00:00Z",
+          "activeLiveChatId": "Cg0KCzVkekZtdktIbVlZKicKGFVDdmR3aGhfZkR5V2NjUjQyLXJSZVpMdxILNWR6Rm12S0htWVk"
+        }
+      }
+    ],
+    "pageInfo": {
+      "totalResults": 1,
+      "resultsPerPage": 1
+    }
+  }
+}

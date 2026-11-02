@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "source": "youtube-data-api-v3",
+    "synthetic": false,
+    "recorded_at": "2026-11-02T11:42:54Z",
+    "http_status": 400,
+    "content_type": "application/json; charset=UTF-8",
+    "request": {
+      "endpoint": "videos",
+      "part": "statistics,snippet,liveStreamingDetails",
+      "id": "zrxGZ-XpKnw"
+    }
+  },
+  "body": {
+    "error": {
+      "code": 400,
+      "message": "API key not valid. Please pass a valid API key.",
+      "errors": [
+        {
+          "message": "API key not valid. Please pass a valid API key.",
+          "domain": "global",
+          "reason": "badRequest"
+        }
+      ],
+      "status": "INVALID_ARGUMENT",
+      "details": [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          "reason": "API_KEY_INVALID",
+          "domain": "googleapis.com",
+          "metadata": {
+            "service": "youtube.googleapis.com"
+          }
+        },
+        {
+          "@type": "type.googleapis.com/google.rpc.LocalizedMessage",
+          "locale": "en-US",
+          "message": "API key not valid. Please pass a valid API key."
+        }
+      ]
+    }
+  }
+}

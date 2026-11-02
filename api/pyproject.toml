@@ -1,0 +1,7 @@
+[project]
+name = "livestats-api"
+version = "1.0.0"
+description = "LiveStats - api (FastAPI): endpoints publicos, admin autenticado e cifragem dos cookies"
+requires-python = ">=3.12,<3.13"
+
+# Somente metadados do pacote. A configuracao de ruff e pytest e da raiz do repositorio (T2).

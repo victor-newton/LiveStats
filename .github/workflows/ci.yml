@@ -1,0 +1,220 @@
+# CI do LiveStats. Nenhuma etapa usa continue-on-error nem `|| true`: falha em qualquer etapa reprova.
+# Actions fixadas por SHA de commit; o comentario ao lado traz a versao (tag).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  RUFF_VERSION: "0.17.1"
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar ruff
+        run: python -m pip install "ruff==${RUFF_VERSION}"
+      - name: ruff check
+        run: ruff check .
+
+  test-api:
+    name: Testes tests/api
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar dependencias de desenvolvimento
+        run: python -m pip install -r requirements-dev.txt
+      - name: pytest tests/api
+        run: python -m pytest tests/api
+
+  test-worker-lives:
+    name: Testes tests/worker_lives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar dependencias de desenvolvimento
+        run: python -m pip install -r requirements-dev.txt
+      - name: pytest tests/worker_lives
+        run: python -m pytest tests/worker_lives
+
+  test-worker-inscritos:
+    name: Testes tests/worker_inscritos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar dependencias de desenvolvimento
+        run: python -m pip install -r requirements-dev.txt
+      - name: Instalar Chromium do Playwright
+        run: python -m playwright install --with-deps chromium
+      - name: pytest tests/worker_inscritos
+        run: python -m pytest tests/worker_inscritos
+
+  test-web:
+    name: Testes tests/web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar dependencias de desenvolvimento
+        run: python -m pip install -r requirements-dev.txt
+      - name: Instalar Chromium do Playwright
+        run: python -m playwright install --with-deps chromium
+      - name: pytest tests/web
+        run: python -m pytest tests/web
+
+  test-infra-static:
+    name: Testes tests/infra (estaticos, sem Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar dependencias de desenvolvimento
+        run: python -m pip install -r requirements-dev.txt
+      - name: pytest tests/infra (sem marcador docker)
+        run: python -m pytest tests/infra -m "not docker"
+
+  test-infra-docker:
+    name: Testes tests/infra (com Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar dependencias de desenvolvimento
+        run: python -m pip install -r requirements-dev.txt
+      - name: Preparar .env e segredos de placeholder (so para o compose validar; nunca vao para a imagem)
+        run: |
+          cp -n .env.example .env
+          mkdir -p secrets
+          for f in youtube_api_key cookie_private_key cookie_public_key admin_password_hash; do
+            [ -f "secrets/$f.txt" ] || echo "ci-placeholder" > "secrets/$f.txt"
+          done
+      - name: pytest tests/infra (marcador docker)
+        run: python -m pytest tests/infra -m docker
+
+  gitleaks:
+    name: Gitleaks (historico completo)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trivy-fs:
+    name: Trivy (sistema de arquivos)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Trivy fs (HIGH e CRITICAL, sem arquivo de ignorados)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  trivy-images:
+    name: Trivy (imagens Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preparar .env e segredos de placeholder (so para o compose validar; nunca vao para a imagem)
+        run: |
+          cp -n .env.example .env
+          mkdir -p secrets
+          for f in youtube_api_key cookie_private_key cookie_public_key admin_password_hash; do
+            [ -f "secrets/$f.txt" ] || echo "ci-placeholder" > "secrets/$f.txt"
+          done
+      - name: Build das imagens
+        run: docker compose build
+      - name: Trivy web
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: livestats/web:local
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Trivy api
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: livestats/api:local
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Trivy worker-lives
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: livestats/worker-lives:local
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Trivy worker-inscritos
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: livestats/worker-inscritos:local
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"

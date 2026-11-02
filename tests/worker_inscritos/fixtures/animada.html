@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"><title>Fixture - contador animado (slot machine)</title>
+<style>@keyframes rolar { from { transform: translateY(0); } to { transform: translateY(-3em); } }</style>
+</head>
+<body>
+<!-- Mesma estrutura da fixture B, com a pilha de divs rolando como um slot machine (so o ultimo div fica visivel
+     no fim da animacao). innerText do container junta TODA a pilha; o digito atual e o ultimo div. Numero: 460600 -->
+<yta-smooth-counter style="display:flex">
+  <div style="height:1em;overflow:hidden"><div class="counter-sequence-inner" style="animation:rolar 0.2s forwards"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div></div></div>
+  <div style="height:1em;overflow:hidden"><div class="counter-sequence-inner" style="animation:rolar 0.2s forwards"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div></div></div>
+  <div style="height:1em;overflow:hidden"><div class="counter-sequence-inner" style="animation:rolar 0.2s forwards"><div>7</div><div>8</div><div>9</div><div>0</div></div></div>
+  <div style="height:1em;overflow:hidden"><div class="counter-sequence-inner" style="animation:rolar 0.2s forwards"><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div></div></div>
+  <div style="height:1em;overflow:hidden"><div class="counter-sequence-inner" style="animation:rolar 0.2s forwards"><div>8</div><div>9</div><div>0</div></div></div>
+  <div style="height:1em;overflow:hidden"><div class="counter-sequence-inner" style="animation:rolar 0.2s forwards"><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div><div>0</div></div></div>
+</yta-smooth-counter>
+</body>
+</html>

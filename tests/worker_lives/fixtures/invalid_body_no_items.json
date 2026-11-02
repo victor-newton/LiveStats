@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "source": "youtube-data-api-v3",
+    "synthetic": true,
+    "recorded_at": null,
+    "http_status": 200,
+    "content_type": "application/json; charset=UTF-8",
+    "request": {"endpoint": "videos"},
+    "note": "Resposta 200 sem o campo items (a API real devolve items vazio, nunca ausente); impossivel de provocar na API real."
+  },
+  "body": {
+    "kind": "youtube#videoListResponse",
+    "etag": "synthetic",
+    "pageInfo": {"totalResults": 0, "resultsPerPage": 0}
+  }
+}

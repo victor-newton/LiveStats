@@ -1,0 +1,29 @@
+{
+  "fixtures": [
+    {
+      "name": "videos_mixed",
+      "ids": ["At5J757Nqgo", "dXjFZapxqcc", "zrxGZ-XpKnw"],
+      "expect_broadcast": {
+        "At5J757Nqgo": "live",
+        "dXjFZapxqcc": "upcoming",
+        "zrxGZ-XpKnw": "none"
+      }
+    },
+    {
+      "name": "videos_upcoming_no_likes",
+      "ids": ["5dzFmvKHmYY"],
+      "expect_broadcast": {"5dzFmvKHmYY": "upcoming"}
+    },
+    {
+      "name": "videos_partial_missing",
+      "ids": ["zrxGZ-XpKnw", "zzzzzzzzzzz"],
+      "expect_broadcast": {"zrxGZ-XpKnw": "none"}
+    },
+    {
+      "name": "error_invalid_key",
+      "ids": ["zrxGZ-XpKnw"],
+      "api_key": "chave-invalida-para-fixture",
+      "expect_status": 400
+    }
+  ]
+}

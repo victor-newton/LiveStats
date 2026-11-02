@@ -1,0 +1,103 @@
+{
+  "meta": {
+    "source": "youtube-data-api-v3",
+    "synthetic": false,
+    "recorded_at": "2026-11-02T11:42:54Z",
+    "http_status": 200,
+    "content_type": "application/json; charset=UTF-8",
+    "request": {
+      "endpoint": "videos",
+      "part": "statistics,snippet,liveStreamingDetails",
+      "id": "zrxGZ-XpKnw,zzzzzzzzzzz"
+    }
+  },
+  "body": {
+    "kind": "youtube#videoListResponse",
+    "etag": "HvRCRCKnLzqDe6Rbc21a1tySU2E",
+    "items": [
+      {
+        "kind": "youtube#video",
+        "etag": "pAPrqrSHQ6jbLkew4mYkxsRdCmY",
+        "id": "zrxGZ-XpKnw",
+        "snippet": {
+          "publishedAt": "2020-12-20T03:29:12Z",
+          "channelId": "UCQlaArsZfebRbb70iXm6usg",
+          "title": "ALOK presents ALIVE (Livestream Show)",
+          "description": "Spotify https://bit.ly/alokspotify\nOfficial playlist: http://bit.ly/FollowThisIsAlok\r\nInstagram https://www.instagram.com/alok/\nFacebook https://www.facebook.com/livealok/\r\nTikTok https://www.tiktok.com/@alok\nTwitter https://twitter.com/alokoficial\n\nALIVE - Live especial de fim de ano do Alok\n\n\n#Alive #Alok",
+          "thumbnails": {
+            "default": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/default.jpg",
+              "width": 120,
+              "height": 90
+            },
+            "medium": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/mqdefault.jpg",
+              "width": 320,
+              "height": 180
+            },
+            "high": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/hqdefault.jpg",
+              "width": 480,
+              "height": 360
+            },
+            "standard": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/sddefault.jpg",
+              "width": 640,
+              "height": 480
+            },
+            "maxres": {
+              "url": "https://i.ytimg.com/vi/zrxGZ-XpKnw/maxresdefault.jpg",
+              "width": 1280,
+              "height": 720
+            }
+          },
+          "channelTitle": "Alok",
+          "tags": [
+            "Alok",
+            "Alive",
+            "live do alok",
+            "live",
+            "live fim de ano alok",
+            "laive",
+            "laive do alok",
+            "alive alok",
+            "alok livestream",
+            "livestream show",
+            "alok live stream",
+            "livestream alok",
+            "live alok",
+            "alok live",
+            "final de ano",
+            "Live especial de fim de ano do Alok",
+            "alok remix",
+            "free fire alok",
+            "alok free fire"
+          ],
+          "categoryId": "10",
+          "liveBroadcastContent": "none",
+          "defaultLanguage": "pt-PT",
+          "localized": {
+            "title": "ALOK presents ALIVE (Livestream Show)",
+            "description": "Spotify https://bit.ly/alokspotify\nOfficial playlist: http://bit.ly/FollowThisIsAlok\r\nInstagram https://www.instagram.com/alok/\nFacebook https://www.facebook.com/livealok/\r\nTikTok https://www.tiktok.com/@alok\nTwitter https://twitter.com/alokoficial\n\nALIVE - Live especial de fim de ano do Alok\n\n\n#Alive #Alok"
+          },
+          "defaultAudioLanguage": "pt"
+        },
+        "statistics": {
+          "viewCount": "15233501",
+          "likeCount": "625436",
+          "favoriteCount": "0",
+          "commentCount": "13807"
+        },
+        "liveStreamingDetails": {
+          "actualStartTime": "2020-12-19T23:58:18Z",
+          "actualEndTime": "2020-12-20T03:05:45Z",
+          "scheduledStartTime": "2020-12-20T00:00:00Z"
+        }
+      }
+    ],
+    "pageInfo": {
+      "totalResults": 1,
+      "resultsPerPage": 1
+    }
+  }
+}
