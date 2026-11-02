@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """SEC-05 (limit_req por IP real na 8080), SEC-24 (IP real na 8081 so do NPM), SEC-25 (admin via HTTPS de um proxy de teste)."""
 
 from __future__ import annotations
@@ -103,15 +104,16 @@ def test_sec_24_ip_real_na_8081_so_vem_do_npm(stack):
 
 
 def _make_cert(directory: Path) -> tuple[Path, Path]:
+    import ipaddress
+
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
-    import ipaddress
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     cert = (
         x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
         .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))

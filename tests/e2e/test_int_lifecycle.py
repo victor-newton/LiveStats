@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """INT-05 (persistencia), INT-06 (subida do zero), INT-07 (degradacao) pela pilha real."""
 
 from __future__ import annotations

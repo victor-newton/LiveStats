@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """SEC-01, SEC-02, SEC-04, SEC-06, SEC-16, SEC-17: o que a pilha REAL (Nginx + api) responde por HTTP."""
 
 from __future__ import annotations

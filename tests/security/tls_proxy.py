@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """Proxy HTTPS de TESTE (o "Nginx Proxy Manager" do SEC-25): termina TLS com um certificado de teste e repassa ao web:8081.
 
 Uso (dentro de um container na rede edge): python tls_proxy.py <porta> <host_upstream> <porta_upstream> <cert.pem> <key.pem>

@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """SEC-10, SEC-19, SEC-22, SEC-ANTI-01, SEC-ANTI-02: repositorio e imagens (gitleaks, Trivy, varreduras estaticas, anti-burla)."""
 
 from __future__ import annotations
@@ -54,7 +55,9 @@ def test_sec_10_gitleaks_e_trivy_sem_achados_e_sem_arquivo_de_ignorados(tmp_path
         "run", "--rm", "-v", f"{clone}:/repo:ro", GITLEAKS_IMAGE, "detect", "--source", "/repo",
         "--config", "/repo/.gitleaks.toml", "--no-banner", "--redact", "--exit-code", "1", check=False, timeout=900,
     )
-    assert leaks.returncode == 0, f"gitleaks encontrou segredos:\n{leaks.stdout[-3000:]}{leaks.stderr[-3000:]}"
+    problems: list[str] = []  # tudo e executado e reportado junto; qualquer achado reprova o teste
+    if leaks.returncode != 0:
+        problems.append(f"gitleaks encontrou segredos (ver relatorio):\n{leaks.stderr[-800:]}")
 
     # --- Trivy: sistema de arquivos e cada imagem (HIGH/CRITICAL)
     cache = "t8-trivy-cache"
@@ -64,7 +67,8 @@ def test_sec_10_gitleaks_e_trivy_sem_achados_e_sem_arquivo_de_ignorados(tmp_path
             *common, "-v", f"{clone}:/repo:ro", TRIVY_IMAGE, "fs", "--scanners", "vuln,secret",
             "--severity", "HIGH,CRITICAL", "--exit-code", "1", "--no-progress", "/repo", check=False, timeout=1800,
         )
-        assert fs.returncode == 0, f"trivy fs:\n{fs.stdout[-4000:]}{fs.stderr[-2000:]}"
+        if fs.returncode != 0:
+            problems.append(f"trivy fs:\n{fs.stdout[-3000:]}{fs.stderr[-1000:]}")
         for name, image in IMAGES.items():
             tar = tmp_path / f"{name}.tar"
             docker("save", "-o", str(tar), image, timeout=900)
@@ -73,9 +77,11 @@ def test_sec_10_gitleaks_e_trivy_sem_achados_e_sem_arquivo_de_ignorados(tmp_path
                 "--severity", "HIGH,CRITICAL", "--exit-code", "1", "--no-progress", check=False, timeout=1800,
             )
             tar.unlink()
-            assert scan.returncode == 0, f"trivy image {name}:\n{scan.stdout[-4000:]}{scan.stderr[-2000:]}"
+            if scan.returncode != 0:
+                problems.append(f"trivy image {name}:\n{scan.stdout[-3000:]}{scan.stderr[-1000:]}")
     finally:
         docker("volume", "rm", "-f", cache, check=False)
+    assert not problems, "\n\n".join(problems)
 
 
 # ---------------------------------------------------------------------------------------------------- SEC-19

@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """INT-01 e INT-10: fluxo de lives de ponta a ponta pela pilha real (painel/api -> SQLite -> worker-lives -> YouTube falso)."""
 
 from __future__ import annotations

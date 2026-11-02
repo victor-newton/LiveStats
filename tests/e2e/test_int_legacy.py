@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """INT-03 e INT-04: compatibilidade legada byte a byte pelas duas portas e script de comparacao com os apps atuais."""
 
 from __future__ import annotations
@@ -7,10 +8,9 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import pytest
-from e2e_stack import REPO, header, header_values, http_request
+from e2e_stack import REPO, header
 
 pytestmark = [pytest.mark.e2e, pytest.mark.docker]
 

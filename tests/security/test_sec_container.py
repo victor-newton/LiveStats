@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """SEC-07, 08, 09, 11, 12, 13, 14, 15, 18, 20, 21: endurecimento, segredos e isolamento dos containers REAIS."""
 
 from __future__ import annotations
@@ -7,8 +8,6 @@ import re
 import socket
 import subprocess
 import threading
-import time
-import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -377,6 +376,11 @@ try:
 except Exception as e:
     print("BLOCKED:" + type(e).__name__)
 """
+TCP_PROBE = r"""
+import socket, sys
+s = socket.socket(); s.settimeout(5)
+print("REACHED" if s.connect_ex((sys.argv[1], 80)) == 0 else "BLOCKED")
+"""
 DNS = r"""
 import socket, sys
 try:
@@ -408,33 +412,19 @@ def test_sec_11_isolamento_de_rede(stack):
         assert stack.py("api", PROBE, "https://1.1.1.1/").stdout.startswith("BLOCKED")
         assert stack.py("api", DNS, "example.com").stdout.strip() == "NOT-RESOLVED"
         assert stack.py("api", PROBE, "http://127.0.0.1:8000/health").stdout.startswith("REACHED:")  # controle da sonda
-        # web: sem saida para a internet. A garantia vem de `enable_ip_masquerade=false` na rede edge (e de o web nao
-        # estar na egress). Config SEMPRE verificada; o teste vivo so e conclusivo se o motor Docker respeita a opcao
-        # (controle: uma rede descartavel com a MESMA opcao). Docker Desktop (NAT da VM) nao respeita: ver relatorio T8.
+        # web: sem saida para a internet (rede edge com enable_ip_masquerade=false; web fora da egress)
         edge_opts = json.loads(docker("network", "inspect", "livestats-t8-edge").stdout)[0]["Options"]
         assert edge_opts.get("com.docker.network.bridge.enable_ip_masquerade") == "false"
         assert set(stack.inspect("web")["NetworkSettings"]["Networks"]) == {"livestats-t8-edge", "livestats-t8-internal"}
+        leaks: list[str] = []  # as verificacoes vivas abaixo dependem do motor Docker; todas rodam e sao reportadas juntas
 
         def web_reaches(url: str) -> bool:
             r = stack.exec("web", "sh", "-c", f"wget -q -T 4 -O /dev/null {url} && echo REACHED || echo BLOCKED", check=False).stdout
             return "REACHED" in r
 
-        docker("network", "rm", "t8-probe-masq", check=False)
-        docker("network", "create", "-o", "com.docker.network.bridge.enable_ip_masquerade=false", "--label", "livestats-t8-extra=1", "t8-probe-masq")
-        try:
-            control = docker(
-                "run", "--rm", "--network", "t8-probe-masq", "python:3.12-slim", "python", "-c", PROBE, "http://1.1.1.1/"
-            ).stdout
-        finally:
-            docker("network", "rm", "t8-probe-masq", check=False)
-        if control.startswith("BLOCKED"):
-            for url in ("http://1.1.1.1/", "http://8.8.8.8/"):
-                assert not web_reaches(url), f"web alcancou a internet ({url})"
-        else:
-            warnings.warn(
-                "motor Docker ignora enable_ip_masquerade=false (ex.: Docker Desktop): saida do web nao verificavel ao vivo",
-                stacklevel=1,
-            )
+        for url in ("http://1.1.1.1/", "http://8.8.8.8/"):
+            if web_reaches(url):
+                leaks.append(f"web alcancou a internet ({url})")
 
         # workers nao alcancam api/web: nem por nome nem por IP
         api_ip = _network_ip(stack, "api", "livestats-t8-internal")
@@ -444,7 +434,10 @@ def test_sec_11_isolamento_de_rede(stack):
                 assert stack.py(name, DNS, host).stdout.strip() == "NOT-RESOLVED", (name, host)
             assert stack.py(name, PROBE, f"http://{api_ip}:8000/health").stdout.startswith("BLOCKED"), name
             for ip in web_ips:
-                assert stack.py(name, PROBE, f"http://{ip}:8080/health").stdout.startswith("BLOCKED"), (name, ip)
+                for port in (8080, 8081):
+                    if stack.py(name, PROBE, f"http://{ip}:{port}/").stdout.startswith("REACHED"):
+                        leaks.append(f"{name} alcancou web {ip}:{port} (portas publicadas ficam acessiveis por IP entre bridges neste motor)")
+        assert not leaks, " | ".join(leaks)
     finally:
         server.shutdown()
 

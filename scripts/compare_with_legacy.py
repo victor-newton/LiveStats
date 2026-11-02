@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 #!/usr/bin/env python3
 """Compara, lado a lado, a saida dos apps ATUAIS (legado) com a da pilha nova (INT-04, usado no V2).
 

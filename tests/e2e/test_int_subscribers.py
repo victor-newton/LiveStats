@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """INT-02, INT-09 (animacao), INT-11: cookies -> worker-inscritos -> Studio falso -> /inscritos.json -> overlay/painel."""
 
 from __future__ import annotations

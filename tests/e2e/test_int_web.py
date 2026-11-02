@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """INT-08 (suite tests/web contra o Nginx real) e INT-12 (limites publicos) pela pilha real."""
 
 from __future__ import annotations
@@ -8,10 +9,12 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from e2e_browser import chromium_context
-from e2e_stack import REPO, header
+from e2e_stack import PYTHON_IMAGE, REPO, docker, header, http_request, wait_until
 
 pytestmark = [pytest.mark.e2e, pytest.mark.docker]
 
@@ -30,14 +33,36 @@ def _run_web_suite(target: str, base_url: str) -> str:
     return summary
 
 
+@contextmanager
+def _visitor_proxy(stack, last_octet: int, host_port: int, upstream_port: int, header_name: str):
+    """Container na edge com o IP FIXO confiavel (NPM/cloudflared do teste), publicado so em 127.0.0.1."""
+    name = f"t8-ip-proxy-{host_port}"
+    docker("rm", "-f", name, check=False)
+    docker(
+        "run", "-d", "--name", name, "--label", "livestats-t8-extra=1", "--network", "livestats-t8-edge",
+        "--ip", f"{stack.base}.{last_octet}", "-p", f"127.0.0.1:{host_port}:8888",
+        "-v", f"{Path(__file__).resolve().parent / 'ip_proxy.py'}:/srv/ip_proxy.py:ro",
+        PYTHON_IMAGE, "python", "/srv/ip_proxy.py", "8888", "web", str(upstream_port), header_name,
+    )
+    try:
+        wait_until(lambda: http_request("127.0.0.1", host_port, "/health", timeout=5)["status"] == 200, timeout=30, interval=1)
+        yield f"http://127.0.0.1:{host_port}"
+    finally:
+        docker("rm", "-f", name, check=False)
+
+
 def test_int_08_painel_suite_web_contra_a_pilha_real_na_8081(stack):
     stack.ensure_lives()
-    summary = _run_web_suite("tests/web", "http://127.0.0.1:8081")
+    # Visitantes distintos por requisicao (como varios usuarios atras do NPM): a suite funcional tem ~90 testes de um unico
+    # IP e, direto no Nginx, bateria no limit_req (comprovado: 27 respostas 429 em estaticos). O limite e testado em INT-12.
+    with _visitor_proxy(stack, 21, 18081, 8081, "X-Forwarded-For") as base:
+        summary = _run_web_suite("tests/web", base)
     assert "passed" in summary
 
 
 def test_int_09_overlay_suite_web_contra_a_porta_publica_8080(stack):
-    summary = _run_web_suite("tests/web/test_web_overlay.py", "http://127.0.0.1:8080")
+    with _visitor_proxy(stack, 20, 18080, 8080, "CF-Connecting-IP") as base:
+        summary = _run_web_suite("tests/web/test_web_overlay.py", base)
     assert "passed" in summary
 
 

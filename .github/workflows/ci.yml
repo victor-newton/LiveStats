@@ -218,3 +218,25 @@ jobs:
           scanners: vuln
           severity: HIGH,CRITICAL
           exit-code: "1"
+
+  test-e2e-security:
+    name: Testes tests/e2e e tests/security (pilha completa no Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      # varredura anti-burla compara com a main (historico completo abaixo)
+      ANTIBURLA_BASE: origin/main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Instalar dependencias de teste (a pilha roda em containers; so o orquestrador roda aqui)
+        run: python -m pip install -r tests/web/requirements.txt cryptography==46.0.3
+      - name: Instalar Chromium do Playwright
+        run: python -m playwright install --with-deps chromium
+      - name: pytest tests/e2e tests/security
+        run: python -m pytest tests/e2e tests/security

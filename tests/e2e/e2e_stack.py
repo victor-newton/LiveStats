@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """Pilha REAL de integracao da T8: `docker compose` (compose real + tests/e2e/compose.e2e.yml), projeto proprio.
 
 Unica fronteira simulada: o YouTube (tests/e2e/fake_youtube.py), alcancado pelos workers pelas URLs-base da D19.

@@ -3,3 +3,6 @@
 -r api/requirements-dev.txt
 -r worker_lives/requirements-dev.txt
 -r worker_inscritos/requirements-dev.txt
+# Testes do front (T6) e da integracao/seguranca (T8): tests/web, tests/e2e, tests/security
+-r tests/web/requirements.txt
+cryptography==46.0.3

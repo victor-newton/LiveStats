@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """YouTube FALSO da T8: a unica fronteira simulada da pilha de integracao.
 
 Roda DENTRO do namespace de rede de um worker (compose.e2e.yml) e escuta so em 127.0.0.1:

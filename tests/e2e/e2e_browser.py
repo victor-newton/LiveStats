@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 """Chromium (Playwright) contra a pilha real. Sem duble: o painel fala com a api verdadeira atraves do Nginx."""
 
 from __future__ import annotations

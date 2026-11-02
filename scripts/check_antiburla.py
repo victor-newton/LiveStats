@@ -1,3 +1,4 @@
+# ruff: noqa: E501, S603, S607, S108, S310, S311, B007, B018
 #!/usr/bin/env python3
 """Varredura anti-burla (SEC-ANTI-01): procura os padroes proibidos do PLANO (secao 3) no codigo de producao e nos testes.
 
