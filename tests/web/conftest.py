@@ -22,7 +22,7 @@ import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, Route, sync_playwright
 
 from api_double import ApiDouble, StackServer
-from web_helpers import Watch
+from web_helpers import Watch, set_pump
 
 API_PATH = re.compile(r"^/(api/|live\d+\.json$|inscritos\.json$|health$)")
 
@@ -95,7 +95,7 @@ def _proxy_api_to_double(ctx: BrowserContext, double_origin: str) -> None:
         if jar:
             headers["cookie"] = "; ".join(f"{k}={v}" for k, v in jar.items())
         resp = route.fetch(url=double_origin + parts.path + (f"?{parts.query}" if parts.query else ""), headers=headers)
-        for header in resp.headers_array():
+        for header in resp.headers_array:
             if header["name"].lower() == "set-cookie":
                 name, _, rest = header["value"].partition("=")
                 value = rest.split(";", 1)[0]
@@ -103,8 +103,10 @@ def _proxy_api_to_double(ctx: BrowserContext, double_origin: str) -> None:
                     jar.pop(name, None)
                 else:
                     jar[name] = value
-        headers_out = {k: v for k, v in resp.headers.items() if k.lower() != "set-cookie"}
-        route.fulfill(response=resp, headers=headers_out)
+        headers_out = {
+            k: v for k, v in resp.headers.items() if k.lower() not in ("set-cookie", "content-length", "connection")
+        }
+        route.fulfill(status=resp.status, headers=headers_out, body=resp.body())
 
     ctx.route(lambda url: bool(API_PATH.match(urlsplit(url).path)), handler)
 
@@ -118,7 +120,12 @@ def watch(base_url: str) -> Watch:
 def page(context: BrowserContext, watch: Watch) -> Iterator[Page]:
     p = context.new_page()
     watch.attach(p)
+    set_pump(p)
     yield p
+    set_pump(None)
+    # respostas de rota ainda em voo no fim do teste não são erro do teste
+    p.unroute_all(behavior="ignoreErrors")
+    context.unroute_all(behavior="ignoreErrors")
     assert not watch.csp_violations, f"Violações de CSP: {watch.csp_violations}"
     assert not watch.foreign_requests, f"Requisições a terceiros: {watch.foreign_requests}"
     assert not watch.page_errors, f"Erros de JavaScript: {watch.page_errors}"

@@ -96,6 +96,15 @@ def fetch_status(page: Page, method: str, path: str, body: object | None = None)
     )
 
 
+_pump: Page | None = None
+
+
+def set_pump(page: Page | None) -> None:
+    """Página usada por `wait_until` para entregar eventos do Playwright."""
+    global _pump
+    _pump = page
+
+
 def wait_until(
     condition: Callable[[], object], what: str, timeout: float = 5.0, page: Page | None = None
 ) -> None:
@@ -105,6 +114,7 @@ def wait_until(
     de `page.route`, console, requisições): eles só são entregues enquanto a
     thread principal está dentro de uma chamada do Playwright.
     """
+    page = page or _pump
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if condition():

@@ -318,7 +318,7 @@ def test_web_ov_05c_valor_vazio_rede_ou_json_quebrado_so_geram_warn(page: Page, 
         elif corpo["modo"] == "quebrado":
             route.fulfill(status=200, content_type="application/json", body="isto nao e json")
         else:
-            route.continue_()
+            route.fallback()
 
     page.route("**/api/public/subscribers*", handler)
     page.goto(f"{base_url}/contador")

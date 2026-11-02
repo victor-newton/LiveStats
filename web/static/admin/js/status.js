@@ -4,6 +4,7 @@
 import { api } from './api.js';
 import { byId, setVisible, showMessage, clearMessage } from './dom.js';
 
+/** @type {Record<string, string>} */
 const STATE_LABELS = {
   starting: 'iniciando',
   ok: 'ok',

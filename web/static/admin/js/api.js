@@ -83,6 +83,7 @@ export function errorText(resp, fallback) {
  */
 function validationLine(item) {
   const msg = item && typeof item.msg === 'string' ? item.msg : 'valor inválido';
+  /** @type {unknown[]} */
   const loc = item && Array.isArray(item.loc) ? item.loc : [];
   const idx = loc.find((p) => typeof p === 'number');
   if (loc.includes('slots') && typeof idx === 'number') {
