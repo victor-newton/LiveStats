@@ -1,0 +1,8 @@
+# Dependencias de producao da api (T3). A api NAO tem cliente HTTP de saida: nada de httpx/requests/aiohttp aqui.
+# Recompilar (Python 3.12), da raiz do repositorio (ver api/README-deps no comentario de requirements-dev.in):
+#   docker run --rm -v "$PWD":/w -w /w/api python:3.12-slim sh -c "pip install -q pip-tools && pip-compile --generate-hashes --strip-extras --allow-unsafe -o requirements.txt requirements.in"
+fastapi
+uvicorn
+pydantic
+argon2-cffi
+PyNaCl
