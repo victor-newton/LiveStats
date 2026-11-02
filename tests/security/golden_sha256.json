@@ -1,0 +1,14 @@
+{
+  "contract_commit": "7bef085",
+  "sha256": {
+    "contador.original.html": "dbc9acb59c5e416664007dbb98573c8142bffd7af3792ac60545af388e8c8e22",
+    "error_dados_indisponiveis.json": "8ff362e21e03e95c43a7bf6c38248cc3dab64ce8bceb7fd550e1f3e01d36df2f",
+    "error_inscritos_indisponiveis.json": "6fa5b2c097e6b017e8c654d489bba0d018f388e1cc4abd010a4767dbdaaf3a6a",
+    "error_slot_invalido.json": "df5f818987d81853b3800a8f35729a9c621367ce4b05465cb51cbf6d12792467",
+    "inscritos.json": "06a05dcd621f34d201be587f5fc9bdaed920537debb2ff695830b9f196f47e4b",
+    "live1_ao_vivo.json": "7acd03039c523171364794b452bfbcf81b09c0b79e32435dc169907feeb0dc6d",
+    "live2_agendada.json": "219dd4527c7e147eeffc42ffdff822e381f12d04335cefd6085107af1cef126f",
+    "live3_encerrada.json": "517ca3f522034f2646a342b5bf15d9f559a4a0af7220e76a9f2db83707198414",
+    "live4_sem_url.json": "b5a26276cbb2193a96e32671580a6acf8e797b9b69cddc33b189d65a29aa83cd"
+  }
+}
