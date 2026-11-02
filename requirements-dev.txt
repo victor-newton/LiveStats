@@ -1,0 +1,5 @@
+# Dependencias de desenvolvimento do repositorio inteiro: agrega as de cada pacote.
+# Instalar: python -m pip install -r requirements-dev.txt
+-r api/requirements-dev.txt
+-r worker_lives/requirements-dev.txt
+-r worker_inscritos/requirements-dev.txt

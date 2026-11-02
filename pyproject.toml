@@ -1,0 +1,30 @@
+# Configuracao do ruff para o repositorio inteiro. Este arquivo NAO e metadados de pacote:
+# cada pacote Python tem o seu proprio pyproject.toml (ex.: api/pyproject.toml).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Pacotes e pastas de primeiro nivel, para o isort reconhecer `import app...` como codigo do projeto.
+src = [".", "api", "worker_lives", "worker_inscritos"]
+# codigo-original/ existe so localmente (fora do Git) e nao e codigo do projeto.
+extend-exclude = ["codigo-original", "deploy"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle (erros)
+    "W",    # pycodestyle (avisos)
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "SIM",  # simplificacoes
+    "S",    # bandit (seguranca)
+    "BLE",  # except generico (proibe engolir excecao)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Nos testes, `assert` e o mecanismo de verificacao; valores sentinela sao strings literais.
+"tests/**" = ["S101", "S105", "S106", "S107"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "worker_lives", "worker_inscritos", "tools", "tests"]

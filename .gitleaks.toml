@@ -1,0 +1,14 @@
+# Configuracao do gitleaks, usada pelo hook de pre-commit e pelo CI.
+# Usa as regras padrao do gitleaks e NAO define allowlist: nenhum achado e ignorado.
+title = "LiveStats"
+
+[extend]
+useDefault = true
+
+# Chave da YouTube Data API v3 (formato AIza + 35 caracteres). Regra explicita para nao depender
+# so da regra padrao de chaves Google.
+[[rules]]
+id = "youtube-api-key"
+description = "Chave da YouTube Data API v3"
+regex = '''AIza[0-9A-Za-z_\-]{35}'''
+keywords = ["AIza"]
