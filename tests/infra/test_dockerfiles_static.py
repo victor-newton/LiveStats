@@ -141,6 +141,15 @@ def test_infra_df_04_chromium_fixado_pela_biblioteca(repo):
     assert not re.search(r":(latest|current)\b", text)
 
 
+def test_infra_df_01_web_script_de_ip_real_e_executavel_na_imagem(repo):
+    """O entrypoint do nginx so le (source) arquivos .envsh COM bit de execucao; o bit nao vem do Git no Windows."""
+    copies = [rest for name, rest in instructions(repo, "web") if name == "COPY" and "15-livestats-realip.envsh" in rest]
+    origin = [c for c in copies if "--from=" not in c]
+    assert len(origin) == 1 and "--chmod=0755" in origin[0]
+    # o estagio final copia do estagio validado (preserva o modo)
+    assert any("--from=confcheck" in c for c in copies)
+
+
 @pytest.mark.parametrize(
     "svc,compose_svc",
     [("api", "api"), ("worker-lives", "worker-lives"), ("worker-inscritos", "worker-inscritos"), ("web", "web")],
