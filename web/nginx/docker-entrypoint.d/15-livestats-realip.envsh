@@ -1,0 +1,86 @@
+#!/bin/sh
+# LiveStats - IP real (ARCHITECTURE sec. 6, D29, D32).
+#
+# Arquivo `.envsh`: o entrypoint da imagem nginx-unprivileged o executa por `.` (source) ANTES de
+# 20-envsubst-on-templates.sh, entao as variaveis exportadas aqui chegam ao envsubst que renderiza
+# /etc/nginx/templates/default.conf.template. Precisa ter o bit de execucao (senao o entrypoint o ignora).
+#
+# Le TRUSTED_PROXY_CIDR (porta 8080: CF-Connecting-IP) e ADMIN_TRUSTED_PROXY_IP (porta 8081: ultimo salto de
+# X-Forwarded-For). Regras:
+#   - vazio/ausente (padrao) => NENHUMA diretiva real_ip: o cabecalho e ignorado, vale o IP da conexao;
+#   - preenchido => precisa ser UM unico IPv4, opcionalmente com /32. Qualquer outra coisa (sub-rede,
+#     0.0.0.0/0, mascara diferente de /32, IPv6, texto qualquer, IP terminado em .1 = gateway da bridge,
+#     .0, .255, 0.x.x.x, 127.x.x.x) ABORTA a subida do container com erro explicito.
+# O gateway da bridge e a sub-rede inteira nunca podem ser confiaveis: conexoes pela porta publicada
+# aparecem com o IP do gateway, e confiar nele deixaria qualquer cliente forjar o cabecalho (C2 do V0).
+
+livestats_fail() {
+    echo "15-livestats-realip: ERRO: $*" >&2
+    exit 1
+}
+
+# livestats_proxy_ip <NOME_DA_VARIAVEL> <VALOR>
+# Valida e deixa o IP normalizado (sem mascara) em LIVESTATS_IP; aborta se invalido.
+livestats_proxy_ip() {
+    _name=$1
+    _val=$(printf '%s' "$2" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+    case $_val in
+        */*)
+            _mask=${_val#*/}
+            _ip=${_val%%/*}
+            [ "$_mask" = "32" ] || livestats_fail "$_name deve ser um unico IPv4 (/32); recebido mascara diferente de /32 (nunca a sub-rede)"
+            ;;
+        *)
+            _ip=$_val
+            ;;
+    esac
+
+    # exatamente 3 pontos
+    case $_ip in
+        *.*.*.*) ;;
+        *) livestats_fail "$_name deve ser um IPv4 no formato A.B.C.D (IPv6 e texto nao sao aceitos)" ;;
+    esac
+    _o1=${_ip%%.*}; _r=${_ip#*.}
+    _o2=${_r%%.*};  _r=${_r#*.}
+    _o3=${_r%%.*};  _o4=${_r#*.}
+    case $_o4 in
+        *.*) livestats_fail "$_name deve ser um IPv4 no formato A.B.C.D" ;;
+    esac
+
+    for _o in "$_o1" "$_o2" "$_o3" "$_o4"; do
+        case $_o in
+            ''|*[!0-9]*) livestats_fail "$_name deve ser um IPv4 numerico no formato A.B.C.D" ;;
+        esac
+        case $_o in
+            0?*) livestats_fail "$_name nao pode ter zeros a esquerda em um octeto" ;;
+        esac
+        [ "${#_o}" -le 3 ] && [ "$_o" -le 255 ] || livestats_fail "$_name tem octeto maior que 255"
+    done
+
+    [ "$_o1" != "0" ] || livestats_fail "$_name nao pode ser 0.x.x.x (0.0.0.0/0 confiaria em todo mundo)"
+    [ "$_o1" != "127" ] || livestats_fail "$_name nao pode ser loopback"
+    case $_o4 in
+        0|1|255) livestats_fail "$_name nao pode terminar em .$_o4 (rede, gateway da bridge ou broadcast); use o IP fixo do proxy" ;;
+    esac
+
+    LIVESTATS_IP="$_o1.$_o2.$_o3.$_o4"
+}
+
+# --- porta 8080: CF-Connecting-IP, so do /32 do cloudflared
+if [ -n "$(printf '%s' "${TRUSTED_PROXY_CIDR:-}" | tr -d '[:space:]')" ]; then
+    livestats_proxy_ip TRUSTED_PROXY_CIDR "${TRUSTED_PROXY_CIDR}"
+    LIVESTATS_REALIP_PUBLIC="real_ip_header CF-Connecting-IP; real_ip_recursive off; set_real_ip_from ${LIVESTATS_IP}/32;"
+else
+    LIVESTATS_REALIP_PUBLIC=""
+fi
+
+# --- porta 8081: ultimo salto de X-Forwarded-For, so do /32 do Nginx Proxy Manager
+if [ -n "$(printf '%s' "${ADMIN_TRUSTED_PROXY_IP:-}" | tr -d '[:space:]')" ]; then
+    livestats_proxy_ip ADMIN_TRUSTED_PROXY_IP "${ADMIN_TRUSTED_PROXY_IP}"
+    LIVESTATS_REALIP_ADMIN="real_ip_header X-Forwarded-For; real_ip_recursive off; set_real_ip_from ${LIVESTATS_IP}/32;"
+else
+    LIVESTATS_REALIP_ADMIN=""
+fi
+
+export LIVESTATS_REALIP_PUBLIC LIVESTATS_REALIP_ADMIN

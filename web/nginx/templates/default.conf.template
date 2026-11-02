@@ -1,0 +1,98 @@
+# LiveStats - servidores publico (8080) e admin (8081).
+# Renderizado pelo envsubst da imagem (/docker-entrypoint.d/20-envsubst-on-templates.sh) para
+# /etc/nginx/conf.d/default.conf (tmpfs) na subida do container. Os marcadores LIVESTATS_REALIP_* sao
+# calculados e VALIDADOS por /docker-entrypoint.d/15-livestats-realip.envsh a partir de TRUSTED_PROXY_CIDR e
+# ADMIN_TRUSTED_PROXY_IP; vazios (padrao) => nenhuma diretiva real_ip, o IP da conexao vale.
+
+# ----------------------------------------------------------------------------------------------------
+# 8080 - PUBLICA (Cloudflare Tunnel aponta aqui). NAO existe nenhuma rota de admin: /, /admin,
+# /admin-assets/, /api/admin/ e /api/admin/login caem em `location /` => 404.
+# IP real: somente CF-Connecting-IP, e somente se a conexao vem do /32 de TRUSTED_PROXY_CIDR.
+# ----------------------------------------------------------------------------------------------------
+server {
+    listen 8080 default_server;
+    server_name _;
+
+    ${LIVESTATS_REALIP_PUBLIC}
+
+    include /etc/nginx/snippets/server_common.conf;
+    include /etc/nginx/snippets/locations_public.conf;
+
+    location / {
+        return 404;
+    }
+}
+
+# ----------------------------------------------------------------------------------------------------
+# 8081 - ADMIN (LAN/Tailscale via Nginx Proxy Manager; publicada so em ADMIN_BIND, padrao 127.0.0.1).
+# Tudo da publica + painel estatico + /api/admin/. IP real: ultimo salto de X-Forwarded-For, e somente se a
+# conexao vem do /32 de ADMIN_TRUSTED_PROXY_IP (o NPM).
+# ----------------------------------------------------------------------------------------------------
+server {
+    listen 8081 default_server;
+    server_name _;
+
+    ${LIVESTATS_REALIP_ADMIN}
+
+    include /etc/nginx/snippets/server_common.conf;
+    include /etc/nginx/snippets/locations_public.conf;
+
+    # --- painel (estatico, cabecalhos estritos; os dados so vem de /api/admin/, que exige sessao)
+    location = / {
+        limit_req zone=public burst=30 nodelay;
+        default_type application/json;
+        include /etc/nginx/snippets/static_headers.conf;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405 '{"detail":"Method Not Allowed"}';
+        }
+        try_files /admin-assets/index.html =404;
+    }
+
+    location ~ ^/admin/?$ {
+        limit_req zone=public burst=30 nodelay;
+        default_type application/json;
+        include /etc/nginx/snippets/static_headers.conf;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405 '{"detail":"Method Not Allowed"}';
+        }
+        try_files /admin-assets/index.html =404;
+    }
+
+    location ^~ /admin-assets/ {
+        limit_req zone=public burst=30 nodelay;
+        default_type application/json;
+        include /etc/nginx/snippets/static_headers.conf;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405 '{"detail":"Method Not Allowed"}';
+        }
+        if ($uri ~ /$) {
+            return 404;
+        }
+        try_files $uri =404;
+    }
+
+    # --- API de admin. Qualquer metodo comum chega a api, que decide: sem sessao => 401 (D30).
+    location /api/admin/ {
+        limit_req zone=admin burst=20 nodelay;
+        default_type application/json;
+        if ($request_method !~ ^(GET|HEAD|POST|PUT|PATCH|DELETE)$) {
+            return 405 '{"detail":"Method Not Allowed"}';
+        }
+        include /etc/nginx/snippets/proxy_api.conf;
+    }
+
+    # --- login: limite proprio, por IP real. Regex (e nao `location =`) para cobrir tambem
+    # /api/admin/login/ e variantes com barras repetidas.
+    location ~ ^/api/admin/login/*$ {
+        limit_req zone=login burst=5 nodelay;
+        default_type application/json;
+        if ($request_method !~ ^(GET|HEAD|POST|PUT|PATCH|DELETE)$) {
+            return 405 '{"detail":"Method Not Allowed"}';
+        }
+        include /etc/nginx/snippets/proxy_api.conf;
+    }
+
+    location / {
+        return 404;
+    }
+}
