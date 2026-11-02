@@ -1,0 +1,99 @@
+# Override de TESTE da T8, aplicado SOBRE o docker-compose.yml real (nada do compose real e copiado):
+#   docker compose -p livestats-t8 --project-directory <repo> -f docker-compose.yml -f tests/e2e/compose.e2e.yml ...
+# Faz so quatro coisas, todas por configuracao (nenhuma linha de producao muda):
+#   1. troca nomes de containers/redes/volumes/imagens (a pilha de teste nao colide com uma pilha real);
+#   2. aponta os 4 segredos para arquivos GERADOS NA HORA (sentinelas aleatorias), fora do repositorio;
+#   3. usa as URLs-base opcionais da D19 para os workers falarem com o YouTube FALSO;
+#   4. coloca o YouTube falso no MESMO namespace de rede de cada worker (network_mode: service:...), de modo que
+#      o endereco 127.0.0.1 (loopback, unico http aceito pelas URLs-base) alcance o servidor falso. Isso existe so
+#      neste arquivo de teste: o codigo e o compose de producao nao sabem que o servidor falso existe.
+# Variaveis E2E_* sao definidas pelo teste (tests/e2e/e2e_stack.py).
+
+services:
+  web:
+    container_name: t8-web
+    image: livestats-t8/web:test
+  api:
+    container_name: t8-api
+    image: livestats-t8/api:test
+  worker-lives:
+    container_name: t8-worker-lives
+    image: livestats-t8/worker-lives:test
+    environment:
+      LIVE_INTERVAL: "10"
+      YOUTUBE_API_BASE_URL: http://127.0.0.1:${E2E_FAKE_PORT}/youtube/v3
+  worker-inscritos:
+    container_name: t8-worker-inscritos
+    image: livestats-t8/worker-inscritos:test
+    environment:
+      SCRAPE_INTERVAL: "5"
+      YOUTUBE_WWW_BASE_URL: http://127.0.0.1:${E2E_FAKE_PORT}
+      YOUTUBE_STUDIO_BASE_URL: http://127.0.0.1:${E2E_FAKE_PORT}
+
+  # YouTube falso (unica fronteira simulada). Um por worker, porque cada um vive no namespace de rede do seu worker.
+  fake-lives:
+    image: python:3.12-slim
+    container_name: t8-fake-lives
+    network_mode: "service:worker-lives"
+    depends_on:
+      - worker-lives
+    command: ["python", "/fake/fake_youtube.py", "fake-lives"]
+    environment:
+      FAKE_PORT: ${E2E_FAKE_PORT}
+    volumes:
+      - type: bind
+        source: ${E2E_FAKE_SRC}
+        target: /fake/fake_youtube.py
+        read_only: true
+      - type: bind
+        source: ${E2E_RECORDED_FIXTURE}
+        target: /fake/videos_recorded.json
+        read_only: true
+      - type: bind
+        source: ${E2E_STATE_DIR}
+        target: /state
+  fake-studio:
+    image: python:3.12-slim
+    container_name: t8-fake-studio
+    network_mode: "service:worker-inscritos"
+    depends_on:
+      - worker-inscritos
+    command: ["python", "/fake/fake_youtube.py", "fake-studio"]
+    environment:
+      FAKE_PORT: ${E2E_FAKE_PORT}
+    volumes:
+      - type: bind
+        source: ${E2E_FAKE_SRC}
+        target: /fake/fake_youtube.py
+        read_only: true
+      - type: bind
+        source: ${E2E_RECORDED_FIXTURE}
+        target: /fake/videos_recorded.json
+        read_only: true
+      - type: bind
+        source: ${E2E_STATE_DIR}
+        target: /state
+
+networks:
+  internal:
+    name: livestats-t8-internal
+  edge:
+    name: livestats-t8-edge
+  egress:
+    name: livestats-t8-egress
+
+volumes:
+  livestats-data:
+    name: livestats-t8-data
+  livestats-admin:
+    name: livestats-t8-admin
+
+secrets:
+  youtube_api_key:
+    file: ${E2E_SECRETS_DIR}/youtube_api_key.txt
+  cookie_private_key:
+    file: ${E2E_SECRETS_DIR}/cookie_private_key.txt
+  cookie_public_key:
+    file: ${E2E_SECRETS_DIR}/cookie_public_key.txt
+  admin_password_hash:
+    file: ${E2E_SECRETS_DIR}/admin_password_hash.txt
