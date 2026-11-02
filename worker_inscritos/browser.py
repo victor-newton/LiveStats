@@ -2,7 +2,7 @@
 
 Seguranca (ARCHITECTURE.md D16, S3, S4, V7):
 - Playwright controla o Chromium por PIPE (`--remote-debugging-pipe`); nao existe `--remote-debugging-port`.
-- Contexto efemero (`launch` + `new_context`): sem `user_data_dir`/perfil persistente.
+- Contexto efemero (`launch` + `new_context`): sem diretorio de perfil persistente.
 - `--no-sandbox` e a compensacao do container nao-root sem capabilities (D16); o container e o sandbox.
 - Print de debug so se `debug_dir` for informado (DEBUG_SCREENSHOT=1), em /tmp/debug.
 - Nada aqui registra nome ou valor de cookie, nem o texto de excecoes que possam citar cookies.

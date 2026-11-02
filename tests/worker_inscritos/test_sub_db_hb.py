@@ -66,7 +66,7 @@ def test_sub_db_01_o_que_o_worker_nao_pode_fazer(env, add_cookies, sql):
     add_cookies([cookie("a", "1")])
     con = connect(str(env.db))
     try:
-        with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        with pytest.raises(sqlite3.DatabaseError, match="not authorized|is prohibited"):
             con.execute(sql).fetchall()
     finally:
         con.close()
@@ -236,7 +236,7 @@ def test_sub_db_01_espera_o_banco_ocupado_em_vez_de_falhar(env):
     # busy_timeout de 5 s por conexao: uma escrita concorrente de ~1 s nao pode derrubar o worker
     con = connect(str(env.db))
     store = Store(con)
-    outro = sqlite3.connect(env.db, isolation_level=None)
+    outro = sqlite3.connect(env.db, isolation_level=None, check_same_thread=False)
     outro.execute("BEGIN IMMEDIATE")
     threading.Timer(1.0, lambda: outro.execute("COMMIT")).start()
     inicio = time.monotonic()

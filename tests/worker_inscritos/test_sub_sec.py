@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 import socket
@@ -158,7 +159,7 @@ def test_sub_sec_04_chave_ausente_vazia_ou_invalida_e_erro(tmp_path):
     vazio.write_text("  \n")
     with pytest.raises(ConfigError):
         ler_chave_privada(str(vazio))
-    for conteudo in ("isto nao e base64!!", "QUJD", "A" * 43 + "="):  # base64 invalido, 3 bytes, tamanho errado
+    for conteudo in ("isto nao e base64!!", "QUJD", base64.b64encode(b"x" * 31).decode()):  # invalido, 3 bytes, 31 bytes
         arq = tmp_path / "ruim.txt"
         arq.write_text(conteudo)
         with pytest.raises(ConfigError):
