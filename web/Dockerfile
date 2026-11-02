@@ -38,6 +38,8 @@ USER root
 # O default.conf da imagem (listen 8080) conflitaria com o nosso; em producao o compose monta um tmpfs
 # em /etc/nginx/conf.d, onde o envsubst escreve a configuracao renderizada.
 RUN rm -f /etc/nginx/conf.d/default.conf /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
+# Correcoes de seguranca do Alpine publicadas depois da imagem base; o curl nao e usado (o healthcheck usa wget).
+RUN apk upgrade --no-cache && apk del --no-cache curl
 COPY --from=confcheck --chown=0:0 /etc/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY --from=confcheck --chown=0:0 /etc/nginx/snippets/ /etc/nginx/snippets/
 COPY --from=confcheck --chown=0:0 /etc/nginx/templates/ /etc/nginx/templates/
