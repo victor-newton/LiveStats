@@ -151,30 +151,36 @@ class AdminAuth:
         now = int(self._clock.now())
         id_hash = hash_session_id(session_id)
         with db.connection(db.open_admin, self._db_path) as conn:
-            self._maybe_sweep(conn, now)
-            with db.transaction(conn, immediate=True):
-                row = conn.execute(
-                    "SELECT id_hash, csrf_token, username, created_at, last_seen_at, expires_at "
-                    "FROM admin_sessions WHERE id_hash = ?",
-                    (id_hash,),
-                ).fetchone()
-                if row is None:
-                    return None
-                if now >= row["expires_at"] or now >= row["last_seen_at"] + IDLE_TTL:
-                    conn.execute("DELETE FROM admin_sessions WHERE id_hash = ?", (id_hash,))
-                    return None
-                last_seen = row["last_seen_at"]
-                if now - last_seen >= TOUCH_INTERVAL:
-                    conn.execute("UPDATE admin_sessions SET last_seen_at = ? WHERE id_hash = ?", (now, id_hash))
-                    last_seen = now
-                return SessionData(
-                    id_hash=row["id_hash"],
-                    csrf_token=row["csrf_token"],
-                    username=row["username"],
-                    created_at=row["created_at"],
-                    last_seen_at=last_seen,
-                    expires_at=row["expires_at"],
-                )
+            try:
+                return self._read_session(conn, id_hash, now)
+            finally:
+                self._maybe_sweep(conn, now)  # varredura DEPOIS da checagem propria
+
+    @staticmethod
+    def _read_session(conn: sqlite3.Connection, id_hash: str, now: int) -> SessionData | None:
+        with db.transaction(conn, immediate=True):
+            row = conn.execute(
+                "SELECT id_hash, csrf_token, username, created_at, last_seen_at, expires_at "
+                "FROM admin_sessions WHERE id_hash = ?",
+                (id_hash,),
+            ).fetchone()
+            if row is None:
+                return None
+            if now >= row["expires_at"] or now >= row["last_seen_at"] + IDLE_TTL:
+                conn.execute("DELETE FROM admin_sessions WHERE id_hash = ?", (id_hash,))
+                return None
+            last_seen = row["last_seen_at"]
+            if now - last_seen >= TOUCH_INTERVAL:
+                conn.execute("UPDATE admin_sessions SET last_seen_at = ? WHERE id_hash = ?", (now, id_hash))
+                last_seen = now
+            return SessionData(
+                id_hash=row["id_hash"],
+                csrf_token=row["csrf_token"],
+                username=row["username"],
+                created_at=row["created_at"],
+                last_seen_at=last_seen,
+                expires_at=row["expires_at"],
+            )
 
     def logout(self, session: SessionData) -> None:
         with db.connection(db.open_admin, self._db_path) as conn:
