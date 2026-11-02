@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "source": "youtube-data-api-v3",
+    "synthetic": true,
+    "recorded_at": null,
+    "http_status": 503,
+    "content_type": "application/json; charset=UTF-8",
+    "request": {"endpoint": "videos"},
+    "note": "Corpo no formato de erro documentado pelo Google (https://developers.google.com/youtube/v3/docs/errors); impossivel de provocar na API real."
+  },
+  "body": {
+    "error": {
+      "code": 503,
+      "message": "The service is currently unavailable.",
+      "errors": [
+        {
+          "message": "The service is currently unavailable.",
+          "domain": "global",
+          "reason": "backendError"
+        }
+      ],
+      "status": "UNAVAILABLE"
+    }
+  }
+}
