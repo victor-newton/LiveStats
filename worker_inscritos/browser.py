@@ -90,6 +90,13 @@ JS_ESTRATEGIA_3 = r"""
 
 ESTRATEGIAS = (JS_ESTRATEGIA_1, JS_ESTRATEGIA_2, JS_ESTRATEGIA_3)
 
+# Roda as estrategias em ordem e devolve [location.href, texto]; a URL e da pagina de onde o texto saiu.
+_JS_LER_PAGINA = (
+    "() => { const url = location.href; for (const f of ["
+    + ", ".join(ESTRATEGIAS)
+    + "]) { const r = f(); if (r) return [url, r]; } return [url, null]; }"
+)
+
 
 @dataclass(frozen=True)
 class Timings:
@@ -245,12 +252,16 @@ class BrowserSession:
         assert self.page is not None
         return self.page.url
 
-    def read_counter(self) -> str | None:
-        """Texto cru do contador, pela primeira estrategia que casar /\\d{3,}/; None se nenhuma casar."""
-        assert self.page is not None
-        for estrategia in ESTRATEGIAS:
-            bruto = self.page.evaluate(estrategia)
-            if bruto:
-                return str(bruto)
-        return None
+    def read_page(self) -> tuple[str, str | None]:
+        """(URL, texto cru) lidos no MESMO `evaluate`, ou seja, da mesma pagina.
 
+        `page.url` na API sincrona pode estar desatualizado se a pagina navegou sozinha; por isso a URL
+        vem de `location.href` no mesmo instante da leitura do contador.
+        """
+        assert self.page is not None
+        url, bruto = self.page.evaluate(_JS_LER_PAGINA)
+        return str(url), (str(bruto) if bruto else None)
+
+    def read_counter(self) -> str | None:
+        """Texto cru do contador, pela primeira estrategia que casar 3 ou mais digitos; None se nenhuma casar."""
+        return self.read_page()[1]

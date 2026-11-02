@@ -184,24 +184,26 @@ class Worker:
             if not self._apply_cookie_set(set_id):
                 return
 
-        if is_login_url(self.session.current_url()):
-            log.error("[AUTH] *** REDIRECIONADO PARA LOGIN - atualize os cookies no painel admin! ***")
-            self.falhas += 1
-            self.consecutive_failures += 1
-            self._set("error", "login_required", MSG_LOGIN, "login_required")
-            self.publish()
-        else:
-            self._read_and_store()
+        self._read_and_store()
 
         if self.falhas >= MAX_FALHAS:
             self._reload()
 
     def _read_and_store(self) -> None:
         try:
-            raw = self.session.read_counter()
+            url, raw = self.session.read_page()
         except PlaywrightError as exc:
             log.warning("[!] Erro ao ler a pagina (%s)", type(exc).__name__)
             self._read_failure("browser_error", MSG_BROWSER)
+            return
+
+        # A URL vem da mesma pagina de onde o texto foi lido: nada lido numa pagina de login e gravado.
+        if is_login_url(url):
+            log.error("[AUTH] *** REDIRECIONADO PARA LOGIN - atualize os cookies no painel admin! ***")
+            self.falhas += 1
+            self.consecutive_failures += 1
+            self._set("error", "login_required", MSG_LOGIN, "login_required")
+            self.publish()
             return
 
         if not raw:
