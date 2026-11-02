@@ -1,0 +1,9 @@
+# Dependências de TESTE do front (T6). Versões fixas; playwright deve ser a
+# mesma da imagem mcr.microsoft.com/playwright/python:v1.58.0-noble.
+pytest==8.4.2
+playwright==1.58.0
+PyYAML==6.0.3
+jsonschema==4.25.1
+referencing==0.36.2
+rfc3339-validator==0.1.4
+Pillow==11.3.0

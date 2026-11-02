@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiveStats</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/admin-assets/css/main.css">
+<script type="module" src="/admin-assets/js/main.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>LiveStats</h1>
+  <span class="tag">Painel de controle</span>
+  <div class="user-box" id="userBox" hidden>
+    <span class="user-name" id="userName"></span>
+    <button type="button" class="btn-ghost" id="logoutBtn">Sair</button>
+  </div>
+</header>
+
+<main class="container">
+  <p class="loading" id="loadingView" role="status">Carregando…</p>
+
+  <section class="login-card" id="loginView" aria-labelledby="loginTitle" hidden>
+    <h2 id="loginTitle">Entrar</h2>
+    <form id="loginForm" method="post" novalidate>
+      <div class="field">
+        <label for="loginUser">Usuário</label>
+        <input class="text-input" id="loginUser" name="username" type="text" autocomplete="username" maxlength="64" required>
+      </div>
+      <div class="field">
+        <label for="loginPass">Senha</label>
+        <input class="text-input" id="loginPass" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+      </div>
+      <button type="submit" class="btn-primary" id="loginBtn">Entrar</button>
+      <p class="msg err" id="loginMsg" role="alert" hidden></p>
+    </form>
+  </section>
+
+  <div id="panelView" hidden>
+    <p class="msg err" id="panelNotice" role="alert" hidden></p>
+
+    <section class="section" aria-labelledby="lives-title">
+      <h2 class="section-title" id="lives-title">Lives</h2>
+      <div class="slots-grid" id="slotsGrid"></div>
+      <div class="actions">
+        <button type="button" class="btn-save" id="saveBtn">Salvar URLs</button>
+        <span class="save-msg" id="saveMsg" role="status" hidden>✓ Salvo com sucesso</span>
+        <span class="msg err" id="saveErr" role="alert" hidden></span>
+      </div>
+      <div class="endpoints">
+        <h3>Endpoints JSON</h3>
+        <div class="endpoint-list" id="epList"></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="subs-title">
+      <h2 class="section-title" id="subs-title">Inscritos</h2>
+      <div class="stat-row">
+        <div class="stat">
+          <span class="stat-name">Inscritos atuais</span>
+          <span class="stat-big" id="subsCurrent">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-name">Última leitura</span>
+          <span class="stat-small" id="subsLast">—</span>
+        </div>
+      </div>
+      <div class="status-badge bad" id="cookieBadge">❌ Nenhum cookie — scraper não autenticado</div>
+      <p class="msg err auth-alert" id="authAlert" role="alert" hidden></p>
+      <h3 class="sub-title">Workers</h3>
+      <ul class="workers" id="workerList"></ul>
+    </section>
+
+    <section class="section" aria-labelledby="ck-title">
+      <h2 class="section-title" id="ck-title">🍪 Atualizar cookies de autenticação</h2>
+      <div class="steps" id="cookieSteps">
+        <b>Como exportar pelo EditThisCookie:</b><br>
+        1. No Chrome, acesse <code>studio.youtube.com</code> logado na conta do canal<br>
+        2. Clique no ícone do <b>EditThisCookie</b> na barra de extensões<br>
+        3. Clique no botão <b>Export</b> (ícone de seta para baixo ↓)<br>
+        4. O JSON é copiado para a área de transferência automaticamente<br>
+        5. Cole aqui abaixo e clique em Salvar
+      </div>
+      <div class="field">
+        <label for="cookiesInput">JSON de cookies do EditThisCookie</label>
+        <textarea class="cookies-input" id="cookiesInput" autocomplete="off" spellcheck="false" placeholder="Cole aqui o JSON do EditThisCookie...&#10;&#10;Exemplo:&#10;[&#10;  {&quot;name&quot;: &quot;SID&quot;, &quot;value&quot;: &quot;g.a000...&quot;, &quot;domain&quot;: &quot;.youtube.com&quot;, ...},&#10;  ...&#10;]"></textarea>
+      </div>
+      <button type="button" class="btn-primary" id="cookiesBtn">💾 Salvar cookies e recarregar scraper</button>
+      <p class="msg" id="cookiesMsg" role="status" hidden></p>
+    </section>
+  </div>
+</main>
+
+<template id="slotTemplate">
+  <div class="slot-card">
+    <div class="slot-header">
+      <label class="slot-label"></label>
+      <div class="slot-status"></div>
+    </div>
+    <input class="slot-input" type="text" placeholder="https://youtube.com/watch?v=..." maxlength="2048" autocomplete="off" spellcheck="false">
+    <div class="slot-stats"></div>
+    <div class="slot-title" hidden></div>
+  </div>
+</template>
+
+<template id="endpointTemplate">
+  <div class="ep">
+    <span class="ep-badge">GET</span>
+    <span class="ep-url"></span>
+  </div>
+</template>
+</body>
+</html>
