@@ -268,11 +268,9 @@ def test_api_sec_01_422_nunca_expoe_input(stack: Stack):
         assert not keys & {"input", "ctx", "url"}, (template, keys)
         for item in body["detail"]:
             assert set(item) == {"loc", "msg", "type"}
-        if "{" not in template or template.startswith("/api/public"):
-            pass
-        assert sentinel.replace("SENTINELA-", "") not in resp.text or sentinel in str(body["detail"][0]["loc"]) or True
-        assert_matches_openapi(resp, template if template != "/api/admin/slots" else template, "put" if "slots" in template else (
-            "get" if template.startswith(("/api/public", "/live")) else "post"))
+        operation = "put" if template == "/api/admin/slots" and "slots" in str(resp.request.url) else (
+            "post" if template.startswith("/api/admin") else "get")
+        assert_matches_openapi(resp, template, operation)
 
 
 def test_api_sec_01_valor_enviado_nao_volta_no_corpo(stack: Stack):
@@ -465,7 +463,7 @@ ALLOWED_ENV_NAMES = {
     "DB_PATH", "ADMIN_DB_PATH", "ADMIN_USERNAME", "PUBLIC_BASE_URL", "COOKIE_PUBLIC_KEY_FILE", "ADMIN_PASSWORD_HASH_FILE",
     "DB_SCHEMA_FILE", "ADMIN_DB_SCHEMA_FILE", "PORT",
 }
-HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "COMMIT", "ROLLBACK", "BEGIN"}  # + SQL de transacao
 
 
 def test_api_sec_07_sem_caminhos_de_teste_no_codigo_de_producao():
