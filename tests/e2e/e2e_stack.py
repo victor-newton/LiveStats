@@ -40,7 +40,7 @@ from docker_helpers import (  # noqa: E402  (reaproveita os ajudantes da T7 sem 
     wait_until,
 )
 
-__all__ = ["E2EStack", "Session", "get_stack", "header", "header_values", "http_request", "wait_until", "docker"]
+__all__ = ["E2EStack", "Session", "get_stack", "parse_ts", "header", "header_values", "http_request", "wait_until", "docker"]
 
 PROJECT = "livestats-t8"
 IMAGES = {name: f"livestats-t8/{name}:test" for name in ("web", "api", "worker-lives", "worker-inscritos")}
@@ -69,17 +69,25 @@ VID_LIVE, VID_UPCOMING, VID_ENDED, VID_OTHER = "AoVivo00001", "Agendada002", "En
 SLOT_URL = "https://www.youtube.com/watch?v={}"
 
 _STACK: E2EStack | None = None
+_FAILURE: BaseException | None = None
 _LOCK = threading.Lock()
 
 
 def get_stack() -> E2EStack:
     """Singleton da sessao de testes (e2e e security compartilham a mesma pilha)."""
-    global _STACK
+    global _STACK, _FAILURE
     with _LOCK:
+        if _FAILURE is not None:
+            raise AssertionError(f"a pilha de teste nao subiu: {_FAILURE}")
         if _STACK is None:
             stack = E2EStack()
             atexit.register(stack.stop)
-            stack.start()
+            try:
+                stack.start()
+            except BaseException as exc:
+                _FAILURE = exc
+                stack.stop()
+                raise
             _STACK = stack
         return _STACK
 
@@ -98,6 +106,7 @@ class Session:
 class E2EStack:
     started: bool = False
     startup_seconds: float = 0.0
+    _last_request: float = 0.0
     fresh: dict = field(default_factory=dict)
 
     # ------------------------------------------------------------------ ciclo de vida
@@ -246,13 +255,20 @@ class E2EStack:
 
     # ------------------------------------------------------------------ HTTP
     def public(self, path, method="GET", headers=None, body=None):
-        return http_request("127.0.0.1", PUBLIC_PORT, path, method, headers, body)
+        return self.on_port(PUBLIC_PORT, path, method, headers, body)
 
     def admin(self, path, method="GET", headers=None, body=None):
-        return http_request("127.0.0.1", ADMIN_PORT, path, method, headers, body)
+        return self.on_port(ADMIN_PORT, path, method, headers, body)
 
     def on_port(self, port, path, method="GET", headers=None, body=None):
-        return http_request("127.0.0.1", port, path, method, headers, body)
+        """Requisicao do host. Espacada (~9 req/s) para nao estourar o limit_req do proprio IP do host (10 r/s)."""
+        wait = 0.11 - (time.monotonic() - self._last_request)
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            return http_request("127.0.0.1", port, path, method, headers, body)
+        finally:
+            self._last_request = time.monotonic()
 
     def login(self, username=None, password=None, port=ADMIN_PORT, patience=90) -> Session:
         """Login real (corpo JSON). Espera e repete se o limite de tentativas (429) estiver ativo por testes anteriores."""
@@ -371,5 +387,53 @@ class E2EStack:
         snap = {}
         for port in (PUBLIC_PORT, ADMIN_PORT):
             for path in ("/inscritos.json", "/api/public/subscribers", "/live1.json", "/api/public/lives/1", "/health"):
-                snap[(port, path)] = self.on_port(port, path)
+                snap[(port, path)] = self.on_port(port, path, headers={"Origin": "https://qualquer.example"})
         self.fresh = snap
+
+    # ------------------------------------------------------------------ estados conhecidos (idempotentes)
+    def default_slots(self) -> list[str]:
+        return [SLOT_URL.format(VID_LIVE), SLOT_URL.format(VID_UPCOMING), SLOT_URL.format(VID_ENDED), ""]
+
+    def ensure_lives(self) -> None:
+        """Slots 1-3 com os videos padrao, slot 4 vazio, e o worker-lives ja refletindo isso."""
+        self.fake_set(videos=self.default_videos())
+        self.set_slots(self.default_slots())
+
+        def ready():
+            one = self.public_json("/live1.json")[0]
+            three = self.public_json("/live3.json")[0]
+            four = self.public_json("/live4.json")[0]
+            return (
+                one["video_id"] == VID_LIVE and one["titulo"] == "T8 Live ao vivo"
+                and three["video_id"] == VID_ENDED and four["status"] == "sem_url"
+            )
+
+        wait_until(ready, timeout=3 * LIVE_INTERVAL, interval=1)
+
+    def ensure_subs(self, value: str = "460600") -> None:
+        """Cookies de teste aplicados e leitura do contador corrente (`value`)."""
+        self.fake_set(login_ok=True, subscribers=value)
+        st = self.workers_status()
+        healthy = (
+            st["cookies"]["configured"] and st["cookies"]["applied"]
+            and st["workers"]["inscritos"]["auth_state"] == "ok"
+        )
+        if not healthy:
+            self.upload_cookies()
+
+        def ready():
+            s = self.workers_status()
+            sub = s["subscribers"]
+            return (
+                s["cookies"]["applied"] and s["workers"]["inscritos"]["auth_state"] == "ok"
+                and sub is not None and sub["inscritos"] == value
+            )
+
+        wait_until(ready, timeout=90, interval=1)
+
+
+def parse_ts(text: str):
+    """'2026-11-02T16:43:22.101713Z' -> datetime (UTC)."""
+    from datetime import datetime
+
+    return datetime.fromisoformat(text.replace("Z", "+00:00"))
