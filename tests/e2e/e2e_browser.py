@@ -5,11 +5,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-from playwright.sync_api import Page, sync_playwright
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 
 @contextmanager
 def chromium_context(**kwargs):
+    from playwright.sync_api import sync_playwright  # import tardio: os testes de rede (dind) nao precisam do Playwright
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         ctx = browser.new_context(viewport={"width": 1280, "height": 900}, locale="pt-BR", **kwargs)
