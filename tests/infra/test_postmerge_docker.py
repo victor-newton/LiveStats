@@ -102,7 +102,7 @@ def test_infra_df_01_imagem_construida_nao_root_com_healthcheck(built_images, sv
     assert re.fullmatch(r"\d+(:\d+)?", user) and int(user.split(":")[0]) != 0
     assert info["Config"]["Healthcheck"]["Test"][0] == "CMD"
     env = info["Config"].get("Env") or []
-    assert not [e for e in env if re.search(r"(KEY|PASSWORD|TOKEN|SECRET|HASH)=", e)], env
+    assert not dh.sensitive_env_vars(env), env
     history = dh.docker("history", "--no-trunc", "--format", "{{.CreatedBy}}", built_images[svc]).stdout
     assert "secrets/" not in history and "AIza" not in history
 

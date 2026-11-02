@@ -12,6 +12,7 @@ import http.client
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -35,6 +36,20 @@ def docker(*args, check=True, timeout=300, input_text=None):
     if check and result.returncode != 0:
         raise AssertionError(f"docker {' '.join(args)} falhou ({result.returncode}):\n{result.stdout}\n{result.stderr}")
     return result
+
+
+# GPG_KEY vem da imagem oficial python:3.12-slim: e a impressao digital PUBLICA da chave de assinatura do
+# Python, nao um segredo nosso. Excecao por NOME exato; qualquer outra variavel continua varrida.
+INHERITED_PUBLIC_ENV = frozenset({"GPG_KEY"})
+
+
+def sensitive_env_vars(env):
+    """Entradas 'NOME=valor' cujo nome termina em KEY/PASSWORD/TOKEN/SECRET/HASH (exceto INHERITED_PUBLIC_ENV)."""
+    return [
+        e for e in env
+        if e.split("=", 1)[0] not in INHERITED_PUBLIC_ENV
+        and re.search(r"(KEY|PASSWORD|TOKEN|SECRET|HASH)=", e)
+    ]
 
 
 def require_docker():
