@@ -96,13 +96,23 @@ def fetch_status(page: Page, method: str, path: str, body: object | None = None)
     )
 
 
-def wait_until(condition: Callable[[], object], what: str, timeout: float = 5.0) -> None:
-    """Espera (tempo REAL) até `condition()` ser verdadeira; falha com `what`."""
+def wait_until(
+    condition: Callable[[], object], what: str, timeout: float = 5.0, page: Page | None = None
+) -> None:
+    """Espera (tempo REAL) até `condition()` ser verdadeira; falha com `what`.
+
+    Passe `page` quando a condição depender de eventos do Playwright (handlers
+    de `page.route`, console, requisições): eles só são entregues enquanto a
+    thread principal está dentro de uma chamada do Playwright.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if condition():
             return
-        time.sleep(0.02)
+        if page is not None:
+            page.wait_for_timeout(20)
+        else:
+            time.sleep(0.02)
     raise AssertionError(f"Tempo esgotado esperando: {what}")
 
 

@@ -108,7 +108,7 @@ def test_web_login_04_401_durante_a_sessao_volta_ao_login_e_limpa_o_painel(page:
     api.set_stats(1, api.live_stats(1, titulo="Titulo que nao pode sobrar"))
     freeze_clock(page)
     do_login(page, base_url, api)
-    expect(page.locator(".slot-title")).to_have_text("Titulo que nao pode sobrar")
+    expect(page.locator(".slot-title:not([hidden])")).to_have_text("Titulo que nao pode sobrar")
     expect(page.locator("#inp1")).to_have_value("https://youtube.com/watch?v=dQw4w9WgXcQ")
 
     api.expire_sessions()

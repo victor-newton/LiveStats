@@ -44,13 +44,11 @@ def test_web_slot_03_estados_do_cartao(page: Page, api, base_url):
     do_login(page, base_url, api)
     cards = page.locator(".slot-card")
 
-    def dot_classes(i: int) -> list[str]:
-        return (cards.nth(i).locator(".slot-status").get_attribute("class") or "").split()
-
-    assert dot_classes(0) == ["slot-status", "ao_vivo"]
-    assert dot_classes(1) == ["slot-status", "encerrada"]
-    assert dot_classes(2) == ["slot-status", "agendada"]
-    assert dot_classes(3) == ["slot-status"]  # sem_url: sem classe de estado
+    dot = lambda i: cards.nth(i).locator(".slot-status")  # noqa: E731
+    expect(dot(0)).to_have_class("slot-status ao_vivo")
+    expect(dot(1)).to_have_class("slot-status encerrada")
+    expect(dot(2)).to_have_class("slot-status agendada")
+    expect(dot(3)).to_have_class("slot-status")  # sem_url: sem classe de estado
 
     # com views > 0: números formatados e rótulos Views/Likes
     c1 = cards.nth(0)

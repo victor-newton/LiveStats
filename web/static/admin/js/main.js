@@ -152,7 +152,10 @@ async function onLoginSubmit(ev) {
     const resp = await api('POST', '/api/admin/login', { username: user.value, password: pass.value });
     pass.value = '';
     if (resp.ok && resp.data) {
-      enterPanel(resp.data);
+      // A resposta do login não traz public_base_url; o token CSRF é o mesmo.
+      setCsrfToken(resp.data.csrf_token);
+      const sess = await api('GET', '/api/admin/session');
+      enterPanel(sess.ok && sess.data ? sess.data : resp.data);
       return;
     }
     if (resp.status === 401) {

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from api_double import STATIC
@@ -29,7 +31,8 @@ def transitions(page: Page) -> list[str]:
 
 
 def esperado(digitos: str) -> list[str]:
-    return [f"translateY(-{d}em)" for d in digitos]
+    # O Chromium serializa "-0em" como "0em"; os demais ficam como "-<d>em".
+    return [f"translateY({'-' if d != '0' else ''}{d}em)" for d in digitos]
 
 
 def n_polls(api) -> int:
@@ -227,7 +230,7 @@ def test_web_ov_04c_carga_inicial_anima_com_atraso_de_50_mais_60ms_por_digito(pa
     freeze_clock(page)
     page.goto(f"{base_url}/contador")
     expect(page.locator(".digito-wrap")).to_have_count(6)
-    assert transforms(page) == ["translateY(0)"] * 6  # parados no zero
+    assert transforms(page) == ["translateY(0px)"] * 6  # parados no zero (o Chromium serializa 0 como 0px)
     assert transitions(page) == ["none"] * 6
     anim = f"transform 0.5s {CURVA}"
     page.clock.run_for(49)
@@ -303,9 +306,10 @@ def test_web_ov_05c_valor_vazio_rede_ou_json_quebrado_so_geram_warn(page: Page, 
     """Defesa: respostas FORA do contrato (o dublê não as produz), via interceptação do navegador."""
     api.subscribers = leitura("460600")
     freeze_clock(page)
-    corpo: dict[str, object] = {"modo": "ok"}
+    corpo: dict[str, object] = {"modo": "ok", "n": 0}
 
     def handler(route):
+        corpo["n"] = int(corpo["n"]) + 1
         if corpo["modo"] == "vazio":
             route.fulfill(status=200, content_type="application/json",
                           body='{"inscritos":"","raw":"","atualizado_em":"2026-11-02T14:32:10.654321Z"}')
@@ -323,17 +327,24 @@ def test_web_ov_05c_valor_vazio_rede_ou_json_quebrado_so_geram_warn(page: Page, 
     wait_until(lambda: transforms(page) == esperado("460600"), "animação inicial")
     avisos_antes = len([1 for t, _ in watch.console if t == "warning"])
 
+    def avisos_agora() -> int:
+        return len([1 for t, _ in watch.console if t == "warning"])
+
     corpo["modo"] = "vazio"
+    chamadas = int(corpo["n"])
     page.clock.run_for(5000)
+    wait_until(lambda: int(corpo["n"]) == chamadas + 1, "poll com valor vazio", page=page)
     page.wait_for_timeout(300)
-    assert len([1 for t, _ in watch.console if t == "warning"]) == avisos_antes  # vazio: ignorado em silêncio
+    assert avisos_agora() == avisos_antes  # vazio: ignorado em silêncio
     assert transforms(page) == esperado("460600")
 
     for modo in ("rede", "quebrado"):
         corpo["modo"] = modo
-        n = len([1 for t, _ in watch.console if t == "warning"])
+        n = avisos_agora()
+        chamadas = int(corpo["n"])
         page.clock.run_for(5000)
-        wait_until(lambda: len([1 for t, _ in watch.console if t == "warning"]) == n + 1, f"console.warn ({modo})")
+        wait_until(lambda: int(corpo["n"]) == chamadas + 1, f"poll ({modo})", page=page)
+        wait_until(lambda: avisos_agora() == n + 1, f"console.warn ({modo}): {watch.console}", page=page)
     avisos = [txt for t, txt in watch.console if t == "warning"]
     assert all("Erro ao buscar inscritos" in a for a in avisos[avisos_antes:])
     assert transforms(page) == esperado("460600")  # o contador continua mostrando o último valor
@@ -372,9 +383,28 @@ def test_web_ov_06b_pagina_servida_e_transparente_e_embutivel(page: Page, api, b
     assert sorted(srcs) == [f"{base_url}/overlay/contador.css", f"{base_url}/overlay/contador.js"]
     expect(page.locator(".digito-wrap")).to_have_count(6)
 
-    # embutível: uma página de OUTRA origem (about:blank) carrega o overlay num iframe
+    # embutível: uma página de OUTRA origem (outro host/porta, servidor real)
+    # carrega o overlay num iframe. frame-ancestors * só casa pais http(s).
+    html = f'<iframe id="f" src="{base_url}{path}" width="900" height="200"></iframe>'.encode()
+
+    class Hospedeiro(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+        def log_message(self, *args):
+            pass
+
+    servidor = ThreadingHTTPServer(("127.0.0.1", 0), Hospedeiro)
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
     host = page.context.new_page()
-    host.set_content(f'<iframe id="f" src="{base_url}{path}" width="900" height="200"></iframe>')
-    quadro = host.frame_locator("#f")
-    expect(quadro.locator(".digito-wrap")).to_have_count(6)
-    host.close()
+    try:
+        host.goto(f"http://localhost:{servidor.server_address[1]}/")
+        expect(host.frame_locator("#f").locator(".digito-wrap")).to_have_count(6)
+    finally:
+        host.close()
+        servidor.shutdown()
+        servidor.server_close()
