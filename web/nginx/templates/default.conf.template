@@ -71,6 +71,11 @@ server {
         try_files $uri =404;
     }
 
+    # Sem a barra final o Nginx redirecionaria (301) para /api/admin/; aqui e 404.
+    location = /api/admin {
+        return 404;
+    }
+
     # --- API de admin. Qualquer metodo comum chega a api, que decide: sem sessao => 401 (D30).
     location /api/admin/ {
         limit_req zone=admin burst=20 nodelay;

@@ -164,7 +164,7 @@ ADMIN_ON_PUBLIC = [
     "/api/admin/workers/status", "/api/admin/login", "/api/admin/login/", "/api/admin/nao-existe",
     "//api/admin/session", "/api//admin/session", "/api/%61dmin/session", "/%61pi/admin/session",
     "/api/public/../admin/session", "/api/public/..%2fadmin%2fsession", "/api/public/%2e%2e/admin/session",
-    "/api/public/lives/1/../../admin/session", "/API/ADMIN/session",
+    "/api/public/lives/1/../../admin/session", "/api/public/lives/1/%2e%2e/%2e%2e/admin/session", "/API/ADMIN/session",
 ]
 
 
@@ -227,7 +227,8 @@ def test_infra_ng_06_overlays_nas_duas_portas(stack_default):
         assert [r["body"] for r in res[:3]] == [html, html, html]
         assert header(res[3], "Content-Type").startswith("application/javascript")
         assert header(res[4], "Content-Type").startswith("text/css")
-        assert statuses(res[5:]) == [404, 404, 404, 404]
+        # ../ e normalizado pelo Nginx: na 8080 cai fora do mapa (404); na 8081 e o painel legitimo
+        assert statuses(res[5:]) == [404, 404, 404 if port == 8080 else 200, 404]
 
 
 # ---------------------------------------------------------------------------------------------- cabecalhos
@@ -417,9 +418,9 @@ def test_infra_ng_05_metodos_e_corpo(stack_default):
          {"path": "/live1.json", "method": "GET"}],
     )
     assert statuses(res) == [405] * 6 + [200]
-    for resp in res[:6]:
+    for index, resp in enumerate(res[:6]):
         assert json.loads(resp["body"]) == {"detail": "Method Not Allowed"}
-        check_security(resp) if "contador" not in resp["body"] else None
+        check_security(resp, overlay=(index == 5), label=f"405 #{index}")
     assert not [e for e in s.api_log() if "?m=" in e["path"]], "metodo recusado nao pode chegar a api"
     res = s.client(
         "51",
@@ -496,8 +497,9 @@ def test_infra_ng_extra_api_parada_da_502_json_e_o_proxy_acompanha_a_recriacao(w
             [{"path": "/live1.json", "headers": {"Origin": "https://x.example"}}, {"path": "/health"}, {"path": "/api/admin/session"}],
             port=8081,
         )
-        assert statuses(res) == [502, 502, 502]
-        assert json.loads(res[0]["body"]) == {"detail": "Bad Gateway"}
+        # DNS sem a api: 502 (nome nao resolve) ou 504 (resolvedor demora); nunca HTML nem 200
+        assert all(c in {502, 504} for c in statuses(res)), statuses(res)
+        assert json.loads(res[0]["body"])["detail"] in {"Bad Gateway", "Gateway Timeout"}
         assert header(res[0], "Access-Control-Allow-Origin") == "*", "o 502 das rotas de dados tem CORS"
         no_cors(res[1])
         no_cors(res[2])

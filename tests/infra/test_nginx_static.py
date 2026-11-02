@@ -89,7 +89,7 @@ def test_infra_ng_02_excecao_de_overlay_so_nos_overlays(pub, adm):
 
 def test_infra_ng_02_erros_json_com_cabecalhos(pub):
     named = {ng.loc_key(loc): loc for loc in ng.locations(pub) if loc.args[0].startswith("@")}
-    for code in ("403", "404", "413", "429", "500", "502", "504"):
+    for code in ("400", "403", "404", "405", "413", "429", "500", "502", "504"):
         loc = named[f"@e{code}"]
         assert loc.find("default_type")[0].args == ["application/json"]
         assert loc.find("return")[0].args[0] == code
@@ -185,7 +185,8 @@ def test_infra_ng_05_endurecimento(tree, pub, adm):
     allowed_admin = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}
     for server in (pub, adm):
         for loc in ng.locations(server):
-            if loc.args[0].startswith("@") or ng.loc_key(loc) == "/":
+            only_return = [c.name for c in loc.children] == ["return"]
+            if loc.args[0].startswith("@") or only_return:
                 continue
             ifs = [n for n in loc.walk() if n.name == "if" and any("$request_method" in a for a in n.args)]
             assert ifs, f"{ng.loc_key(loc)}: sem restricao de metodo"
