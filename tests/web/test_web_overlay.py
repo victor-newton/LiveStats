@@ -207,9 +207,13 @@ def test_web_ov_04b_estrutura_diferente_reconstroi_com_atraso_de_40ms_por_digito
     page.clock.run_for(5000)
     expect(page.locator(".digito-wrap")).to_have_count(6)  # reconstruiu
     assert page.evaluate("[...document.querySelectorAll('.digito-inner')].some((e, i) => e === window.__inners[i])") is False
-    # recém-construído: tudo parado no valor final, sem transição, até os atrasos vencerem
+    # recém-construído: tudo parado no valor final, sem transição, até os atrasos vencerem.
+    # O dígito 0 tem atraso 0 e a resposta do poll pode chegar ainda DENTRO do run_for(5000)
+    # (corrida entre a rede e o relógio falso, que depende da latência do servidor): o
+    # setTimeout(0) dele pode ou não já ter disparado. Os demais (40 ms em diante) nunca.
     assert transforms(page) == esperado("100000")
-    assert transitions(page) == ["none"] * 6
+    assert transitions(page)[0] in ("none", f"transform 0.5s {CURVA}")
+    assert transitions(page)[1:] == ["none"] * 5
 
     anim = f"transform 0.5s {CURVA}"
     page.clock.run_for(1)  # t = 1 ms: dígito 0 (atraso 0)
