@@ -779,6 +779,25 @@ components:
           enum: [quota_exceeded, rate_limited, http_error, network_error, invalid_response, login_required, counter_not_found, invalid_value, browser_error, decrypt_failed, config_error, db_error, null]
         last_error_message: { type: [string, "null"], maxLength: 200 }
 
+    # Mesmo formato de WorkerState mais auth_state obrigatorio. Objeto fechado explicito: um allOf com
+    # WorkerState (additionalProperties: false) reprovaria qualquer instancia que tivesse auth_state.
+    WorkerStateInscritos:
+      type: object
+      required: [state, last_heartbeat_at, last_success_at, consecutive_failures, interval_seconds, last_error_code, last_error_message, auth_state]
+      additionalProperties: false
+      properties:
+        state: { $ref: "#/components/schemas/WorkerState/properties/state" }
+        last_heartbeat_at: { $ref: "#/components/schemas/WorkerState/properties/last_heartbeat_at" }
+        last_success_at: { $ref: "#/components/schemas/WorkerState/properties/last_success_at" }
+        consecutive_failures: { $ref: "#/components/schemas/WorkerState/properties/consecutive_failures" }
+        interval_seconds: { $ref: "#/components/schemas/WorkerState/properties/interval_seconds" }
+        next_attempt_at: { $ref: "#/components/schemas/WorkerState/properties/next_attempt_at" }
+        last_error_code: { $ref: "#/components/schemas/WorkerState/properties/last_error_code" }
+        last_error_message: { $ref: "#/components/schemas/WorkerState/properties/last_error_message" }
+        auth_state:
+          type: string
+          enum: [unknown, ok, login_required, no_cookies, decrypt_failed]
+
     WorkersStatus:
       type: object
       required: [server_time, workers, cookies, subscribers]
@@ -791,15 +810,7 @@ components:
           additionalProperties: false
           properties:
             lives: { $ref: "#/components/schemas/WorkerState" }
-            inscritos:
-              allOf:
-                - { $ref: "#/components/schemas/WorkerState" }
-                - type: object
-                  required: [auth_state]
-                  properties:
-                    auth_state:
-                      type: string
-                      enum: [unknown, ok, login_required, no_cookies, decrypt_failed]
+            inscritos: { $ref: "#/components/schemas/WorkerStateInscritos" }
         cookies:
           type: object
           required: [configured, count, uploaded_at, applied]
