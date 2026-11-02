@@ -19,7 +19,10 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}"
 
 # Usuario sem privilegios 10001:10001 e /data root:10001 modo 2770 (D1). Este container NAO tem /admin-state.
-RUN groupadd --gid 10001 app \
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 app \
  && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin app \
  && mkdir /data \
  && chown root:10001 /data \

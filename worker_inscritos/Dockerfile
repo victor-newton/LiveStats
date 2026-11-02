@@ -34,7 +34,10 @@ COPY --from=builder /opt/venv /opt/venv
 
 # Chromium + bibliotecas de sistema (apt) na versao pedida pela biblioteca; instalado como root, somente
 # leitura para o usuario do worker. Sem cache do apt na imagem.
-RUN python -m playwright install --with-deps chromium \
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && python -m playwright install --with-deps chromium \
+ && apt-get purge -y --auto-remove xvfb xserver-common \
  && rm -rf /var/lib/apt/lists/* \
  && chmod -R a+rX /opt/ms-playwright
 

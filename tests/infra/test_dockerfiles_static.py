@@ -173,7 +173,8 @@ def test_infra_df_01_healthcheck_igual_ao_do_compose(repo, compose, svc, compose
 def test_infra_df_01_varredura_de_env_aceita_so_gpg_key_herdada():
     import docker_helpers as dh
 
-    assert dh.sensitive_env_vars(["GPG_KEY=0000000000000000000000000000000000000000", "PATH=/usr/bin"]) == []
+    # valor montado em tempo de execucao e de baixa entropia: o teste so olha o NOME da variavel
+    assert dh.sensitive_env_vars(["GPG_KEY=" + "0" * 40, "PATH=/usr/bin"]) == []
     assert dh.sensitive_env_vars(["YOUTUBE_API_KEY=x"]) == ["YOUTUBE_API_KEY=x"]
     assert dh.sensitive_env_vars(
         ["GPG_KEY=1", "ADMIN_PASSWORD=x", "MY_GPG_KEY=1", "COOKIE_HASH=y", "API_TOKEN=z", "APP_SECRET=s"]

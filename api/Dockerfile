@@ -23,7 +23,10 @@ ENV PYTHONUNBUFFERED=1 \
 #  - /data: root:10001 modo 2770 (api e workers escrevem no mesmo SQLite; um volume nomeado novo herda
 #    dono e modo deste diretorio).
 #  - /admin-state: 10001 modo 0700, SOMENTE nesta imagem (volume livestats-admin, D2).
-RUN groupadd --gid 10001 app \
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 app \
  && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin app \
  && mkdir /data /admin-state \
  && chown root:10001 /data \
