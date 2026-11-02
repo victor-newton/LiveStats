@@ -40,8 +40,6 @@ class ContractError(AssertionError):
 class Contract:
     def __init__(self, path: Path = SPEC_PATH) -> None:
         self.spec: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
-        self.patched_defects: list[str] = []
-        self._fix_workers_status_defect()
         resource = Resource.from_contents(self.spec, default_specification=DRAFT202012)
         self.registry = Registry().with_resource(SPEC_URI, resource)
         self.format_checker = FormatChecker()
@@ -50,34 +48,6 @@ class Contract:
         for template in templates:
             regex = re.sub(r"\{(\w+)\}", self._group, template)
             self._patterns.append((re.compile(f"^{regex}$"), template))
-
-    def _fix_workers_status_defect(self) -> None:
-        """Defeito do contrato (T1), corrigido SÓ na cópia em memória.
-
-        `WorkersStatus.workers.inscritos` combina, em `allOf`, o `WorkerState`
-        (que tem `additionalProperties: false`) com um objeto que acrescenta
-        `auth_state`. Nenhum documento consegue satisfazer os dois ao mesmo
-        tempo: o `auth_state` é "propriedade adicional" para o primeiro ramo.
-        A intenção é clara: um WorkerState MAIS `auth_state`. Aqui o schema é
-        reescrito exatamente assim, derivando tudo do próprio openapi.yaml
-        (nada é afrouxado: continua fechado e com todos os campos exigidos).
-        Se o contrato for corrigido, o patch deixa de se aplicar.
-        """
-        schemas = self.spec["components"]["schemas"]
-        inscritos = schemas["WorkersStatus"]["properties"]["workers"]["properties"]["inscritos"]
-        parts = inscritos.get("allOf")
-        if not parts:
-            return
-        base = self.deref(parts[0])
-        extra = parts[1]
-        merged = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [*base["required"], *extra["required"]],
-            "properties": {**base["properties"], **extra["properties"]},
-        }
-        schemas["WorkersStatus"]["properties"]["workers"]["properties"]["inscritos"] = merged
-        self.patched_defects.append("WorkersStatus.workers.inscritos: allOf + additionalProperties:false")
 
     @staticmethod
     def _group(match: re.Match[str]) -> str:
