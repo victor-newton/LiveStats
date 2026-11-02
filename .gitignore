@@ -1,0 +1,41 @@
+# Segredos — nunca versionar
+.env
+.env.*
+!.env.example
+secrets/*
+!secrets/README.md
+*.key
+*.pem
+cookies.json
+
+# Dados de runtime
+data/
+perfil_bot/
+debug.png
+*.db
+*.db-wal
+*.db-shm
+
+# Código original copiado do servidor (contém a chave antiga da API)
+codigo-original/
+*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Playwright
+node_modules/
+playwright-report/
+test-results/
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

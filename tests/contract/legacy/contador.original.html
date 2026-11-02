@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inscritos</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  #contador {
+    font-family: 'YouTube Sans', 'Roboto', sans-serif;
+    font-size: 80px;
+    font-weight: 700;
+    color: #FFFFFF;
+    letter-spacing: -2px;
+    display: flex;
+    gap: 0;
+    align-items: center;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
+  }
+  .digito-wrap {
+    display: inline-flex;
+    flex-direction: column;
+    height: 1em;
+    overflow: hidden;
+    position: relative;
+  }
+  .digito-inner {
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  .digito-inner span {
+    height: 1em;
+    line-height: 1em;
+    display: block;
+    text-align: center;
+  }
+  .separador {
+    display: inline-block;
+    padding: 0 1px;
+  }
+</style>
+</head>
+<body>
+<div id="contador"></div>
+<script>
+  const URL_JSON = './inscritos.json';
+  const INTERVALO_MS = 5000;
+  let valorAtual = null;
+
+  function construirCarrossel(container, texto) {
+    container.innerHTML = '';
+    for (let i = 0; i < texto.length; i++) {
+      const char = texto[i];
+      if (char === '.' || char === ',') {
+        const sep = document.createElement('span');
+        sep.className = 'separador';
+        sep.textContent = char;
+        container.appendChild(sep);
+      } else {
+        const wrap = document.createElement('div');
+        wrap.className = 'digito-wrap';
+        const inner = document.createElement('div');
+        inner.className = 'digito-inner';
+        for (let d = 0; d <= 9; d++) {
+          const span = document.createElement('span');
+          span.textContent = d;
+          inner.appendChild(span);
+        }
+        wrap.appendChild(inner);
+        container.appendChild(wrap);
+        const digito = parseInt(char);
+        inner.style.transform = `translateY(-${digito}em)`;
+        inner.style.transition = 'none';
+      }
+    }
+  }
+
+  function animarParaValor(container, novoTexto) {
+    const chars = [...novoTexto].filter(c => c !== '.' && c !== ',');
+    const inners = container.querySelectorAll('.digito-inner');
+    const textoAtual = valorAtual || '';
+    const estruturaIgual =
+      textoAtual.length === novoTexto.length &&
+      [...textoAtual].every((c, i) => (c === '.' || c === ',') === (novoTexto[i] === '.' || novoTexto[i] === ','));
+
+    if (!estruturaIgual) {
+      construirCarrossel(container, novoTexto);
+      const novosInners = container.querySelectorAll('.digito-inner');
+      novosInners.forEach((inner, idx) => {
+        const char = chars[idx];
+        if (char === undefined) return;
+        setTimeout(() => {
+          inner.style.transition = 'transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+          inner.style.transform = `translateY(-${parseInt(char)}em)`;
+        }, idx * 40);
+      });
+      return;
+    }
+
+    let idxChar = 0;
+    for (let i = 0; i < novoTexto.length; i++) {
+      const c = novoTexto[i];
+      if (c === '.' || c === ',') continue;
+      const inner = inners[idxChar];
+      if (inner) {
+        inner.style.transition = 'transform 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+        inner.style.transform = `translateY(-${parseInt(c)}em)`;
+      }
+      idxChar++;
+    }
+  }
+
+  async function atualizar() {
+    try {
+      const res = await fetch(URL_JSON + '?t=' + Date.now());
+      if (!res.ok) return;
+      const data = await res.json();
+      const novo = data.inscritos;
+      if (!novo || novo === valorAtual) return;
+      const container = document.getElementById('contador');
+      if (valorAtual === null) {
+        construirCarrossel(container, novo);
+        const inners = container.querySelectorAll('.digito-inner');
+        inners.forEach((inner, idx) => {
+          const char = [...novo].filter(c => c !== '.' && c !== ',')[idx];
+          if (!char) return;
+          inner.style.transform = 'translateY(0)';
+          inner.style.transition = 'none';
+          setTimeout(() => {
+            inner.style.transition = 'transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+            inner.style.transform = `translateY(-${parseInt(char)}em)`;
+          }, 50 + idx * 60);
+        });
+      } else {
+        animarParaValor(container, novo);
+      }
+      valorAtual = novo;
+    } catch (e) {
+      console.warn('Erro ao buscar inscritos:', e);
+    }
+  }
+
+  atualizar();
+  setInterval(atualizar, INTERVALO_MS);
+</script>
+</body>
+</html>

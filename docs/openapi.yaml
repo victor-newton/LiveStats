@@ -1,0 +1,815 @@
+openapi: 3.1.0
+info:
+  title: LiveStats API
+  version: 1.0.0
+  summary: Contrato HTTP da aplicação LiveStats (lives do YouTube + contador de inscritos).
+  description: |
+    Contrato T1. Fonte da verdade para api (T3), front (T6) e infraestrutura (T7); somente leitura para T2-T7.
+
+    **Portas.** O Nginx expõe duas portas. Cada operação declara em `servers` (e em `x-ports`) onde existe:
+    - `8080` pública (Cloudflare Tunnel): overlays, `/api/public/*`, aliases legados, `/health`. **Não existe rota de admin**: `/admin`, `/api/admin/*` e `/api/admin/login` respondem 404.
+    - `8081` admin (somente LAN/Tailscale, via Nginx Proxy Manager com HTTPS; ver ARCHITECTURE.md P1/D32): tudo da pública mais painel e `/api/admin/*`.
+
+    **Autenticação (admin).** Cookie de sessão `__Host-livestats_session` (`HttpOnly; Secure; SameSite=Strict; Path=/`, sem `Domain`) + cabeçalho `X-CSRF-Token` em todo método que altera estado (POST/PUT/PATCH/DELETE, inclusive logout). O token CSRF vem na resposta do login e de `GET /api/admin/session`; o front o guarda só em memória.
+    Ordem das checagens em `/api/admin/*` (exceto login): sem sessão válida -> 401; sessão válida, método que altera estado e CSRF ausente/errado -> 403.
+    **Caminhos desconhecidos.** Qualquer caminho sob `/api/admin/` (existente ou não, qualquer método), sem sessão válida, responde **401** JSON; com sessão válida e rota inexistente, **404** JSON. Nunca traceback nem HTML (rota `/api/admin/{path}` abaixo).
+
+    **Erros.** Corpo `{"detail": "<texto>"}` (`Error`), exceto 422 (`ValidationError`, que NUNCA devolve o valor enviado). 429 traz `Retry-After`. Respostas de cookies/login nunca ecoam segredos.
+
+    **CORS (decisão D10).** Somente nos GET públicos de dados (`/live{n}.json`, `/inscritos.json`, `/api/public/*`): `Access-Control-Allow-Origin: *` e `Access-Control-Allow-Methods: GET` (cabeçalhos emitidos pelo Nginx, também nas respostas de erro), e `OPTIONS` de preflight responde 204 com esses dois cabeçalhos. **Nunca** `Access-Control-Allow-Credentials`. Qualquer outra rota (admin, páginas, `/health`) não envia nenhum `Access-Control-Allow-*`.
+
+    **Formatos legados.** Bytes exatos em `docs/legacy-formats.md` e `tests/contract/legacy/`.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://localhost:8080
+    description: Porta pública
+  - url: http://localhost:8081
+    description: Porta admin (ouve em 127.0.0.1; acessada pelo NPM com HTTPS, pois o cookie é Secure; ver ARCHITECTURE.md P1)
+tags:
+  - name: public
+    description: Dados públicos de leitura (portas 8080 e 8081)
+  - name: legacy
+    description: Aliases com formato idêntico ao dos apps antigos (OBS/vMix)
+  - name: admin
+    description: Painel administrativo (somente porta 8081)
+  - name: health
+    description: Saúde
+  - name: pages
+    description: Páginas estáticas servidas pelo Nginx
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Saúde (superset dos /health do live-stats e do yt-inscritos)
+      description: Sempre 200 enquanto a api responde; não exige dados. Sem autenticação.
+      x-ports: [8080, 8081]
+      responses:
+        "200":
+          description: OK
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/public/lives/{slot}:
+    get:
+      tags: [public]
+      operationId: getPublicLive
+      summary: Estatísticas de um slot (objeto único)
+      description: Mesmos dados de `/live{n}.json`, porém como objeto (o alias legado devolve um array de 1 elemento). Sem autenticação.
+      x-ports: [8080, 8081]
+      parameters:
+        - name: slot
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 4 }
+      responses:
+        "200":
+          description: Estatísticas do slot
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' }, description: 'Emitido pelo Nginx' }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET }, description: 'Emitido pelo Nginx' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LiveSlot" }
+        "404":
+          description: Slot fora de 1..4
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Slot inválido (1-4)" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: Worker ainda não gravou dados deste slot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Dados ainda não disponíveis" }
+    options:
+      tags: [public]
+      operationId: optionsPublicLive
+      summary: Preflight CORS
+      description: Responde pelo Nginx (não chega à api). Sem `Access-Control-Allow-Credentials`.
+      x-ports: [8080, 8081]
+      responses:
+        "204":
+          description: Preflight aceito
+          headers:
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' } }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET } }
+
+  /api/public/subscribers:
+    get:
+      tags: [public]
+      operationId: getPublicSubscribers
+      summary: Última leitura de inscritos
+      description: Corpo idêntico ao de `/inscritos.json`. Sem autenticação.
+      x-ports: [8080, 8081]
+      responses:
+        "200":
+          description: Leitura atual
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' }, description: 'Emitido pelo Nginx' }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET }, description: 'Emitido pelo Nginx' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscribers" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: Ainda não há leitura
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Dados ainda não disponíveis. Scraper inicializando..." }
+    options:
+      tags: [public]
+      operationId: optionsPublicSubscribers
+      summary: Preflight CORS
+      description: Responde pelo Nginx (não chega à api). Sem `Access-Control-Allow-Credentials`.
+      x-ports: [8080, 8081]
+      responses:
+        "204":
+          description: Preflight aceito
+          headers:
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' } }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET } }
+
+  /live{n}.json:
+    get:
+      tags: [legacy]
+      operationId: getLegacyLive
+      summary: Alias legado /live1.json .. /live4.json
+      description: |
+        Corpo: **array com um objeto** (`LegacyLiveArray`), compacto, UTF-8 literal, ordem de chaves conforme `docs/legacy-formats.md` §1.2 (muda entre slot ativo e slot sem URL). `ativo` é string. O Nginx só encaminha `^/live[0-9]+\.json$`; a api devolve 404 para n fora de 1..4. Sem autenticação.
+      x-ports: [8080, 8081]
+      parameters:
+        - name: n
+          in: path
+          required: true
+          description: Número do slot (1 a 4)
+          schema: { type: integer, minimum: 1, maximum: 4 }
+      responses:
+        "200":
+          description: Array de um objeto
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' }, description: 'Emitido pelo Nginx' }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET }, description: 'Emitido pelo Nginx' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LegacyLiveArray" }
+              examples:
+                aoVivo:
+                  value: [{"video_id":"dQw4w9WgXcQ","titulo":"Sorteio ao vivo","status":"ao_vivo","views":1234,"likes":56,"views_formatado":"1.2K","likes_formatado":"56","atualizado_em":"2026-11-02T14:32:00.123456Z","slot":1,"ativo":"true"}]
+                semUrl:
+                  value: [{"slot":4,"ativo":"false","video_id":"","titulo":"","status":"sem_url","views":0,"likes":0,"views_formatado":"0","likes_formatado":"0","atualizado_em":"2026-11-02T14:32:00.456789Z"}]
+        "404":
+          description: n fora de 1..4
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Slot inválido (1-4)" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: Sem dados ainda
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Dados ainda não disponíveis" }
+    options:
+      tags: [legacy]
+      operationId: optionsLegacyLive
+      summary: Preflight CORS
+      description: Responde pelo Nginx (não chega à api). Sem `Access-Control-Allow-Credentials`.
+      x-ports: [8080, 8081]
+      responses:
+        "204":
+          description: Preflight aceito
+          headers:
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' } }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET } }
+
+  /inscritos.json:
+    get:
+      tags: [legacy]
+      operationId: getLegacySubscribers
+      summary: Alias legado /inscritos.json
+      description: Objeto com `inscritos` (string), `raw` e `atualizado_em`, nesta ordem. Bytes idênticos ao legado. Sem autenticação.
+      x-ports: [8080, 8081]
+      responses:
+        "200":
+          description: Leitura atual
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' }, description: 'Emitido pelo Nginx' }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET }, description: 'Emitido pelo Nginx' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscribers" }
+              example: {"inscritos":"460600","raw":"460600","atualizado_em":"2026-11-02T14:32:10.654321Z"}
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: Scraper ainda não leu
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Dados ainda não disponíveis. Scraper inicializando..." }
+    options:
+      tags: [legacy]
+      operationId: optionsLegacySubscribers
+      summary: Preflight CORS
+      description: Responde pelo Nginx (não chega à api). Sem `Access-Control-Allow-Credentials`.
+      x-ports: [8080, 8081]
+      responses:
+        "204":
+          description: Preflight aceito
+          headers:
+            Access-Control-Allow-Origin: { schema: { type: string, const: '*' } }
+            Access-Control-Allow-Methods: { schema: { type: string, const: GET } }
+
+  /contador:
+    get:
+      tags: [legacy, pages]
+      operationId: getLegacyCounterPage
+      summary: Alias legado do overlay do contador de inscritos
+      description: HTML estático servido pelo Nginx (fundo transparente para OBS/vMix). Mesmo documento de `/overlay/inscritos`. CSP com `frame-ancestors *` (embutível). Sem autenticação.
+      x-ports: [8080, 8081]
+      responses:
+        "200":
+          description: Página HTML
+          content:
+            text/html: { schema: { type: string } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /overlay/inscritos:
+    get:
+      tags: [pages]
+      operationId: getCounterOverlay
+      summary: Overlay do contador de inscritos
+      description: Mesmo conteúdo de `/contador`. Busca `/api/public/subscribers` a cada 5 s.
+      x-ports: [8080, 8081]
+      responses:
+        "200":
+          description: Página HTML
+          content:
+            text/html: { schema: { type: string } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /:
+    get:
+      tags: [pages]
+      operationId: getAdminPanel
+      summary: Painel administrativo (SPA estático)
+      description: Documento estático (login + painel). Os dados só vêm de `/api/admin/*`, que exigem sessão. Na porta 8080 esta rota é 404.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      responses:
+        "200":
+          description: Página HTML (CSP estrita, sem script inline)
+          content:
+            text/html: { schema: { type: string } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin:
+    get:
+      tags: [pages]
+      operationId: getAdminPanelAlias
+      summary: Alias de `/` (legado do yt-inscritos)
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      responses:
+        "200":
+          description: Mesmo documento de `/`
+          content:
+            text/html: { schema: { type: string } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /api/admin/login:
+    post:
+      tags: [admin]
+      operationId: adminLogin
+      summary: Login do admin
+      description: |
+        Sem sessão prévia e sem CSRF (cria a sessão). Cria **sempre uma sessão nova** (descarta o cookie anterior).
+        Limite de tentativas: 5 falhas em 60 s por IP **ou** por usuário -> a tentativa seguinte recebe 429 (mesmo com a senha certa) até a janela passar. Falha de usuário e de senha são indistinguíveis (401 idêntico, mesmo tempo de resposta). Segundo limite no Nginx (`limit_req`).
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Autenticado
+          headers:
+            Set-Cookie:
+              description: "`__Host-livestats_session=<id>; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=Strict`"
+              schema: { type: string }
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Credenciais inválidas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Credenciais inválidas" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/admin/logout:
+    post:
+      tags: [admin]
+      operationId: adminLogout
+      summary: Encerra a sessão
+      description: Apaga a sessão no servidor e expira o cookie. Exige sessão e CSRF.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      responses:
+        "200":
+          description: Sessão encerrada
+          headers:
+            Set-Cookie:
+              description: Mesmo nome, `Max-Age=0`
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/admin/session:
+    get:
+      tags: [admin]
+      operationId: adminSession
+      summary: Sessão atual
+      description: Usado pelo front ao carregar para decidir entre login e painel, e para recuperar o token CSRF. Renova o controle de inatividade.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Sessão válida
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/admin/slots:
+    get:
+      tags: [admin]
+      operationId: adminGetSlots
+      summary: Lê os 4 slots (URL + estatísticas atuais)
+      description: Substitui `GET /config`. As estatísticas vêm de `live_stats` (podem ser `null` antes do primeiro ciclo).
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Slots
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SlotsRead" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    put:
+      tags: [admin]
+      operationId: adminPutSlots
+      summary: Salva os 4 slots
+      description: |
+        Substitui `POST /config`. Exatamente 4 itens. Cada item: vazio, ou URL/ID do YouTube de onde se extrai um ID de vídeo pelo mesmo padrão do worker (`docs/legacy-formats.md` §1.3); espaços nas pontas são removidos antes de gravar. Qualquer outro texto (inclusive HTML) -> 422 e nada é gravado.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SlotsWrite" }
+      responses:
+        "200":
+          description: Gravado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SlotsWriteResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/admin/cookies:
+    post:
+      tags: [admin]
+      operationId: adminPostCookies
+      summary: Envia cookies do YouTube Studio (cifrados na api)
+      description: |
+        Substitui `POST /admin/cookies`. O corpo continua sendo o **array** exportado pelo EditThisCookie. Ordem das validações:
+        1. corpo que não é JSON -> 400 `JSON inválido no body da requisição`;
+        2. JSON que não é array ou é array vazio -> 400 `Esperado um array JSON com pelo menos 1 cookie`;
+        3. elemento que não é objeto ou sem `name`/`value` -> 400 `Cookie #<i> sem campo 'name' ou 'value'` (i começa em 0);
+        4. tipos, tamanhos, charset de `domain`, mais de 200 cookies -> 422 (sem ecoar valores).
+        Normalização: guarda apenas `name`, `value`, `domain` (links markdown `[x](y)` viram `x`; ausente = `.youtube.com`), `path` (ausente = `/`), `secure` (ausente = false). O array normalizado é cifrado com a chave PÚBLICA (PyNaCl SealedBox) e gravado em `cookie_sets`; os anteriores são apagados. A api não consegue ler de volta, e **nenhuma** resposta, log ou erro contém os cookies.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CookieArray" }
+      responses:
+        "200":
+          description: Cookies gravados (cifrados)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CookiesResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: Chave pública de cifragem indisponível ou banco indisponível
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/workers/status:
+    get:
+      tags: [admin]
+      operationId: adminWorkersStatus
+      summary: Status dos workers, dos cookies e da última leitura de inscritos
+      description: Alimenta o painel (inscritos atuais, última leitura, "N cookies carregados" ou "nenhum cookie"). Nunca devolve cookies, ciphertext, chaves ou texto de erro bruto.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Status
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkersStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/admin/{path}:
+    get:
+      tags: [admin]
+      operationId: adminUnknownRoute
+      summary: Caminho desconhecido sob /api/admin/ (qualquer método)
+      description: |
+        Rota "pega-tudo" que define o comportamento para caminhos inexistentes (decisão D30). Vale para GET, POST, PUT, PATCH e DELETE.
+        Sem sessão válida -> 401 (não revela se a rota existe). Com sessão válida -> 404 `{"detail":"Not Found"}`. Em métodos que alteram estado, a checagem de sessão vem antes de qualquer outra.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      x-methods: [GET, POST, PUT, PATCH, DELETE]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: path
+          in: path
+          required: true
+          description: Resto do caminho (pode conter barras)
+          schema: { type: string }
+      responses:
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Rota inexistente (com sessão válida)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { detail: "Not Found" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-livestats_session
+      description: "Sessão de admin. Cookie `HttpOnly; Secure; SameSite=Strict; Path=/`; id de 32 bytes aleatórios; o servidor guarda só o SHA-256. Expira em 8 h (absoluto) ou 30 min sem uso."
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Token devolvido por login/`GET /api/admin/session`. Obrigatório em POST/PUT/PATCH/DELETE autenticados.
+
+  responses:
+    BadRequest:
+      description: Requisição malformada
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Sem sessão válida (ausente, expirada ou encerrada)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { detail: "Não autenticado" }
+    Forbidden:
+      description: Sessão válida, mas `X-CSRF-Token` ausente ou incorreto
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { detail: "CSRF token inválido ou ausente" }
+    PayloadTooLarge:
+      description: Corpo acima do limite (256 KiB), recusado pelo Nginx
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationFailed:
+      description: Corpo ou parâmetro com tipo/tamanho/formato inválido. Nunca devolve o valor enviado.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ValidationError" }
+    TooManyRequests:
+      description: Limite de taxa (Nginx `limit_req` ou contador de login da api)
+      headers:
+        Retry-After:
+          description: Segundos até poder tentar de novo
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { detail: "Muitas tentativas. Tente novamente em instantes." }
+    ServiceUnavailable:
+      description: Dependência indisponível (banco) ou dado ainda não produzido
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      additionalProperties: false
+      properties:
+        detail: { type: string }
+
+    ValidationError:
+      type: object
+      required: [detail]
+      additionalProperties: false
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            required: [loc, msg, type]
+            additionalProperties: false   # sem `input`, `ctx` ou `url`: nunca ecoa o valor enviado
+            properties:
+              loc:
+                type: array
+                items: { oneOf: [{ type: string }, { type: integer }] }
+              msg: { type: string }
+              type: { type: string }
+
+    Ok:
+      type: object
+      required: [ok]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, const: true }
+
+    Health:
+      type: object
+      required: [status, server_time, data_file_exists, inscritos, last_update]
+      additionalProperties: false
+      properties:
+        status: { type: string, const: ok }
+        server_time: { $ref: "#/components/schemas/LegacyTimestamp" }
+        data_file_exists: { type: boolean, description: Existe leitura de inscritos }
+        inscritos: { type: [string, "null"] }
+        last_update: { oneOf: [{ $ref: "#/components/schemas/LegacyTimestamp" }, { type: "null" }] }
+
+    LegacyTimestamp:
+      type: string
+      description: UTC, `datetime.utcnow().isoformat() + "Z"` (microssegundos presentes, salvo se exatamente zero).
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$'
+      examples: ["2026-11-02T14:32:00.123456Z"]
+
+    LiveSlot:
+      type: object
+      description: Uma linha de `live_stats`. Os nomes são os do JSON legado. Atenção ao tipo de `ativo` (string).
+      required: [slot, ativo, video_id, titulo, status, views, likes, views_formatado, likes_formatado, atualizado_em]
+      additionalProperties: false
+      properties:
+        slot: { type: integer, minimum: 1, maximum: 4 }
+        ativo: { type: string, enum: ["true", "false"] }
+        video_id: { type: string, pattern: '^([A-Za-z0-9_-]{11})?$', description: Vazio quando status = sem_url }
+        titulo: { type: string, maxLength: 1000, description: Texto puro; o front usa textContent }
+        status: { type: string, enum: [ao_vivo, agendada, encerrada, sem_url] }
+        views: { type: integer, minimum: 0 }
+        likes: { type: integer, minimum: 0 }
+        views_formatado: { type: string, examples: ["0", "1.2K", "1.2M", "1000.0K"] }
+        likes_formatado: { type: string }
+        atualizado_em: { $ref: "#/components/schemas/LegacyTimestamp" }
+
+    LegacyLiveArray:
+      type: array
+      minItems: 1
+      maxItems: 1
+      items: { $ref: "#/components/schemas/LiveSlot" }
+      description: Array de exatamente um objeto. Ordem das chaves em `docs/legacy-formats.md` §1.2.
+
+    Subscribers:
+      type: object
+      required: [inscritos, raw, atualizado_em]
+      additionalProperties: false
+      properties:
+        inscritos: { type: string, minLength: 2, maxLength: 32, examples: ["460600", "460.600"], description: String (não número), após filtrar_numero }
+        raw: { type: string, maxLength: 256 }
+        atualizado_em: { $ref: "#/components/schemas/LegacyTimestamp" }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
+
+    LoginResponse:
+      type: object
+      required: [ok, username, csrf_token, expires_at]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, const: true }
+        username: { type: string }
+        csrf_token: { type: string, minLength: 32, maxLength: 128 }
+        expires_at: { type: string, format: date-time, description: Limite absoluto da sessão (UTC) }
+
+    SessionInfo:
+      type: object
+      required: [authenticated, username, csrf_token, expires_at, idle_expires_at, public_base_url]
+      additionalProperties: false
+      properties:
+        authenticated: { type: boolean, const: true }
+        username: { type: string }
+        csrf_token: { type: string, minLength: 32, maxLength: 128 }
+        expires_at: { type: string, format: date-time }
+        idle_expires_at: { type: string, format: date-time }
+        public_base_url:
+          type: [string, "null"]
+          description: Base pública para exibir "Endpoints JSON" (config PUBLIC_BASE_URL). Nulo = o painel usa só os caminhos.
+
+    SlotItem:
+      type: object
+      required: [slot, url, stats]
+      additionalProperties: false
+      properties:
+        slot: { type: integer, minimum: 1, maximum: 4 }
+        url: { type: string, maxLength: 2048 }
+        stats:
+          oneOf:
+            - { $ref: "#/components/schemas/LiveSlot" }
+            - { type: "null" }
+
+    SlotsRead:
+      type: object
+      required: [slots, saved_at]
+      additionalProperties: false
+      properties:
+        slots:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { $ref: "#/components/schemas/SlotItem" }
+        saved_at:
+          type: [string, "null"]
+          format: date-time
+          description: Equivale ao `salvo_em` do lives_config.json; nulo se nunca salvo.
+
+    SlotsWrite:
+      type: object
+      required: [slots]
+      additionalProperties: false
+      properties:
+        slots:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { type: string, maxLength: 2048 }
+
+    SlotsWriteResponse:
+      type: object
+      required: [ok, slots, saved_at]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, const: true }
+        slots:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { type: string, maxLength: 2048 }
+        saved_at: { type: string, format: date-time }
+
+    CookieIn:
+      type: object
+      description: Elemento do export do EditThisCookie. Campos extras (httpOnly, expirationDate, sameSite...) são aceitos e DESCARTADOS (o legado só usava estes 5).
+      required: [name, value]
+      additionalProperties: true
+      properties:
+        name: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
+        value: { type: string, maxLength: 8192, writeOnly: true }
+        domain: { type: string, maxLength: 255, writeOnly: true, description: "Após remover markdown: ^\\.?[A-Za-z0-9.-]+$" }
+        path: { type: string, maxLength: 1024, writeOnly: true }
+        secure: { type: boolean, writeOnly: true }
+
+    CookieArray:
+      type: array
+      minItems: 1
+      maxItems: 200
+      items: { $ref: "#/components/schemas/CookieIn" }
+
+    CookiesResponse:
+      type: object
+      required: [ok, message, cookies_count]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, const: true }
+        message: { type: string, examples: ["12 cookies salvos com sucesso! O scraper vai recarregar automaticamente em alguns segundos."] }
+        cookies_count: { type: integer, minimum: 1 }
+
+    WorkerState:
+      type: object
+      required: [state, last_heartbeat_at, last_success_at, consecutive_failures, interval_seconds, last_error_code, last_error_message]
+      additionalProperties: false
+      properties:
+        state: { type: string, enum: [starting, ok, degraded, error, stopped, unknown], description: "`unknown` = o worker nunca gravou heartbeat" }
+        last_heartbeat_at: { type: [string, "null"], format: date-time }
+        last_success_at: { type: [string, "null"], format: date-time }
+        consecutive_failures: { type: integer, minimum: 0 }
+        interval_seconds: { type: [integer, "null"] }
+        next_attempt_at: { type: [string, "null"], format: date-time }
+        last_error_code:
+          type: [string, "null"]
+          enum: [quota_exceeded, rate_limited, http_error, network_error, invalid_response, login_required, counter_not_found, invalid_value, browser_error, decrypt_failed, config_error, db_error, null]
+        last_error_message: { type: [string, "null"], maxLength: 200 }
+
+    WorkersStatus:
+      type: object
+      required: [server_time, workers, cookies, subscribers]
+      additionalProperties: false
+      properties:
+        server_time: { type: string, format: date-time }
+        workers:
+          type: object
+          required: [lives, inscritos]
+          additionalProperties: false
+          properties:
+            lives: { $ref: "#/components/schemas/WorkerState" }
+            inscritos:
+              allOf:
+                - { $ref: "#/components/schemas/WorkerState" }
+                - type: object
+                  required: [auth_state]
+                  properties:
+                    auth_state:
+                      type: string
+                      enum: [unknown, ok, login_required, no_cookies, decrypt_failed]
+        cookies:
+          type: object
+          required: [configured, count, uploaded_at, applied]
+          additionalProperties: false
+          properties:
+            configured: { type: boolean, description: Há conjunto de cookies cifrado (equivale ao antigo cookies_file_exists) }
+            count: { type: integer, minimum: 0, description: Quantidade (equivale a "N cookies carregados") }
+            uploaded_at: { type: [string, "null"], format: date-time }
+            applied: { type: boolean, description: O worker-inscritos já aplicou este conjunto }
+        subscribers:
+          oneOf:
+            - { $ref: "#/components/schemas/Subscribers" }
+            - { type: "null" }
