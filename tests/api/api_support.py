@@ -5,7 +5,6 @@ bancos (o teste faz o papel dos workers)."""
 from __future__ import annotations
 
 import base64
-import copy
 import secrets
 import sqlite3
 import sys
@@ -216,26 +215,7 @@ def seed_subscribers(conn: sqlite3.Connection, **row) -> None:
 _SPEC = yaml.safe_load((REPO / "docs" / "openapi.yaml").read_text(encoding="utf-8"))
 
 
-def _effective_spec() -> dict:
-    """Copia do contrato com UM ajuste de forma, sem mudar o significado.
-
-    ``WorkersStatus.workers.inscritos`` e declarado como ``allOf[WorkerState (additionalProperties:false),
-    {auth_state}]``; em JSON Schema isso reprova QUALQUER instancia com ``auth_state`` (o primeiro ramo proibe
-    a propriedade). Aqui o ``allOf`` vira um unico objeto fechado com os campos de WorkerState + ``auth_state``
-    (obrigatorio), que e o que o contrato quer dizer. O arquivo docs/openapi.yaml nao e alterado.
-    """
-    spec = copy.deepcopy(_SPEC)
-    schemas = spec["components"]["schemas"]
-    worker = copy.deepcopy(schemas["WorkerState"])
-    extra = schemas["WorkersStatus"]["properties"]["workers"]["properties"]["inscritos"]["allOf"][1]
-    merged = copy.deepcopy(worker)
-    merged["properties"]["auth_state"] = copy.deepcopy(extra["properties"]["auth_state"])
-    merged["required"] = worker["required"] + extra["required"]
-    schemas["WorkersStatus"]["properties"]["workers"]["properties"]["inscritos"] = merged
-    return spec
-
-
-_EFFECTIVE = _effective_spec()
+_EFFECTIVE = _SPEC  # o contrato exatamente como esta em docs/openapi.yaml
 _REGISTRY = Registry().with_resource(
     "urn:livestats:openapi", Resource.from_contents(_EFFECTIVE, default_specification=DRAFT202012)
 )
