@@ -9,6 +9,31 @@
 
 name: livestats
 
+# Metadados do painel do ZimaOS/CasaOS (T7): o app aparece como "LiveStats". Nenhum segredo aqui.
+# A entrada do cartao abre o overlay do contador na porta publica (8080); o painel admin fica na 8081
+# (so 127.0.0.1 por padrao; acesso normal pelo Nginx Proxy Manager com HTTPS, ver ARCHITECTURE P1/D32).
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: web
+  author: Victor Newton
+  developer: Victor Newton
+  category: Media
+  # Icone provisorio (Simple Icons, CC0, versao fixa). Trocar quando houver um icone proprio do projeto.
+  icon: https://cdn.jsdelivr.net/npm/simple-icons@13.21.0/icons/youtube.svg
+  index: /contador
+  port_map: "8080"
+  title:
+    en_us: LiveStats
+    pt_br: LiveStats
+  tagline:
+    en_us: YouTube live stats and subscriber counter
+    pt_br: Estatisticas de lives do YouTube e contador de inscritos
+  description:
+    en_us: Unified YouTube live statistics (up to 4 lives) and subscriber counter, with OBS/vMix overlays, a protected admin panel and isolated secrets.
+    pt_br: Estatisticas de ate 4 lives do YouTube e contador de inscritos numa unica aplicacao, com overlays para OBS/vMix, painel admin protegido e segredos isolados.
+
 # Bloco reutilizado por todos os servicos (endurecimento).
 x-hardening: &hardening
   read_only: true
@@ -54,6 +79,25 @@ services:
       # -> 127.0.0.1:8081.
       # O cookie de sessao e Secure: nao ha TLS proprio nem opcao de desligar (ver ARCHITECTURE P1).
       - "${ADMIN_BIND:-127.0.0.1}:8081:8081"
+    x-casaos:
+      envs:
+        - container: TRUSTED_PROXY_CIDR
+          description:
+            en_us: Fixed /32 IP of cloudflared on the edge network (empty = trust nobody).
+            pt_br: IP fixo /32 do cloudflared na rede edge (vazio = nao confiar em ninguem).
+        - container: ADMIN_TRUSTED_PROXY_IP
+          description:
+            en_us: Fixed /32 IP of Nginx Proxy Manager on the edge network (empty = ignore X-Forwarded-For).
+            pt_br: IP fixo /32 do Nginx Proxy Manager na rede edge (vazio = ignorar X-Forwarded-For).
+      ports:
+        - container: "8080"
+          description:
+            en_us: Public port (overlays, JSON endpoints). No admin routes here.
+            pt_br: Porta publica (overlays e JSON). Nenhuma rota de admin aqui.
+        - container: "8081"
+          description:
+            en_us: Admin panel port (127.0.0.1 only by default).
+            pt_br: Porta do painel admin (somente 127.0.0.1 por padrao).
     networks:
       - edge                            # onde as portas sao publicadas
       - internal                        # fala com a api
