@@ -17,7 +17,7 @@ import uvicorn
 from argon2 import PasswordHasher
 from nacl.public import PrivateKey, SealedBox
 
-from api_support import API_DIR, BASE_URL, Stack, running_stack, make_env
+from api_support import API_DIR, make_env, running_stack
 from app.main import create_app
 
 
