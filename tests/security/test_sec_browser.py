@@ -49,12 +49,12 @@ def test_sec_03_titulo_malicioso_do_youtube_vira_texto_no_painel_sem_alert(stack
         assert header(raw, "Content-Type").startswith("application/json")
         assert json.loads(raw["body"])[0]["titulo"] == XSS_ALERT
 
-        with chromium_context() as ctx:
+        with chromium_context(ignore_https_errors=True) as ctx:
             page = ctx.new_page()
             dialogs = watch_dialogs(page)
             page_errors: list[str] = []
             page.on("pageerror", lambda e: page_errors.append(str(e)))
-            ui_login(page, "http://127.0.0.1:8081", USERNAME, stack.password)
+            ui_login(page, "https://127.0.0.1:8081", USERNAME, stack.password)
             titles = page.locator(".slot-card .slot-title")
             wait_until(lambda: titles.nth(0).inner_text() == XSS_ALERT and titles.nth(1).inner_text() == XSS_FLAG, timeout=30, interval=0.5)
 
@@ -139,7 +139,7 @@ def test_sec_23_credenciais_e_admin_sem_cors_em_todas_as_rotas_e_no_navegador(st
         " return {ok: true, status: r.status, body: await r.text()}; } catch (e) { return {ok: false, err: String(e)}; } }"
     )
     try:
-        with chromium_context() as ctx:
+        with chromium_context(ignore_https_errors=True) as ctx:
             page = ctx.new_page()
             page.goto(other_origin)
             target = "http://127.0.0.1:8080/api/public/subscribers"
@@ -149,7 +149,7 @@ def test_sec_23_credenciais_e_admin_sem_cors_em_todas_as_rotas_e_no_navegador(st
             with_credentials = page.evaluate(probe, [target, "include"])
             assert with_credentials["ok"] is False, f"fetch com credenciais de outra origem NAO deveria funcionar: {with_credentials}"
             # o admin nao pode ser lido de outra origem, nem com nem sem credenciais (nao ha Access-Control-Allow-Origin)
-            for url in ("http://127.0.0.1:8081/api/admin/session", "http://127.0.0.1:8081/api/admin/workers/status"):
+            for url in ("https://127.0.0.1:8081/api/admin/session", "https://127.0.0.1:8081/api/admin/workers/status"):
                 for creds in ("omit", "include"):
                     result = page.evaluate(probe, [url, creds])
                     assert result["ok"] is False, (url, creds, result)

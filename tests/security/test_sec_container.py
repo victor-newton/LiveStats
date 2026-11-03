@@ -510,12 +510,12 @@ def test_sec_21_admin_bind_seguro_por_padrao(stack):
     # com ADMIN_BIND=<IP>, a 8081 responde nesse IP e deixa de responder no 127.0.0.1
     stack.recreate_web(ADMIN_BIND="127.0.0.2")
     try:
-        wait_until(lambda: http_request("127.0.0.2", 8081, "/api/admin/session")["status"] == 401, timeout=20)
+        wait_until(lambda: http_request("127.0.0.2", 8081, "/api/admin/session", tls_cert=stack.cert)["status"] == 401, timeout=20)
         assert _refused("127.0.0.1", 8081)
         assert "127.0.0.2:8081" in docker("port", CONTAINERS["web"]).stdout
         assert http_request("127.0.0.1", 8080, "/health")["status"] == 200
     finally:
         stack.recreate_web(ADMIN_BIND=None)
-    wait_until(lambda: http_request("127.0.0.1", 8081, "/api/admin/session")["status"] == 401, timeout=20)
+    wait_until(lambda: http_request("127.0.0.1", 8081, "/api/admin/session", tls_cert=stack.cert)["status"] == 401, timeout=20)
     assert _refused("127.0.0.2", 8081)
     assert header(http_request("127.0.0.1", 8080, "/health"), "Content-Type")

@@ -42,7 +42,7 @@ def test_int_04_a_pilha_ao_vivo_tem_a_mesma_estrutura_nas_duas_portas(stack):
     """Estrutura (campos, ordem, tipos, formato dos bytes) da pilha com dados REAIS dos workers, 8081 x 8080."""
     stack.ensure_lives()
     stack.ensure_subs("460600")
-    run = _run_script("--legacy-url", "http://127.0.0.1:8081", "--new-url", "http://127.0.0.1:8080")
+    run = _run_script("--legacy-url", "https://127.0.0.1:8081", "--new-url", "http://127.0.0.1:8080", "--cafile", str(stack.cert))
     assert run.returncode == 0, run.stdout + run.stderr
     # e contra os golden files (estrutura do legado, valores de outros dados): mesma ordem de chaves
     server, _ = _serve(_golden_routes())

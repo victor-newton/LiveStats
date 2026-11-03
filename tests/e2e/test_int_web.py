@@ -35,14 +35,23 @@ def _run_web_suite(target: str, base_url: str) -> str:
 
 @contextmanager
 def _visitor_proxy(stack, last_octet: int, host_port: int, upstream_port: int, header_name: str):
-    """Container na edge com o IP FIXO confiavel (NPM/cloudflared do teste), publicado so em 127.0.0.1."""
+    """Container na edge, publicado so em 127.0.0.1. 8080: IP fixo do cloudflared do teste + CF-Connecting-IP.
+    8081 (D33, `header_name == "source-ip"`): HTTPS ate o web, com um IP de ORIGEM diferente por requisicao."""
     name = f"t8-ip-proxy-{host_port}"
     docker("rm", "-f", name, check=False)
+    extra: list[str] = []
+    image = PYTHON_IMAGE
+    if header_name == "source-ip":
+        image = "python:3.12-alpine"  # traz o `ip` (busybox) para adicionar o bloco de IPs de origem
+        extra = [
+            "--cap-add", "NET_ADMIN", "-e", f"PROXY_BASE={stack.base}", "-e", "PROXY_TLS_CA=/srv/admin_tls_cert.pem",
+            "-v", f"{stack.cert}:/srv/admin_tls_cert.pem:ro",
+        ]
     docker(
         "run", "-d", "--name", name, "--label", "livestats-t8-extra=1", "--network", "livestats-t8-edge",
-        "--ip", f"{stack.base}.{last_octet}", "-p", f"127.0.0.1:{host_port}:8888",
+        "--ip", f"{stack.base}.{last_octet}", "-p", f"127.0.0.1:{host_port}:8888", *extra,
         "-v", f"{Path(__file__).resolve().parent / 'ip_proxy.py'}:/srv/ip_proxy.py:ro",
-        PYTHON_IMAGE, "python", "/srv/ip_proxy.py", "8888", "web", str(upstream_port), header_name,
+        image, "python", "/srv/ip_proxy.py", "8888", "web", str(upstream_port), header_name,
     )
     try:
         wait_until(lambda: http_request("127.0.0.1", host_port, "/health", timeout=5)["status"] == 200, timeout=30, interval=1)
@@ -53,9 +62,9 @@ def _visitor_proxy(stack, last_octet: int, host_port: int, upstream_port: int, h
 
 def test_int_08_painel_suite_web_contra_a_pilha_real_na_8081(stack):
     stack.ensure_lives()
-    # Visitantes distintos por requisicao (como varios usuarios atras do NPM): a suite funcional tem ~90 testes de um unico
+    # Visitantes distintos por requisicao (IP de origem diferente a cada uma, como varios usuarios na LAN): a suite funcional tem ~90 testes de um unico
     # IP e, direto no Nginx, bateria no limit_req (comprovado: 27 respostas 429 em estaticos). O limite e testado em INT-12.
-    with _visitor_proxy(stack, 21, 18081, 8081, "X-Forwarded-For") as base:
+    with _visitor_proxy(stack, 21, 18081, 8081, "source-ip") as base:
         summary = _run_web_suite("tests/web", base)
     assert "passed" in summary
 

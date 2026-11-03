@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -28,6 +29,8 @@ from dataclasses import dataclass
 PATHS = ["/live1.json", "/live2.json", "/live3.json", "/live4.json", "/inscritos.json"]
 TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 VOLATILE = {"atualizado_em"}
+# Certificado (PEM) em que confiar para URLs https (ex.: o admin na 8081, autoassinado, D33). Sem isso vale o repositorio do sistema.
+CAFILE: str | None = None
 
 
 @dataclass
@@ -48,7 +51,8 @@ def fetch(base_url: str, path: str, timeout: float = 15.0) -> tuple[int, bytes]:
     """GET (e somente GET). Devolve (status, corpo)."""
     request = urllib.request.Request(base_url.rstrip("/") + path, method="GET", headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - URL informada pelo operador
+        context = ssl.create_default_context(cafile=CAFILE) if CAFILE else None
+        with urllib.request.urlopen(request, timeout=timeout, context=context) as response:  # noqa: S310 - URL informada pelo operador
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
@@ -146,7 +150,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--new-url", required=True, help="URL-base da pilha nova (porta publica)")
     parser.add_argument("--values", action="store_true", help="compara tambem os valores (menos atualizado_em)")
     parser.add_argument("--timeout", type=float, default=15.0)
+    parser.add_argument("--cafile", help="certificado PEM em que confiar para URLs https (a verificacao continua ligada)")
     args = parser.parse_args(argv)
+    global CAFILE  # noqa: PLW0603
+    CAFILE = args.cafile
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8")  # titulos com acento nao podem quebrar o relatorio no Windows
 

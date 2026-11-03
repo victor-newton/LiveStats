@@ -2,7 +2,7 @@
 #   docker compose -p livestats-t8 --project-directory <repo> -f docker-compose.yml -f tests/e2e/compose.e2e.yml ...
 # Faz so quatro coisas, todas por configuracao (nenhuma linha de producao muda):
 #   1. troca nomes de containers/redes/volumes/imagens (a pilha de teste nao colide com uma pilha real);
-#   2. aponta os 4 segredos para arquivos GERADOS NA HORA (sentinelas aleatorias), fora do repositorio;
+#   2. aponta os 6 segredos (4 + o par TLS do admin, D33) para arquivos GERADOS NA HORA (sentinelas aleatorias), fora do repositorio;
 #   3. usa as URLs-base opcionais da D19 para os workers falarem com o YouTube FALSO;
 #   4. coloca o YouTube falso no MESMO namespace de rede de cada worker (network_mode: service:...), de modo que
 #      o endereco 127.0.0.1 (loopback, unico http aceito pelas URLs-base) alcance o servidor falso. Isso existe so
@@ -97,3 +97,7 @@ secrets:
     file: ${E2E_SECRETS_DIR}/cookie_public_key.txt
   admin_password_hash:
     file: ${E2E_SECRETS_DIR}/admin_password_hash.txt
+  admin_tls_cert:
+    file: ${E2E_SECRETS_DIR}/admin_tls_cert.pem
+  admin_tls_key:
+    file: ${E2E_SECRETS_DIR}/admin_tls_key.pem
