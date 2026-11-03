@@ -37,6 +37,10 @@ test-results/
 # Worktrees e estado local do Claude Code
 .claude/
 
+# Grafo do graphify (gerado localmente com `graphify update .`)
+graphify-out/
+.graphify_labels.json.sig
+
 # Editor / SO
 .vscode/
 .idea/

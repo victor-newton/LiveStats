@@ -1,0 +1,9 @@
+# Nunca indexar: segredos, código original com a chave antiga e dados de runtime.
+secrets/
+codigo-original/
+*.tar.gz
+.env
+.env.*
+data/
+graphify-out/
+.claude/
