@@ -272,7 +272,13 @@ esperar_codigo() { # $1 = descricao, $2 = codigo esperado, resto = args do curl
 }
 esperar_codigo "GET http://127.0.0.1:8080/health" 200 http://127.0.0.1:8080/health
 esperar_codigo "GET http://127.0.0.1:8080/live1.json" 200 http://127.0.0.1:8080/live1.json
-esperar_codigo "GET http://127.0.0.1:8080/inscritos.json" 200 http://127.0.0.1:8080/inscritos.json
+# Antes de existir a primeira leitura (cookies do Studio ainda nao colados) a api responde 503 JSON: e o esperado.
+CODIGO_INSC=$(http_code http://127.0.0.1:8080/inscritos.json)
+case $CODIGO_INSC in
+  200) ok "GET http://127.0.0.1:8080/inscritos.json -> 200" ;;
+  503) ok "GET http://127.0.0.1:8080/inscritos.json -> 503 (esperado enquanto nao houver cookies/primeira leitura)" ;;
+  *) erro "GET http://127.0.0.1:8080/inscritos.json -> $CODIGO_INSC (esperado 200 ou 503)"; FALHAS=$((FALHAS + 1)) ;;
+esac
 esperar_codigo "GET http://127.0.0.1:8080/api/admin/session (admin NAO existe na 8080)" 404 http://127.0.0.1:8080/api/admin/session
 CODIGO_ADMIN=$(http_code --cacert "$SEG/admin_tls_cert.pem" "https://$LAN_IP:8081/health")
 case $CODIGO_ADMIN in
