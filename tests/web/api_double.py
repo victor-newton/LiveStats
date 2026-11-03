@@ -64,7 +64,7 @@ FONTS = [
     "Palatino Linotype", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana",
 ]
 HTML_PAGES = {"/", "/admin"}
-OVERLAY_PAGES = {"/contador", "/overlay/inscritos"}
+OVERLAY_PAGES = {"/contador"}  # D36: /overlay/inscritos foi removido (cai em /overlay/<arquivo> e vira 404)
 
 
 def utc_iso(dt: datetime | None = None) -> str:

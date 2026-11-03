@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from api_double import error
 from playwright.sync_api import Page, expect
-from web_helpers import do_login, freeze_clock
+from web_helpers import do_login, freeze_clock, open_tab
 
 
 def current_csrf(api) -> str:
@@ -39,8 +39,9 @@ def test_web_login_06_token_csrf_antigo_nao_sobrevive_ao_logout_nem_a_expiracao(
     novo = current_csrf(api)
     assert novo != antigo
     assert "x-csrf-token" not in api.requests("POST", "/api/admin/login")[-1].headers
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveMsg")).to_be_visible()
+    open_tab(page, "lives")
+    page.get_by_role("button", name="Salvar slot 1", exact=True).click()
+    expect(page.locator("#saveMsg1")).to_be_visible()
     assert api.requests("PUT", "/api/admin/slots")[-1].headers["x-csrf-token"] == novo
 
     # 3) perda de sessão por expiração (401): o token também é descartado
@@ -70,18 +71,20 @@ def test_web_login_07_mensagens_de_erro_somem_quando_o_estado_muda(page: Page, a
     # salvar slots: erro 422, depois sucesso -> o erro é apagado (texto, não só escondido)
     tentar_login(page, api.username, api.password)
     expect(page.locator("#panelView")).to_be_visible()
+    open_tab(page, "lives")
     page.get_by_label("Slot 1", exact=True).fill("https://example.com/nao-e-youtube")
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveErr")).to_contain_text("Slot 1")
+    page.get_by_role("button", name="Salvar slot 1", exact=True).click()
+    expect(page.locator("#saveErr1")).to_contain_text("Slot 1")
     page.get_by_label("Slot 1", exact=True).fill("dQw4w9WgXcQ")
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveMsg")).to_be_visible()
-    expect(page.locator("#saveErr")).to_have_text("")
+    page.get_by_role("button", name="Salvar slot 1", exact=True).click()
+    expect(page.locator("#saveMsg1")).to_be_visible()
+    expect(page.locator("#saveErr1")).to_have_text("")
 
     # erros de slots e de cookies não vazam para a sessão seguinte
     page.get_by_label("Slot 2", exact=True).fill("https://example.com/de-novo-invalido")
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveErr")).to_contain_text("Slot 2")
+    page.get_by_role("button", name="Salvar slot 2", exact=True).click()
+    expect(page.locator("#saveErr2")).to_contain_text("Slot 2")
+    open_tab(page, "inscritos")
     page.locator("#cookiesInput").fill('[{"name": "so-o-nome"}]')
     page.get_by_role("button", name="Salvar cookies").click()
     expect(page.locator("#cookiesMsg")).to_contain_text("Cookie #0")
@@ -89,7 +92,8 @@ def test_web_login_07_mensagens_de_erro_somem_quando_o_estado_muda(page: Page, a
     expect(page.locator("#loginView")).to_be_visible()
     tentar_login(page, api.username, api.password)
     expect(page.locator("#panelView")).to_be_visible()
-    expect(page.locator("#saveErr")).to_have_text("")
+    for n in range(1, 5):
+        expect(page.locator(f"#saveErr{n}")).to_have_text("")
     expect(page.locator("#cookiesMsg")).to_have_text("")
     assert "Cookie #0" not in page.locator("#panelView").inner_text()
 

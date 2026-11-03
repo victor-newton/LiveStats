@@ -111,8 +111,8 @@ O `connect_npm.sh` acha o container do NPM, faz `docker network connect --ip 172
 
 1. Abra `https://192.168.15.62:8081`. O navegador avisa que o certificado não é confiável (é autoassinado e o IP está no SAN): **Avançado → continuar**. Só precisa na primeira vez por navegador. O PC precisa estar na LAN `192.168.15.0/24` ou no Tailscale; fora disso a resposta é 403.
 2. Entre com o usuário **`Vitex`** e a senha de admin que você digitou no `enviar.sh`.
-3. Em **Slots**, cole as URLs das 4 lives (ou deixe em branco as que não usar) e salve. O worker de lives atualiza a cada `LIVE_INTERVAL` segundos (30 s).
-4. Em **Cookies**, cole o JSON de cookies do YouTube Studio (EditThisCookie, como no app antigo) e salve. **Só você faz isso**: os cookies são cifrados no navegador/api com a chave pública, e só o `worker-inscritos` tem a chave privada. Ninguém mais os vê. Confira no painel o selo "N cookies carregados" e que o contador de inscritos passa a atualizar.
+3. Na aba **Lives**, cole as URLs das 4 lives (ou deixe em branco as que não usar) e salve; cada cartão tem o seu botão Salvar. O worker de lives atualiza a cada `LIVE_INTERVAL` segundos (30 s).
+4. Na aba **Inscritos**, no cartão **Cookies**, cole o JSON de cookies do YouTube Studio (EditThisCookie, como no app antigo) e salve. **Só você faz isso**: os cookies são cifrados no navegador/api com a chave pública, e só o `worker-inscritos` tem a chave privada. Ninguém mais os vê. Confira no painel o selo "N cookies carregados" e que o contador de inscritos passa a atualizar.
 
 ## Passo 5 — Atualizar vMix e OBS
 

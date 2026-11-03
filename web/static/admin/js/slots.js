@@ -1,19 +1,21 @@
 // @ts-check
-// Painel de lives: 4 cartões de slot (URL, meta de likes e cor da barra do overlay),
-// salvar e lista de endpoints públicos com botão "Copiar".
+// Aba "Lives" (D36): 4 cartões autocontidos (URL, meta de likes, cor da barra, fonte, cor do texto,
+// estatísticas, os 3 endereços públicos do slot e um botão Salvar próprio).
 
 import { api, errorText } from './api.js';
 import {
-  byId, buttonById, cloneTemplate, query, setVisible, showMessage, clearMessage,
+  byId, cloneTemplate, query, setVisible, showMessage, clearMessage,
 } from './dom.js';
+import { registerFontSelect, setFontValue, DEFAULT_FONT } from './fonts.js';
+import { renderEndpointList, liveEndpoints, clearEndpointTimers } from './endpoints.js';
 
 const SLOTS = 4;
 const STATUS_CLASSES = ['ao_vivo', 'encerrada', 'agendada'];
 const SAVE_MSG_MS = 2500;
 const RELOAD_AFTER_SAVE_MS = 3000;
-const COPIED_MSG_MS = 1500;
 const GOAL_MAX = 1_000_000_000;
 const DEFAULT_COLOR = '#FF0033';
+const DEFAULT_TEXT_COLOR = '#ffffff';
 const COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 
 /**
@@ -32,6 +34,8 @@ const COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
  * @property {string} url
  * @property {number | null} [goal]
  * @property {string} [color]
+ * @property {string} [font]
+ * @property {string} [text_color]
  * @property {LiveStats | null} stats
  */
 
@@ -41,71 +45,29 @@ const COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
  * @property {HTMLInputElement} input
  * @property {HTMLInputElement} goal
  * @property {HTMLInputElement} color
+ * @property {HTMLSelectElement} font
+ * @property {HTMLInputElement} textColor
+ * @property {HTMLButtonElement} saveBtn
+ * @property {HTMLElement} saveOk
+ * @property {HTMLElement} saveErr
+ * @property {HTMLElement} endpoints
  * @property {HTMLElement} dot
  * @property {HTMLElement} statsBox
  * @property {HTMLElement} title
  */
 
+/** @typedef {{url: string, goal: number | null, color: string, font: string, text_color: string}} SavedItem */
+/** @typedef {{onUnauthorized: () => void, reloadAll: () => void}} SlotHooks */
+
 /** @type {Card[]} */
 let cards = [];
-/** Últimos valores de url, meta e cor GRAVADOS no servidor (a seção de aparência regrava com eles).
- * @type {{url: string, goal: number | null, color: string}[] | null} */
+/** Últimos valores GRAVADOS no servidor: salvar um cartão regrava os outros três com eles.
+ * @type {SavedItem[] | null} */
 let serverItems = null;
-
-/**
- * @returns {{url: string, goal: number | null, color: string}[] | null} cópia, ou null se ainda não carregou
- */
-export function savedSlotItems() {
-  return serverItems ? serverItems.map((i) => ({ ...i })) : null;
-}
 /** @type {number[]} */
 let timers = [];
-
-/**
- * Monta os 4 cartões (uma vez).
- */
-export function initSlots() {
-  const grid = byId('slotsGrid');
-  grid.replaceChildren();
-  cards = [];
-  for (let i = 0; i < SLOTS; i++) {
-    const n = i + 1;
-    const root = cloneTemplate('slotTemplate');
-    const label = query(root, '.slot-label');
-    const input = /** @type {HTMLInputElement} */ (query(root, '.slot-input'));
-    input.id = `inp${n}`;
-    label.setAttribute('for', input.id);
-    label.textContent = `Slot ${n}`;
-    input.addEventListener('input', () => {
-      input.dataset.dirty = '1';
-    });
-
-    const goal = /** @type {HTMLInputElement} */ (query(root, '.slot-goal'));
-    goal.id = `goal${n}`;
-    labelWithHint(query(root, '.slot-goal-label'), goal.id, 'Meta de likes', `do slot ${n}`);
-    const color = /** @type {HTMLInputElement} */ (query(root, '.slot-color'));
-    color.id = `color${n}`;
-    labelWithHint(query(root, '.slot-color-label'), color.id, 'Cor da barra', `do slot ${n}`);
-    color.value = DEFAULT_COLOR.toLowerCase();
-    for (const field of [goal, color]) {
-      field.addEventListener('input', () => {
-        field.dataset.dirty = '1';
-      });
-    }
-
-    grid.appendChild(root);
-    cards.push({
-      root,
-      input,
-      goal,
-      color,
-      dot: query(root, '.slot-status'),
-      statsBox: query(root, '.slot-stats'),
-      title: query(root, '.slot-title'),
-    });
-    renderStats(cards[i], null, '');
-  }
-}
+/** @type {SlotHooks | null} */
+let currentHooks = null;
 
 /**
  * Rótulo visível curto + complemento só para leitores de tela (nomes únicos por slot).
@@ -123,15 +85,106 @@ function labelWithHint(label, forId, text, hint) {
 }
 
 /**
+ * Marca o campo como editado (a atualização periódica não o sobrescreve).
+ * @param {HTMLElement} field
+ */
+function trackDirty(field) {
+  const mark = () => {
+    field.dataset.dirty = '1';
+  };
+  field.addEventListener('input', mark);
+  field.addEventListener('change', mark);
+}
+
+/**
+ * Define o que fazer em 401 e depois de salvar (chamado uma vez pelo ponto de entrada).
+ * @param {SlotHooks} hooks
+ */
+export function setSlotHooks(hooks) {
+  currentHooks = hooks;
+}
+
+/**
+ * Monta os 4 cartões (uma vez).
+ */
+export function initSlots() {
+  const grid = byId('slotsGrid');
+  grid.replaceChildren();
+  cards = [];
+  for (let i = 0; i < SLOTS; i++) {
+    const n = i + 1;
+    const root = cloneTemplate('slotTemplate');
+    root.dataset.slot = String(n);
+    const label = query(root, '.slot-label');
+    const input = /** @type {HTMLInputElement} */ (query(root, '.slot-input'));
+    input.id = `inp${n}`;
+    label.setAttribute('for', input.id);
+    label.textContent = `Slot ${n}`;
+    trackDirty(input);
+
+    const goal = /** @type {HTMLInputElement} */ (query(root, '.slot-goal'));
+    goal.id = `goal${n}`;
+    labelWithHint(query(root, '.slot-goal-label'), goal.id, 'Meta de likes', `do slot ${n}`);
+    const color = /** @type {HTMLInputElement} */ (query(root, '.slot-color'));
+    color.id = `color${n}`;
+    labelWithHint(query(root, '.slot-color-label'), color.id, 'Cor da barra', `do slot ${n}`);
+    color.value = DEFAULT_COLOR.toLowerCase();
+
+    const font = /** @type {HTMLSelectElement} */ (query(root, '.look-font'));
+    font.id = `font-${n}`;
+    labelWithHint(query(root, '.look-font-label'), font.id, 'Fonte', `da live ${n}`);
+    const textColor = /** @type {HTMLInputElement} */ (query(root, '.look-color'));
+    textColor.id = `textcolor-${n}`;
+    labelWithHint(query(root, '.look-color-label'), textColor.id, 'Cor do texto', `da live ${n}`);
+    textColor.value = DEFAULT_TEXT_COLOR;
+    registerFontSelect(font);
+    for (const field of [goal, color, font, textColor]) trackDirty(field);
+
+    const saveBtn = /** @type {HTMLButtonElement} */ (query(root, '.slot-save'));
+    saveBtn.id = `saveBtn${n}`;
+    saveBtn.setAttribute('aria-label', `Salvar slot ${n}`);
+    const saveOk = query(root, '.slot-ok');
+    saveOk.id = `saveMsg${n}`;
+    const saveErr = query(root, '.slot-err');
+    saveErr.id = `saveErr${n}`;
+    saveBtn.addEventListener('click', () => {
+      if (currentHooks) void saveSlot(n, currentHooks);
+    });
+
+    const heading = query(root, '.slot-heading');
+    heading.id = `slot-title-${n}`;
+    heading.textContent = `Live ${n}`;
+    root.setAttribute('aria-labelledby', heading.id);
+    query(root, '.slot-ep-title').textContent = `Endereços da live ${n}`;
+
+    grid.appendChild(root);
+    cards.push({
+      root,
+      input,
+      goal,
+      color,
+      font,
+      textColor,
+      saveBtn,
+      saveOk,
+      saveErr,
+      endpoints: query(root, '.slot-endpoints'),
+      dot: query(root, '.slot-status'),
+      statsBox: query(root, '.slot-stats'),
+      title: query(root, '.slot-title'),
+    });
+    renderStats(cards[i], null, '');
+  }
+}
+
+/**
  * Esvazia tudo o que veio do servidor (usado ao perder a sessão ou sair).
  */
 export function resetSlots() {
   for (const t of timers) clearTimeout(t);
   timers = [];
+  clearEndpointTimers();
   serverItems = null;
-  clearMessage(byId('saveErr'));
-  setVisible(byId('saveMsg'), false);
-  byId('epList').replaceChildren();
   initSlots();
 }
 
@@ -190,135 +243,57 @@ function statItem(value, label) {
 }
 
 /**
+ * Cor do servidor -> valor aceito por <input type="color"> (minúsculas; cai no padrão se vier algo estranho).
+ * @param {unknown} value
+ * @param {string} [fallback]
+ * @returns {string}
+ */
+function normalizeColor(value, fallback = DEFAULT_COLOR) {
+  return typeof value === 'string' && COLOR_RE.test(value) ? value.toLowerCase() : fallback.toLowerCase();
+}
+
+/**
+ * @param {Partial<SlotItem>} s
+ * @returns {SavedItem}
+ */
+function toSaved(s) {
+  return {
+    url: typeof s.url === 'string' ? s.url : '',
+    goal: typeof s.goal === 'number' ? s.goal : null,
+    color: normalizeColor(s.color).toUpperCase(),
+    font: typeof s.font === 'string' && s.font ? s.font : DEFAULT_FONT,
+    text_color: normalizeColor(s.text_color, DEFAULT_TEXT_COLOR).toUpperCase(),
+  };
+}
+
+/**
  * Aplica o que o servidor devolveu em GET /api/admin/slots.
  * Campos que o usuário está editando (não salvos) NÃO são sobrescritos.
  * @param {{slots: SlotItem[]}} data
  */
 export function applySlots(data) {
   const items = Array.isArray(data.slots) ? data.slots : [];
-  if (items.length === SLOTS) {
-    serverItems = items.map((s) => ({
-      url: typeof s.url === 'string' ? s.url : '',
-      goal: typeof s.goal === 'number' ? s.goal : null,
-      color: normalizeColor(s.color).toUpperCase(),
-    }));
-  }
+  if (items.length === SLOTS) serverItems = items.map(toSaved);
   for (let i = 0; i < SLOTS; i++) {
     const item = items[i];
-    if (!item || !cards[i]) continue;
+    const card = cards[i];
+    if (!item || !card) continue;
     const url = typeof item.url === 'string' ? item.url : '';
-    if (cards[i].input.dataset.dirty !== '1') {
-      cards[i].input.value = url;
-    }
-    if (cards[i].goal.dataset.dirty !== '1') {
-      cards[i].goal.value = typeof item.goal === 'number' ? String(item.goal) : '';
-    }
-    if (cards[i].color.dataset.dirty !== '1') {
-      cards[i].color.value = normalizeColor(item.color);
-    }
-    renderStats(cards[i], item.stats, url);
+    if (card.input.dataset.dirty !== '1') card.input.value = url;
+    if (card.goal.dataset.dirty !== '1') card.goal.value = typeof item.goal === 'number' ? String(item.goal) : '';
+    if (card.color.dataset.dirty !== '1') card.color.value = normalizeColor(item.color);
+    if (card.font.dataset.dirty !== '1') setFontValue(card.font, item.font);
+    if (card.textColor.dataset.dirty !== '1') card.textColor.value = normalizeColor(item.text_color, DEFAULT_TEXT_COLOR);
+    renderStats(card, item.stats, url);
   }
 }
 
 /**
- * Cor do servidor -> valor aceito por <input type="color"> (minúsculas; cai no padrão se vier algo estranho).
- * @param {unknown} value
- * @returns {string}
- */
-function normalizeColor(value) {
-  return typeof value === 'string' && COLOR_RE.test(value) ? value.toLowerCase() : DEFAULT_COLOR.toLowerCase();
-}
-
-/**
- * @typedef {object} Endpoint
- * @property {string} label
- * @property {string} path
- */
-
-/**
- * Grupos de endereços públicos prontos para consumo (nenhum é de admin).
- * @returns {{title: string, items: Endpoint[]}[]}
- */
-function endpointGroups() {
-  const numbers = Array.from({ length: SLOTS }, (_, i) => i + 1);
-  return [
-    {
-      title: 'JSON por live',
-      items: [
-        ...numbers.map((n) => ({ label: `Live ${n} (legado: lista com 1 objeto)`, path: `/live${n}.json` })),
-        ...numbers.map((n) => ({ label: `Live ${n} (objeto, com meta, cor e fonte)`, path: `/api/public/lives/${n}` })),
-      ],
-    },
-    {
-      title: 'JSON de inscritos',
-      items: [
-        { label: 'Inscritos (legado)', path: '/inscritos.json' },
-        { label: 'Inscritos (formato novo, com fonte e cor)', path: '/api/public/subscribers' },
-      ],
-    },
-    {
-      title: 'Overlays',
-      items: [
-        { label: 'Contador de inscritos', path: '/contador' },
-        { label: 'Contador de inscritos (alias)', path: '/overlay/inscritos' },
-        ...numbers.map((n) => ({ label: `Likes da live ${n} (meta e barra)`, path: `/overlay/live.html?slot=${n}` })),
-      ],
-    },
-    {
-      title: 'Saúde',
-      items: [{ label: 'Estado do serviço', path: '/health' }],
-    },
-  ];
-}
-
-/**
- * Copia o texto; se a Clipboard API não estiver disponível, seleciona o endereço para Ctrl+C.
- * @param {HTMLButtonElement} button
- * @param {HTMLElement} urlEl
- * @param {string} text
- */
-async function copyEndpoint(button, urlEl, text) {
-  /** @type {string} */
-  let feedback;
-  try {
-    await navigator.clipboard.writeText(text);
-    feedback = 'Copiado';
-  } catch (e) {
-    const selection = window.getSelection();
-    if (selection) selection.selectAllChildren(urlEl);
-    feedback = 'Selecionado (Ctrl+C)';
-  }
-  button.textContent = feedback;
-  timers.push(window.setTimeout(() => {
-    button.textContent = 'Copiar';
-  }, COPIED_MSG_MS));
-}
-
-/**
- * Preenche a lista de endpoints públicos (agrupados, com "Copiar").
+ * Preenche os endereços públicos de cada live (cada um no cartão do seu slot).
  * @param {string} base origem pública (sem barra final)
  */
-export function renderEndpoints(base) {
-  const list = byId('epList');
-  list.replaceChildren();
-  for (const group of endpointGroups()) {
-    const box = cloneTemplate('endpointGroupTemplate');
-    query(box, '.ep-group-title').textContent = group.title;
-    box.setAttribute('aria-label', group.title);
-    const rows = query(box, '.ep-rows');
-    for (const item of group.items) {
-      const row = cloneTemplate('endpointTemplate');
-      const url = `${base}${item.path}`;
-      const urlEl = query(row, '.ep-url');
-      query(row, '.ep-label').textContent = item.label;
-      urlEl.textContent = url;
-      const button = /** @type {HTMLButtonElement} */ (query(row, '.ep-copy'));
-      button.setAttribute('aria-label', `Copiar ${item.label}`);
-      button.addEventListener('click', () => void copyEndpoint(button, urlEl, url));
-      rows.appendChild(row);
-    }
-    list.appendChild(box);
-  }
+export function renderSlotEndpoints(base) {
+  cards.forEach((card, i) => renderEndpointList(card.endpoints, base, liveEndpoints(i + 1)));
 }
 
 /**
@@ -334,12 +309,12 @@ export async function loadSlots() {
 }
 
 /**
- * Lê meta e cor de um cartão. Devolve um texto de erro quando a meta não é válida.
+ * Lê a meta de um cartão. Devolve um texto de erro quando não é válida.
  * @param {Card} card
  * @param {number} n número do slot (1..4)
- * @returns {{goal: number | null, color: string} | string}
+ * @returns {{goal: number | null} | string}
  */
-function readExtras(card, n) {
+function readGoal(card, n) {
   const raw = card.goal.value.trim();
   /** @type {number | null} */
   let goal = null;
@@ -349,30 +324,53 @@ function readExtras(card, n) {
       return `Slot ${n}: a meta de likes deve ser um número inteiro de 1 a 1.000.000.000 (ou fique em branco para não ter meta).`;
     }
   }
-  return { goal, color: card.color.value };
+  return { goal };
 }
 
 /**
- * Envia os 4 slots (URL, meta e cor). `onUnauthorized` é chamado em 401; `reloadAll` recarrega
- * as estatísticas 3 s depois de um salvamento bem-sucedido.
- * @param {{onUnauthorized: () => void, reloadAll: () => void}} hooks
+ * Salva UM cartão: envia o PUT de slots completo, com os valores deste cartão e os já gravados
+ * nos outros três (rascunhos de outros cartões não são enviados).
+ * @param {number} n 1..4
+ * @param {SlotHooks} hooks
  */
-export async function saveSlots(hooks) {
-  const btn = buttonById('saveBtn');
-  const err = byId('saveErr');
-  const ok = byId('saveMsg');
-  clearMessage(err);
-  setVisible(ok, false);
-  const items = [];
-  for (let i = 0; i < SLOTS; i++) {
-    const extras = readExtras(cards[i], i + 1);
-    if (typeof extras === 'string') {
-      showMessage(err, extras);
-      return;
+export async function saveSlot(n, hooks) {
+  const card = cards[n - 1];
+  clearMessage(card.saveErr);
+  setVisible(card.saveOk, false);
+  card.saveBtn.disabled = true;
+  try {
+    // Clicou antes da primeira carga terminar: busca o que está gravado (os outros cartões vão como estão).
+    if (!serverItems) {
+      const first = await loadSlots();
+      if (first.status === 401) {
+        hooks.onUnauthorized();
+        return;
+      }
     }
-    items.push({ url: cards[i].input.value, goal: extras.goal, color: extras.color });
+  } catch (e) {
+    showMessage(card.saveErr, 'Falha na requisição. Verifique a conexão e tente de novo.');
+    return;
+  } finally {
+    card.saveBtn.disabled = false;
   }
-  btn.disabled = true;
+  if (!serverItems) {
+    showMessage(card.saveErr, 'Os slots ainda não foram carregados. Aguarde um instante e tente de novo.');
+    return;
+  }
+  const goal = readGoal(card, n);
+  if (typeof goal === 'string') {
+    showMessage(card.saveErr, goal);
+    return;
+  }
+  const items = serverItems.map((item) => ({ ...item }));
+  items[n - 1] = {
+    url: card.input.value,
+    goal: goal.goal,
+    color: card.color.value,
+    font: card.font.value,
+    text_color: card.textColor.value,
+  };
+  card.saveBtn.disabled = true;
   try {
     const resp = await api('PUT', '/api/admin/slots', { slots: items });
     if (resp.status === 401) {
@@ -380,30 +378,24 @@ export async function saveSlots(hooks) {
       return;
     }
     if (!resp.ok) {
-      showMessage(err, errorText(resp, `Erro ao salvar (HTTP ${resp.status})`));
+      showMessage(card.saveErr, errorText(resp, `Erro ao salvar (HTTP ${resp.status})`));
       return;
     }
     const saved = resp.data && Array.isArray(resp.data.slots) ? resp.data.slots : items;
-    serverItems = saved.map((/** @type {any} */ s, /** @type {number} */ i) => ({
-      url: typeof s.url === 'string' ? s.url : items[i].url,
-      goal: typeof s.goal === 'number' ? s.goal : null,
-      color: normalizeColor(s.color).toUpperCase(),
-    }));
-    for (let i = 0; i < SLOTS; i++) {
-      const item = saved[i] && typeof saved[i] === 'object' ? saved[i] : items[i];
-      cards[i].input.value = typeof item.url === 'string' ? item.url : items[i].url;
-      cards[i].goal.value = typeof item.goal === 'number' ? String(item.goal) : '';
-      cards[i].color.value = normalizeColor(item.color);
-      delete cards[i].input.dataset.dirty;
-      delete cards[i].goal.dataset.dirty;
-      delete cards[i].color.dataset.dirty;
-    }
-    setVisible(ok, true);
-    timers.push(window.setTimeout(() => setVisible(ok, false), SAVE_MSG_MS));
+    serverItems = saved.map((/** @type {SlotItem} */ s, /** @type {number} */ i) => toSaved({ ...items[i], ...s }));
+    const item = serverItems[n - 1];
+    card.input.value = item.url;
+    card.goal.value = item.goal === null ? '' : String(item.goal);
+    card.color.value = item.color.toLowerCase();
+    setFontValue(card.font, item.font);
+    card.textColor.value = item.text_color.toLowerCase();
+    for (const f of [card.input, card.goal, card.color, card.font, card.textColor]) delete f.dataset.dirty;
+    setVisible(card.saveOk, true);
+    timers.push(window.setTimeout(() => setVisible(card.saveOk, false), SAVE_MSG_MS));
     timers.push(window.setTimeout(hooks.reloadAll, RELOAD_AFTER_SAVE_MS));
   } catch (e) {
-    showMessage(err, 'Falha na requisição. Verifique a conexão e tente de novo.');
+    showMessage(card.saveErr, 'Falha na requisição. Verifique a conexão e tente de novo.');
   } finally {
-    btn.disabled = false;
+    card.saveBtn.disabled = false;
   }
 }

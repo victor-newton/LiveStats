@@ -349,7 +349,7 @@ def test_api_leg_07_utf8_literal_e_timestamps(stack: Stack):
 
 
 # ------------------------------------------------------------------------------------- API-LEG-08
-@pytest.mark.parametrize("path", ["/", "/admin", "/admin/", "/contador", "/overlay/inscritos"])
+@pytest.mark.parametrize("path", ["/", "/admin", "/admin/", "/contador"])
 def test_api_leg_08_a_api_nao_serve_paginas(stack: Stack, path):
     resp = stack.client.get(path)
     assert resp.status_code == 404

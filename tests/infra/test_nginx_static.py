@@ -16,7 +16,7 @@ CSP_STRICT = (
     "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )
 CSP_OVERLAY = CSP_STRICT.replace("frame-ancestors 'none'", "frame-ancestors *")
-OVERLAY_LOCATIONS = {"= /contador", "= /overlay/inscritos", "^~ /overlay/"}
+OVERLAY_LOCATIONS = {"= /contador", "^~ /overlay/"}
 CORS_LOCATIONS = {"^~ /api/public/", "~ ^/live[0-9]+\\.json$", "= /inscritos.json"}
 CORS_ERROR_LOCATIONS = {"@cors_e429", "@cors_e502", "@cors_e504"}
 PROXY_PUBLIC = {"= /health"} | CORS_LOCATIONS
@@ -222,7 +222,6 @@ def test_infra_ng_06_mapa_de_rotas_estaticas(pub, adm):
 
     common = {
         "= /contador": ["/overlay/contador.html", "=404"],
-        "= /overlay/inscritos": ["/overlay/contador.html", "=404"],
         "^~ /overlay/": ["$uri", "=404"],
     }
     assert statics(pub) == common
@@ -319,3 +318,17 @@ def test_infra_ng_14_http_simples_na_porta_tls_vira_400_json(adm):
 def test_infra_ng_14_8081_sem_nenhum_cabecalho_de_ip_confiavel(adm):
     assert not [n for n in adm.walk() if n.name in REAL_IP]
     assert "http_x_forwarded_for" not in "".join(str(n.args) for n in adm.walk()).lower()
+
+
+def test_infra_ng_15_overlay_inscritos_nao_existe_so_o_contador(tree, pub, adm):
+    """D36: um só overlay de inscritos. `/overlay/inscritos` não tem location própria nem aparece em nenhum arquivo
+    de configuração; cai no `^~ /overlay/` (só arquivos existentes) e vira 404; `/contador` continua mapeado."""
+    for server in (pub, adm):
+        keys = [ng.loc_key(loc) for loc in ng.locations(server)]
+        assert "= /contador" in keys
+        assert not [k for k in keys if "inscritos" in k and k != "= /inscritos.json"], keys
+        assert "= /overlay/inscritos" not in keys
+    confs = list(ng.NGINX_DIR.rglob("*.conf*"))
+    assert confs, "nenhum arquivo de configuração encontrado"
+    for path in confs:
+        assert "overlay/inscritos" not in path.read_text(encoding="utf-8"), path

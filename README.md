@@ -68,8 +68,8 @@ Porta **8080**. Substitua `localhost` pelo endereço do servidor ou pelo domíni
 |---|---|
 | `http://localhost:8080/live1.json` … `/live4.json` | Estatísticas de cada slot de live (formato legado, um item por arquivo) |
 | `http://localhost:8080/inscritos.json` | Número de inscritos do canal |
-| `http://localhost:8080/contador` | Overlay animado do contador de inscritos (fonte de navegador no OBS) |
-| `http://localhost:8080/overlay/inscritos` | Mesmo overlay, outro caminho |
+| `http://localhost:8080/contador` | Overlay animado do contador de inscritos (fonte de navegador no OBS); é o único endereço desse overlay |
+| `http://localhost:8080/overlay/live.html?slot={n}` | Overlay de likes da live N (meta e barra) |
 | `http://localhost:8080/api/public/lives/{n}` e `/api/public/subscribers` | Mesmos dados no formato novo da API |
 | `http://localhost:8080/health` | Saúde do serviço |
 
@@ -83,7 +83,7 @@ Os JSON públicos respondem com `Access-Control-Allow-Origin: *` e aceitam apena
 - Por padrão (`ADMIN_BIND=127.0.0.1`) ela só ouve na própria máquina; no servidor use `ADMIN_BIND=0.0.0.0` e deixe a lista filtrar.
 - O Nginx Proxy Manager, se existir, só cuida da porta pública 8080 (veja `docs/DEPLOY.md`).
 - Login com o usuário de `ADMIN_USERNAME` e a senha cujo hash está em `secrets/admin_password_hash.txt`. A sessão expira em 8 horas, ou após 30 minutos sem uso. Cinco tentativas erradas em 60 segundos bloqueiam novas tentativas por um minuto.
-- No painel você configura as URLs das quatro lives, cola os cookies do Studio para o contador e acompanha o estado dos workers.
+- O painel tem três abas (a aberta fica em `#inscritos`, `#lives` ou `#saude` na barra de endereço) e funciona no celular, com a barra de abas fixa embaixo: **Inscritos** (número atual, canal, fonte e cor do overlay, cookies do Studio e os endereços de inscritos), **Lives** (um cartão por slot, com URL, meta, cor da barra, fonte, cor do texto, estatísticas, os endereços da live e um botão Salvar próprio) e **Saúde** (diagrama, cartões de serviço e `/health`).
 
 ## Desenvolvimento e testes
 

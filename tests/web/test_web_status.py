@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from playwright.sync_api import Page, expect
-from web_helpers import do_login, freeze_clock, wait_until
+from web_helpers import do_login, freeze_clock, open_tab, wait_until
 
 LEITURA = {"inscritos": "460.600", "raw": "460.600", "atualizado_em": "2026-11-02T14:32:10.654321Z"}
 
@@ -27,15 +27,20 @@ def test_web_st_01_mostra_leitura_cookies_e_workers(page: Page, api, base_url):
     expect(page.locator("#cookieBadge")).to_have_text("✅ 12 cookies carregados")
     expect(page.locator("#cookieBadge")).to_have_class("status-badge ok")
 
-    lives = page.locator('#workerList [data-worker="lives"]')
-    expect(lives.locator(".worker-name")).to_have_text("Lives")
-    expect(lives.locator(".worker-state")).to_have_text("ok")
+    # D36: o worker de inscritos fica na aba Inscritos; o de lives, na aba Lives
+    expect(page.locator('#workerList [data-worker="lives"]')).to_have_count(0)
+    expect(page.locator('#workerListLives [data-worker="inscritos"]')).to_have_count(0)
     ins = page.locator('#workerList [data-worker="inscritos"]')
     expect(ins.locator(".worker-name")).to_have_text("Inscritos")
     expect(ins.locator(".worker-state")).to_have_text("degradado")
     expect(ins.locator(".worker-detail")).to_contain_text("falhas seguidas: 3")
     expect(ins.locator(".worker-detail")).to_contain_text("Contador não encontrado na página")
     expect(page.locator("#authAlert")).to_be_hidden()
+    open_tab(page, "lives")
+    lives = page.locator('#workerListLives [data-worker="lives"]')
+    expect(lives).to_be_visible()
+    expect(lives.locator(".worker-name")).to_have_text("Lives")
+    expect(lives.locator(".worker-state")).to_have_text("ok")
 
 
 def test_web_st_01b_sem_cookies_e_sem_leitura(page: Page, api, base_url):
@@ -47,7 +52,9 @@ def test_web_st_01b_sem_cookies_e_sem_leitura(page: Page, api, base_url):
     expect(page.locator("#subsLast")).to_have_text("—")
     expect(page.locator("#cookieBadge")).to_have_text("❌ Nenhum cookie — scraper não autenticado")
     expect(page.locator("#cookieBadge")).to_have_class("status-badge bad")
-    expect(page.locator('#workerList [data-worker="lives"] .worker-state')).to_have_text("desconhecido")
+    open_tab(page, "lives")
+    expect(page.locator('#workerListLives [data-worker="lives"] .worker-state')).to_have_text("desconhecido")
+    open_tab(page, "inscritos")
     expect(page.locator("#authAlert")).to_contain_text("nenhum cookie foi aplicado")
 
 

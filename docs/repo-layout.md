@@ -107,7 +107,7 @@ Entregas obrigatórias: `python -m worker_inscritos`, `python -m worker_inscrito
 
 ### T6 — Front (Sonnet)
 Cria/altera: tudo em `web/static/`; tudo em `tests/web/`.
-Contrato de URLs (para o T7 mapear no Nginx): overlay em `web/static/overlay/` servido em `/overlay/` (arquivos `contador.html`, `contador.css`, `contador.js`; `/contador` e `/overlay/inscritos` entregam `contador.html`); admin em `web/static/admin/` — `index.html` servido em `/` e `/admin` (8081), e o restante em `/admin-assets/` (8081 apenas). O HTML referencia assets com caminho absoluto (`/overlay/contador.js`, `/admin-assets/js/main.js`).
+Contrato de URLs (para o T7 mapear no Nginx): overlay em `web/static/overlay/` servido em `/overlay/` (arquivos `contador.html`, `contador.css`, `contador.js`; `/contador` entrega `contador.html`; `/overlay/inscritos` não existe, D36); admin em `web/static/admin/` — `index.html` servido em `/` e `/admin` (8081), e o restante em `/admin-assets/` (8081 apenas). O HTML referencia assets com caminho absoluto (`/overlay/contador.js`, `/admin-assets/js/main.js`).
 Regras: sem `<script>` inline, sem atributos `on*=`, sem `style=`, sem `innerHTML`/`outerHTML`/`insertAdjacentHTML`/`document.write`/`eval`, sem requisições a terceiros.
 
 ### T7 — Infra (Sonnet)

@@ -181,7 +181,7 @@ Comportamento a preservar (o teste `WEB-OV-*` compara com o original):
 - valor com a mesma estrutura (mesma posição de separadores): só troca o `translateY` com `0.45s` e a mesma curva, sem reconstruir.
 - estrutura diferente (mais ou menos dígitos): reconstrói e anima com atraso `idx*40` ms e `0.5s`.
 
-Diferenças inevitáveis na versão nova (decisão D12), sem efeito visual: o HTML **não é idêntico byte a byte** porque `<script>` e `<style>` inline são proibidos pela CSP; CSS e JS passam a ser arquivos do mesmo domínio, o JS busca `/api/public/subscribers` (no original, `./inscritos.json`), e o carrossel é montado sem `innerHTML`. Também é servida em `/overlay/inscritos`.
+Diferenças inevitáveis na versão nova (decisão D12), sem efeito visual: o HTML **não é idêntico byte a byte** porque `<script>` e `<style>` inline são proibidos pela CSP; CSS e JS passam a ser arquivos do mesmo domínio, o JS busca `/api/public/subscribers` (no original, `./inscritos.json`), e o carrossel é montado sem `innerHTML`. O endereço oficial é só `/contador`: `/overlay/inscritos` deixou de existir (D36) e responde 404.
 
 ## 4. `/health` (legado)
 
