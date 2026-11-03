@@ -33,6 +33,10 @@ MAX_FALHAS = 30  # leituras ruins seguidas ate recarregar a pagina (igual ao ori
 MSG_NO_COOKIES = "Nenhum cookie configurado"
 MSG_LOGIN = "Login perdido no YouTube Studio: atualize os cookies no painel"
 MSG_DECRYPT = "Os cookies nao puderam ser decifrados (chave diferente ou dado corrompido)"
+MSG_NO_PERMISSION = (
+    "Sem permissao para este canal no YouTube Studio: confira o YOUTUBE_CHANNEL_ID "
+    "e se a conta dos cookies tem acesso"
+)
 MSG_COUNTER = "Contador nao encontrado na pagina"
 MSG_INVALID = "Valor invalido lido na pagina"
 MSG_BROWSER = "Erro no navegador"
@@ -191,7 +195,7 @@ class Worker:
 
     def _read_and_store(self) -> None:
         try:
-            url, raw = self.session.read_page()
+            url, raw, sem_permissao = self.session.read_page()
         except PlaywrightError as exc:
             log.warning("[!] Erro ao ler a pagina (%s)", type(exc).__name__)
             self._read_failure("browser_error", MSG_BROWSER)
@@ -203,6 +207,14 @@ class Worker:
             self.falhas += 1
             self.consecutive_failures += 1
             self._set("error", "login_required", MSG_LOGIN, "login_required")
+            self.publish()
+            return
+
+        if sem_permissao:
+            log.warning("[AUTH] Sem permissao para este canal no YouTube Studio (confira YOUTUBE_CHANNEL_ID e a conta dos cookies)")
+            self.falhas += 1
+            self.consecutive_failures += 1
+            self._set("error", "config_error", MSG_NO_PERMISSION, "ok")
             self.publish()
             return
 
