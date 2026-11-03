@@ -77,9 +77,11 @@ Os JSON públicos respondem com `Access-Control-Allow-Origin: *` e aceitam apena
 
 ## Painel administrativo (porta 8081)
 
-- A porta 8081 **não** é publicada na internet. Ela serve o painel e a API administrativa.
-- Por padrão (`ADMIN_BIND=127.0.0.1`) ela só ouve na própria máquina.
-- O acesso normal é pelo **Nginx Proxy Manager** com HTTPS, que entra na rede `livestats-edge` com IP fixo e fica restrito à LAN e ao Tailscale. Alternativa: Tailscale Serve apontando para `127.0.0.1:8081`.
+- A porta 8081 **não** é publicada na internet. Ela serve o painel e a API administrativa, em **HTTPS próprio** (o Nginx do `web` termina o TLS com um certificado autoassinado, que traz o IP da LAN no SAN). Sem o certificado e a chave em `secrets/`, o `web` não sobe.
+- Acesso: `https://<IP-da-LAN>:8081`, direto, sem nome e sem Nginx Proxy Manager. O navegador pede para aceitar o certificado uma vez.
+- Quem pode usar a porta é decidido pela lista `ADMIN_ALLOW_CIDRS` (padrão `127.0.0.1/32`; no deploy `192.168.15.0/24 100.64.0.0/10`, ou seja, LAN e Tailscale). O resto recebe 403. A 8081 não confia em nenhum cabeçalho de IP.
+- Por padrão (`ADMIN_BIND=127.0.0.1`) ela só ouve na própria máquina; no servidor use `ADMIN_BIND=0.0.0.0` e deixe a lista filtrar.
+- O Nginx Proxy Manager, se existir, só cuida da porta pública 8080 (veja `docs/DEPLOY.md`).
 - Login com o usuário de `ADMIN_USERNAME` e a senha cujo hash está em `secrets/admin_password_hash.txt`. A sessão expira em 8 horas, ou após 30 minutos sem uso. Cinco tentativas erradas em 60 segundos bloqueiam novas tentativas por um minuto.
 - No painel você configura as URLs das quatro lives, cola os cookies do Studio para o contador e acompanha o estado dos workers.
 

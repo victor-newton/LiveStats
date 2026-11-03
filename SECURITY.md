@@ -35,7 +35,7 @@ Se uma chave ou cookie vazou:
 O modelo completo está em `docs/MAPA-DE-SEGURANCA.md` e `docs/ARCHITECTURE.md`. Em resumo:
 
 - Cada segredo existe em um único container, montado como Docker secret (nunca como variável de ambiente).
-- O admin não é publicado na internet: a porta 8081 só fica acessível pela LAN ou pelo Tailscale.
+- O admin não é publicado na internet: a porta 8081 tem HTTPS próprio (certificado autoassinado, TLS 1.2/1.3) e uma lista de IPs (`ADMIN_ALLOW_CIDRS`, no deploy só LAN e Tailscale); qualquer outro IP recebe 403. Ela não confia em cabeçalhos de IP.
 - Login com argon2, sessão em cookie `HttpOnly; Secure; SameSite=Strict`, CSRF em todo método que altera estado e limite de tentativas em duas camadas.
 - Cookies do Studio são cifrados com a chave pública na `api`; só o `worker-inscritos` tem a chave privada.
 - Containers rodam como usuário não-root, com sistema de arquivos somente leitura e sem capabilities Linux.
