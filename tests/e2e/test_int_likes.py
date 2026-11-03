@@ -25,9 +25,10 @@ def _width(page) -> str:
     return page.evaluate("document.getElementById('barra-preenchimento').style.width")
 
 
-def _save(admin) -> None:
-    admin.get_by_role("button", name="Salvar slots").click()
-    admin.locator("#saveMsg").wait_for(state="visible", timeout=15000)
+def _save(admin, n: int = 1) -> None:
+    """D36: cada cartao de live tem o seu Salvar (na aba Lives)."""
+    admin.get_by_role("button", name=f"Salvar slot {n}", exact=True).click()
+    admin.locator(f"#saveMsg{n}").wait_for(state="visible", timeout=15000)
 
 
 def _guard(page, sink: list[str]) -> None:
@@ -47,6 +48,7 @@ def test_int_c10_01_meta_e_cor_do_painel_chegam_ao_overlay_e_o_overlay_anima(sta
             dialogs = watch_dialogs(admin)
             _guard(admin, problems)
             ui_login(admin, ADMIN, USERNAME, stack.password)
+            admin.locator("#tab-lives").click()
             assert admin.get_by_label("Meta de likes do slot 1").input_value() == ""  # padrao: sem meta
             admin.get_by_label("Meta de likes do slot 1").fill("10000")
             admin.get_by_label("Cor da barra do slot 1").fill("#12ab34")
