@@ -592,6 +592,8 @@ Contratos que mudaram e os testes antigos tocados (cada verificação foi mantid
 | INFRA-ZIM-07 | `--recriar-web` | último `up` é `up -d --force-recreate web` | flag ignorada |
 | INFRA-ZIM-08 | `--remover` | apaga só `livestats/` (outros apps ficam), sobe por `-f /work/docker-compose.yml` com `--force-recreate`, nunca `down`/`-v`/`volume rm`, label volta ao compose de `DIR`; segunda vez diz "Nao estava registrado" | apagar mais; remover volumes |
 | INFRA-ZIM-09 | `lib.sh` e `rollback.sh` | `zimaos_registrado` falso → verdadeiro após registrar; rollback registrado faz `compose -f <registrado> down`, sem registro faz `compose down` | down pelo caminho errado |
+| INFRA-ZIM-10/11/12 | Sem terminal para o sudo (execução, usuário `nobody`, stdin `/dev/null`, `sudo` falso que registra) | `connect_npm`, `rollback` e `registrar_zimaos` abortam antes de mexer: sem `network connect`, sem `down`, sem gerar, `.env` e registro byte a byte iguais, sudo nunca chamado | `zimaos_sudo_ok` sempre verdadeiro |
+| INFRA-ZIM-13 | Controle: mesmo cenário com `LIVESTATS_SUDO` vazio | passa da guarda (`network connect`, `down` pelo registrado, `config`) | teste que passa só porque tudo aborta |
 | INFRA-ZIM-S01 | `enviar.sh registrar-zimaos` (estático) | usa `SSH_OPTS_TTY` (`-t`), roda `registrar_zimaos.sh`, não toca segredos/tar; repassa `--remover`/`--recriar-web` | sem terminal para o sudo |
 | INFRA-ZIM-S02 | `enviar.sh instalar` intacto | segue com `-T`, segredos por stdin; `rollback`/`conectar-npm` usam `-t`; `status`/`preflight` não | quebrar o caminho dos segredos |
 | INFRA-ZIM-S03 | `install.sh` registrado | checagem do registro antes do `up -d`, `exit 2`, manda rodar `registrar-zimaos` (`--recriar-web` no TLS novo), não sobe nada | recriar pelo `DIR` |

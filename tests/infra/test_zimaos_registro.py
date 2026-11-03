@@ -57,6 +57,7 @@ case "$*" in
     printf '%s' "$f" > /log/label
     exit 0 ;;
   *" down"*) exit 0 ;;
+  *"network connect"*|*"network disconnect"*) exit 0 ;;
   *inspect*)
     case "$*" in
       *Health*) echo healthy ;;
@@ -323,3 +324,89 @@ echo "@@LOG_SEM"; grep -E ' down' /log/docker.log
     assert s["LOG_REG"].strip() == "compose -f /apps/livestats/docker-compose.yml down"
     assert s["RC_SEM"].strip() == "0"
     assert s["LOG_SEM"].strip() == "compose down", "sem registro, o rollback segue como antes"
+
+
+# ---- sem terminal para o sudo: usuario NAO root, stdin sem tty, sudo falso que registra e falha ----------------
+# Registra como root (sem sudo), depois roda os scripts REAIS como `nobody`. O `sudo` falso (/shim/sudo) anota a
+# chamada em /log/sudo.log e falha. Com LIVESTATS_SUDO=/shim/sudo e sem tty, `zimaos_sudo_ok` precisa barrar.
+PREPARO_NOBODY = r"""
+reg > /log/out0 2>&1; echo "@@RC0 $?"
+cat > /shim/sudo <<'SUDOEOF'
+#!/bin/sh
+echo "$*" >> /log/sudo.log
+exit 1
+SUDOEOF
+chmod +x /shim/sudo
+touch /log/docker.log /log/sudo.log
+chmod 777 /log; chmod 666 /log/docker.log /log/sudo.log
+chmod 777 /work; chmod 666 /work/.env; chmod -R a+rX /work
+: > /log/docker.log
+ENV_ANTES=$(md5sum < /work/.env); REG_ANTES=$(md5sum < $ARQ)
+como_nobody() { su -s /bin/sh nobody -c "$1"; }
+"""
+
+def _estado_final():
+    return r"""
+echo "@@ENV_IGUAL $([ "$ENV_ANTES" = "$(md5sum < /work/.env)" ] && echo sim || echo nao)"
+echo "@@REG_IGUAL $([ "$REG_ANTES" = "$(md5sum < $ARQ)" ] && echo sim || echo nao)"
+echo "@@SUDOLOG"; cat /log/sudo.log
+echo "@@DOCKERLOG"; cat /log/docker.log
+"""
+
+CN = "sh /repo/deploy/connect_npm.sh --dir /work --npm fake-npm --ip 172.29.80.11"
+RB = "sh /repo/deploy/rollback.sh --dir /work --yes"
+RG = "sh /repo/deploy/registrar_zimaos.sh --dir /work"
+
+
+def _roda_nobody(cmd: str, sudo: str) -> dict[str, str]:
+    corpo = PREPARO_NOBODY + (
+        f"como_nobody 'LIVESTATS_SUDO={sudo} PATH=/shim:$PATH {cmd} </dev/null > /log/o 2>&1; echo $? > /log/rc'\n"
+        'echo "@@RC $(cat /log/rc)"\necho "@@OUT"; cat /log/o\n'
+        'echo "@@QUEM $(su -s /bin/sh nobody -c "id -u")"\n'
+    ) + _estado_final()
+    r = rodar(corpo)
+    s = secoes(r.stdout)
+    assert s["RC0"].strip() == "0", r.stdout + r.stderr
+    assert s["QUEM"].strip() != "0", "o script tem que rodar sem ser root"
+    return s
+
+
+def test_infra_zim_10_connect_npm_sem_terminal_aborta_antes_de_mexer():
+    s = _roda_nobody(CN, "/shim/sudo")
+    assert s["RC"].strip() != "0", s["OUT"]
+    assert "terminal para o sudo" in s["OUT"] and "Nada foi alterado" in s["OUT"], s["OUT"]
+    assert "network connect" not in s["DOCKERLOG"] and "network disconnect" not in s["DOCKERLOG"]
+    assert " up" not in s["DOCKERLOG"]
+    assert s["ENV_IGUAL"].strip() == "sim", ".env nao pode mudar"
+    assert s["SUDOLOG"].strip() == "", "o sudo nem deve ser tentado"
+
+
+def test_infra_zim_11_rollback_sem_terminal_aborta_antes_do_down():
+    s = _roda_nobody(RB, "/shim/sudo")
+    assert s["RC"].strip() != "0", s["OUT"]
+    assert "terminal para o sudo" in s["OUT"] and "Nada foi alterado" in s["OUT"], s["OUT"]
+    assert " down" not in s["DOCKERLOG"] and "network disconnect" not in s["DOCKERLOG"]
+    assert s["ENV_IGUAL"].strip() == "sim", ".env nao pode mudar"
+    assert s["SUDOLOG"].strip() == ""
+
+
+def test_infra_zim_12_registrar_sem_terminal_aborta_antes_de_gerar():
+    s = _roda_nobody(RG, "/shim/sudo")
+    assert s["RC"].strip() != "0", s["OUT"]
+    assert "terminal para a senha" in s["OUT"], s["OUT"]
+    assert " config" not in s["DOCKERLOG"], "nem chega a gerar o compose"
+    assert s["REG_IGUAL"].strip() == "sim" and s["ENV_IGUAL"].strip() == "sim"
+    assert s["SUDOLOG"].strip() == ""
+
+
+def test_infra_zim_13_mesmo_cenario_sem_sudo_passa_da_guarda():
+    """Controle: com LIVESTATS_SUDO vazio os mesmos scripts, como nao root e sem tty, passam da guarda."""
+    s = _roda_nobody(CN, "")
+    assert "terminal para o sudo" not in s["OUT"], s["OUT"]
+    assert "network connect --ip 172.29.80.11 livestats-edge fake-npm" in s["DOCKERLOG"], s["DOCKERLOG"]
+    s = _roda_nobody(RB, "")
+    assert "terminal para o sudo" not in s["OUT"], s["OUT"]
+    assert "compose -f /apps/livestats/docker-compose.yml down" in s["DOCKERLOG"], s["DOCKERLOG"]
+    s = _roda_nobody(RG, "")
+    assert "terminal para a senha" not in s["OUT"], s["OUT"]
+    assert " config" in s["DOCKERLOG"], "passou da guarda e foi gerar o compose"
