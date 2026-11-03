@@ -59,8 +59,10 @@ VOLUMES = ("livestats-t8-data", "livestats-t8-admin")
 COMPOSE_FILES = [REPO / "docker-compose.yml", HERE / "compose.e2e.yml"]
 RECORDED_FIXTURE = REPO / "tests" / "worker_lives" / "fixtures" / "videos_mixed.json"
 
-PUBLIC_PORT = 8080
-ADMIN_PORT = 8081
+# Portas publicadas no host. Padrao 8080/8081; E2E_PUBLIC_PORT/E2E_ADMIN_PORT permitem rodar a suite ao lado de uma
+# pilha real que ja ocupe essas portas (so vale para os testes que nao as escrevem fixas, ex.: test_int_likes.py).
+PUBLIC_PORT = int(os.environ.get("E2E_PUBLIC_PORT", "8080"))
+ADMIN_PORT = int(os.environ.get("E2E_ADMIN_PORT", "8081"))
 FAKE_PORT = 18555
 USERNAME = "t8admin"
 LIVE_INTERVAL = 10
@@ -161,6 +163,8 @@ class E2EStack:
             "YOUTUBE_CHANNEL_ID": self.channel_id,
             "EDGE_SUBNET": self.edge_subnet,
             "E2E_FAKE_PORT": str(FAKE_PORT),
+            "E2E_PUBLIC_PORT": str(PUBLIC_PORT),
+            "E2E_ADMIN_PORT": str(ADMIN_PORT),
             "E2E_FAKE_SRC": str(HERE / "fake_youtube.py"),
             "E2E_RECORDED_FIXTURE": str(RECORDED_FIXTURE),
             "E2E_STATE_DIR": str(self.state_dir),

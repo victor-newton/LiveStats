@@ -65,12 +65,13 @@ def test_web_a11y_01b_painel_com_rotulos_e_operavel_pelo_teclado(page: Page, api
     assert foco["style"] == "solid" and foco["width"] != "0px"
     page.keyboard.type("dQw4w9WgXcQ")
     paradas = []
-    for _ in range(6):
+    for _ in range(12):  # D34: cada slot ganhou meta e cor (3 paradas por slot)
         page.keyboard.press("Tab")
         paradas.append(page.evaluate("document.activeElement.id"))
         if paradas[-1] == "saveBtn":
             break
     assert paradas[-1] == "saveBtn", paradas
+    assert paradas[:3] == ["goal1", "color1", "inp2"], paradas  # meta e cor são alcançáveis pelo teclado
     foco = page.evaluate(FOCO)
     assert foco["style"] == "solid" and foco["width"] != "0px"
     page.keyboard.press("Enter")
