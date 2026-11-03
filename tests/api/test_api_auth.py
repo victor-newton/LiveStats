@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from api_support import (
     BASE_URL,
+    BLANK_SLOTS,
     SESSION_COOKIE,
     Stack,
     assert_matches_openapi,
@@ -98,7 +99,7 @@ def test_api_auth_02_csrf_obrigatorio_nos_metodos_que_alteram_estado(stack: Stac
     other_csrf = stack.login_csrf(stack.new_client())  # token valido, mas de OUTRA sessao
     assert other_csrf != csrf
 
-    slots_body = {"slots": ["", "", "", ""]}
+    slots_body = {"slots": BLANK_SLOTS}
     cookies_body = [{"name": "a", "value": "b"}]
     attempts = {
         "PUT /api/admin/slots": ("PUT", "/api/admin/slots", slots_body),

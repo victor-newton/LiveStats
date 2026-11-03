@@ -4,7 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from api_support import GOLDEN_LIVE_ROWS, Stack, assert_matches_openapi, assert_schema, seed_golden_lives, walk_keys
+from api_support import (
+    BLANK_SLOTS,
+    DEFAULT_COLOR,
+    GOLDEN_LIVE_ROWS,
+    Stack,
+    assert_matches_openapi,
+    assert_schema,
+    seed_golden_lives,
+    slot_item,
+    walk_keys,
+)
 
 VALID = [
     "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -20,7 +30,10 @@ def db_slots(stack: Stack) -> list[tuple[int, str, str | None]]:
 
 
 def put(stack: Stack, csrf: str, slots, **kwargs):
-    return stack.client.put("/api/admin/slots", json={"slots": slots}, headers={"X-CSRF-Token": csrf}, **kwargs)
+    """PUT no formato da D34. Textos soltos viram itens ``{url, goal: null, color: padrao}`` (o que estes testes
+    verificam e a URL; meta e cor tem os testes API-LIKE-*)."""
+    items = [slot_item(s) if isinstance(s, str) else s for s in slots]
+    return stack.client.put("/api/admin/slots", json={"slots": items}, headers={"X-CSRF-Token": csrf}, **kwargs)
 
 
 # ------------------------------------------------------------------------------------- API-SLOT-01
@@ -29,7 +42,10 @@ def test_api_slot_01_get_em_banco_novo(stack: Stack):
     resp = stack.client.get("/api/admin/slots")
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"slots": [{"slot": n, "url": "", "stats": None} for n in (1, 2, 3, 4)], "saved_at": None}
+    assert body == {
+        "slots": [{"slot": n, "url": "", "goal": None, "color": DEFAULT_COLOR, "stats": None} for n in (1, 2, 3, 4)],
+        "saved_at": None,
+    }
     assert_matches_openapi(resp, "/api/admin/slots", "get")
     assert resp.headers["cache-control"] == "no-store"
 
@@ -42,7 +58,7 @@ def test_api_slot_02_put_grava_com_trim_e_get_devolve_o_mesmo(stack: Stack):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     expected = [s.strip() for s in padded]
-    assert body["ok"] is True and body["slots"] == expected and body["saved_at"]
+    assert body["ok"] is True and body["slots"] == [slot_item(u) for u in expected] and body["saved_at"]
     assert_matches_openapi(resp, "/api/admin/slots", "put")
 
     rows = db_slots(stack)
@@ -65,21 +81,25 @@ def test_api_slot_02_saved_at_e_a_hora_do_ultimo_put(stack: Stack):
 
 
 # ------------------------------------------------------------------------------------- API-SLOT-03
+def _with_url(url) -> dict:
+    return {"slots": [{**slot_item(), "url": url}, *BLANK_SLOTS[1:]]}
+
+
 @pytest.mark.parametrize(
     "payload",
     [
-        {"slots": ["", "", ""]},
-        {"slots": ["", "", "", "", ""]},
+        {"slots": BLANK_SLOTS[:3]},
+        {"slots": [*BLANK_SLOTS, slot_item()]},
         {"slots": []},
         {"slots": "dQw4w9WgXcQ"},
-        {"slots": ["", 123, "", ""]},
-        {"slots": ["", None, "", ""]},
-        {"slots": ["", ["dQw4w9WgXcQ"], "", ""]},
-        {"slots": ["a" * 2049, "", "", ""]},
-        {"slots": ["dQw4w9WgXcQ" + "\x00", "", "", ""]},
-        {"slots": ["dQw4w9WgXcQ\x07", "", "", ""]},
-        {"slots": ["https://youtu.be/dQw4w9WgXcQ\nhttps://evil.example", "", "", ""]},
-        {"slots": ["", "", "", ""], "extra": 1},
+        _with_url(123),
+        _with_url(None),
+        _with_url(["dQw4w9WgXcQ"]),
+        _with_url("a" * 2049),
+        _with_url("dQw4w9WgXcQ" + "\x00"),
+        _with_url("dQw4w9WgXcQ\x07"),
+        _with_url("https://youtu.be/dQw4w9WgXcQ\nhttps://evil.example"),
+        {"slots": BLANK_SLOTS, "extra": 1},
         {},
         [],
         "dQw4w9WgXcQ",
@@ -116,7 +136,7 @@ def test_api_slot_03_corpo_que_nao_e_json_devolve_400(stack: Stack):
 def test_api_slot_03_corpo_acima_de_256_kib_devolve_413_e_nao_grava(stack: Stack):
     csrf = stack.login_csrf()
     before = db_slots(stack)
-    huge = {"slots": ["", "", "", ""], "pad": "x" * (256 * 1024)}
+    huge = {"slots": BLANK_SLOTS, "pad": "x" * (256 * 1024)}
     resp = stack.client.put("/api/admin/slots", json=huge, headers={"X-CSRF-Token": csrf})
     assert resp.status_code == 413
     assert_matches_openapi(resp, "/api/admin/slots", "put")
@@ -164,7 +184,7 @@ def test_api_slot_04_vetores_sem_id_sao_rejeitados(stack: Stack, url):
         slots[position] = url
         resp = put(stack, csrf, slots)
         assert resp.status_code == 422, (url, position)
-        assert resp.json()["detail"][0]["loc"] == ["body", "slots", position]
+        assert resp.json()["detail"][0]["loc"] == ["body", "slots", position, "url"]
     assert db_slots(stack) == before
 
 

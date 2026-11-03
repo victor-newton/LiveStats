@@ -8,6 +8,7 @@ import re
 import pytest
 
 from api_support import (
+    BLANK_SLOTS,
     GOLDEN,
     GOLDEN_FILES,
     GOLDEN_LIVE_ROWS,
@@ -18,6 +19,7 @@ from api_support import (
     seed_golden_lives,
     seed_live,
     seed_subscribers,
+    slot_item,
     walk_keys,
 )
 
@@ -57,9 +59,11 @@ def test_api_pub_01_live_por_slot_e_objeto_conforme_o_contrato(seeded: Stack, sl
         "views_formatado": row["views_formatted"],
         "likes_formatado": row["likes_formatted"],
         "atualizado_em": row["updated_at"],
+        "goal": None,  # D34: meta e cor do slot (banco novo: sem meta, cor padrao)
+        "color": "#FF0033",
     }
     assert isinstance(body["ativo"], str)  # nao e booleano
-    assert_schema(body, "LiveSlot")
+    assert_schema(body, "PublicLive")
     assert_matches_openapi(resp, "/api/public/lives/{slot}", "get")
 
 
@@ -154,7 +158,7 @@ def test_api_pub_06_dados_publicos_nao_vazam_admin(seeded: Stack):
     csrf = seeded.login_csrf()
     url_sentinel = "https://www.youtube.com/watch?v=SENTINELA01"
     assert seeded.client.put(
-        "/api/admin/slots", json={"slots": [url_sentinel, "", "", ""]}, headers={"X-CSRF-Token": csrf}
+        "/api/admin/slots", json={"slots": [slot_item(url_sentinel), *BLANK_SLOTS[1:]]}, headers={"X-CSRF-Token": csrf}
     ).status_code == 200
     with seeded.shared() as conn:
         conn.execute(
@@ -172,7 +176,8 @@ def test_api_pub_06_dados_publicos_nao_vazam_admin(seeded: Stack):
         if path.startswith("/api/public/lives") or path.startswith("/live"):
             body = resp.json()
             body = body[0] if isinstance(body, list) else body
-            assert set(body) == allowed_live_keys
+            # D34: so o formato novo carrega goal e color (configuracao publica do overlay); os legados nao
+            assert set(body) == allowed_live_keys | ({"goal", "color"} if path.startswith("/api/public") else set())
 
 
 # ------------------------------------------------------------------------------------- API-PUB-07
@@ -211,10 +216,10 @@ def test_api_leg_02_ordem_das_chaves(seeded: Stack):
         assert ordered_keys(slot)[-2:] == ["slot", "ativo"]
     assert ordered_keys(4) == NO_URL_ORDER
     assert ordered_keys(4)[:2] == ["slot", "ativo"]
-    # o mesmo vale para o objeto de /api/public/lives/{n}
+    # o mesmo vale para o objeto de /api/public/lives/{n}, que ganha goal e color no fim (D34)
     for slot, order in ((1, ACTIVE_ORDER), (4, NO_URL_ORDER)):
         pairs = json.loads(seeded.client.get(f"/api/public/lives/{slot}").content, object_pairs_hook=lambda p: p)
-        assert [k for k, _ in pairs] == order
+        assert [k for k, _ in pairs] == order + ["goal", "color"]
 
 
 # ------------------------------------------------------------------------------------- API-LEG-03
@@ -302,8 +307,11 @@ def test_api_leg_05_health_nao_exige_sessao_nem_dados(stack: Stack):
 def test_api_leg_06_caminhos_novo_e_legado_concordam(seeded: Stack, slot):
     legacy = seeded.client.get(f"/live{slot}.json").content
     new = seeded.client.get(f"/api/public/lives/{slot}").content
-    assert legacy == b"[" + new + b"]"
-    assert json.loads(legacy)[0] == json.loads(new)
+    # o objeto novo e o legado + goal/color no fim (D34, banco sem meta: null e a cor padrao)
+    extra = b',"goal":null,"color":"#FF0033"}'
+    assert new.endswith(extra)
+    assert legacy == b"[" + new[: -len(extra)] + b"}]"
+    assert {k: v for k, v in json.loads(new).items() if k not in ("goal", "color")} == json.loads(legacy)[0]
 
 
 def test_api_leg_06_subscribers_e_inscritos_json_sao_identicos(seeded: Stack):
