@@ -122,7 +122,15 @@ def test_sec_22_nao_ha_opcao_para_desligar_secure_httponly_samesite_nem_tls_no_n
         text = tracked_text(path) or ""
         assert not option.search(text), f"possivel opcao para alterar atributos do cookie em {path}: {option.findall(text)}"
         if path.startswith("web/nginx/"):
-            assert not re.search(r"listen\s+[^;]*\bssl\b|ssl_certificate|ssl_protocols|\bssl\s+on\b", text), f"TLS no Nginx do repositorio: {path}"
+            # D33: o Nginx fala TLS na 8081, mas SO com o par vindo dos Docker secrets (nada de certificado no
+            # repositorio), nunca em protocolo legado e sem opcao de desligar o TLS.
+            assert not re.search(r"\bssl\s+(on|off)\b|ssl_verify_client\s+off|SSLv", text), f"TLS fraco no Nginx: {path}"
+            for protocols in re.findall(r"ssl_protocols\s+([^;]+);", text):
+                assert protocols.split() == ["TLSv1.2", "TLSv1.3"], f"protocolos TLS em {path}: {protocols}"
+            for cert in re.findall(r"ssl_certificate(?:_key)?\s+([^;\s]+);", text):
+                assert cert in ("/run/secrets/admin_tls_cert", "/run/secrets/admin_tls_key"), f"certificado fora dos secrets: {cert} em {path}"
+    leaked = [f for f in tracked_files() if f.endswith((".pem", ".key", ".crt", ".p12", ".pfx"))]
+    assert not leaked, f"certificado/chave no repositorio: {leaked}"
     # os atributos estao fixos no codigo da api (constante unica), sem leitura de ambiente na mesma regiao
     code = (REPO / "api" / "app" / "routes_admin.py").read_text(encoding="utf-8")
     assert "Path=/; HttpOnly; Secure; SameSite=Strict" in code

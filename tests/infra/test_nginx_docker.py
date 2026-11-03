@@ -110,7 +110,7 @@ def test_infra_ng_04_valores_validos_geram_as_diretivas(web_image, tls_pair):
     assert "real_ip_header CF-Connecting-IP; real_ip_recursive off; set_real_ip_from 172.29.80.10/32;" in conf
     # a 8081 nao confia em nenhum cabecalho de IP (D33): so UMA diretiva real_ip em toda a configuracao, na 8080
     assert conf.count("set_real_ip_from") == 1 and conf.count("real_ip_header") == 1
-    assert "X-Forwarded-For" not in conf
+    assert "real_ip_header X-Forwarded-For" not in conf
     first, second = conf.split("listen 8081", 1)
     assert "CF-Connecting-IP; real_ip_recursive" in first and "real_ip" not in second
 

@@ -200,6 +200,7 @@ CLIENT_CODE = textwrap.dedent(
     spec = json.loads(sys.argv[1])
     out = []
     ctx = None
+    shared = None
     if spec.get("tls_ca"):
         ctx = ssl.create_default_context(cadata=spec["tls_ca"])
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -207,7 +208,10 @@ CLIENT_CODE = textwrap.dedent(
     for req in spec["requests"]:
         for _ in range(req.get("repeat", 1)):
             if ctx is not None:
-                c = http.client.HTTPSConnection(spec["host"], spec["port"], timeout=10, context=ctx)
+                # TLS: uma conexao so (keep-alive) por chamada, como um navegador; o handshake de cada requisicao
+                # mudaria o ritmo que os testes de limit_req medem. O http.client reabre sozinho se o servidor fechar.
+                shared = shared or http.client.HTTPSConnection(spec["host"], spec["port"], timeout=10, context=ctx)
+                c = shared
             else:
                 c = http.client.HTTPConnection(spec["host"], spec["port"], timeout=10)
             body = req.get("body")
@@ -219,7 +223,10 @@ CLIENT_CODE = textwrap.dedent(
             r = c.getresponse()
             data = r.read()
             out.append({"status": r.status, "headers": [list(h) for h in r.getheaders()], "body": data.decode("utf-8", "replace")[:600]})
-            c.close()
+            if ctx is None:
+                c.close()
+    if shared is not None:
+        shared.close()
     print(json.dumps(out))
     """
 )
