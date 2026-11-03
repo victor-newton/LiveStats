@@ -63,7 +63,7 @@ def test_web_login_03_csrf_so_em_memoria_e_enviado_nas_escritas(page: Page, api,
     csrf = current_csrf(api)
 
     page.locator("#inp1").fill("https://youtube.com/watch?v=dQw4w9WgXcQ")
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     expect(page.locator("#saveMsg")).to_be_visible()
     page.locator("#cookiesInput").fill('[{"name":"SID","value":"abc","domain":".youtube.com"}]')
     page.get_by_role("button", name="Salvar cookies").click()

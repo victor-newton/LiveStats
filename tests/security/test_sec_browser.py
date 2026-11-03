@@ -123,7 +123,7 @@ def test_sec_23_credenciais_e_admin_sem_cors_em_todas_as_rotas_e_no_navegador(st
 
     # 403 (sessao sem CSRF), 404 (com sessao) e 429 (rajada) do admin, com Origin: tambem sem nenhum Access-Control-*
     h = {"Cookie": stack.session.cookie_header, "Origin": "https://qualquer.example", **JSON_HEADERS}
-    r403 = stack.admin("/api/admin/slots", "PUT", h, json.dumps({"slots": ["", "", "", ""]}))
+    r403 = stack.admin("/api/admin/slots", "PUT", h, json.dumps({"slots": [{"url": "", "goal": None, "color": "#FF0033"}] * 4}))
     r404 = stack.admin("/api/admin/nao-existe", "GET", h)
     r429 = first_with_status(flood(stack)["admin_8081"], 429)
     assert (r403["status"], r404["status"]) == (403, 404)

@@ -57,7 +57,7 @@ def test_web_xss_02_outros_payloads_viram_texto(page: Page, api, base_url, watch
     no_html_injected(page)
 
     api.override("PUT", "/api/admin/slots", error(400, svg))
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     expect(page.locator("#saveErr")).to_have_text(svg)
     no_html_injected(page)
 

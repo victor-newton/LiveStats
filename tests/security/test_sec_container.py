@@ -352,7 +352,7 @@ def test_sec_20_estado_de_admin_isolado_dos_workers(stack):
         h = {"Cookie": f"__Host-livestats_session={forged}", "X-CSRF-Token": "c" * 43, **JSON_HEADERS}
         assert stack.admin("/api/admin/session", "GET", h)["status"] == 401
         assert stack.admin("/api/admin/slots", "GET", h)["status"] == 401
-        assert stack.admin("/api/admin/slots", "PUT", h, json.dumps({"slots": ["", "", "", ""]}))["status"] == 401
+        assert stack.admin("/api/admin/slots", "PUT", h, json.dumps({"slots": [{"url": "", "goal": None, "color": "#FF0033"}] * 4}))["status"] == 401
     finally:
         stack.py("worker-lives", "import sqlite3; c=sqlite3.connect('/data/livestats.db'); c.execute('DROP TABLE IF EXISTS admin_sessions'); c.commit()")
 

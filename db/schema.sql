@@ -1,10 +1,11 @@
--- LiveStats - esquema SQLite COMPARTILHADO (versao 1)
--- Contrato T1 (revisado no V0, correcao C1). Somente leitura para T2-T7: qualquer mudanca passa por nova versao do contrato.
+-- LiveStats - esquema SQLite COMPARTILHADO (versao 2)
+-- Contrato T1 (revisado no V0, correcao C1; versao 2 = D34/C10: slots ganha goal e color). Somente leitura para T2-T7: qualquer mudanca passa por nova versao do contrato.
 -- Arquivo: /data/livestats.db (modo WAL), no volume livestats-data, montado em api, worker-lives e worker-inscritos.
 -- Este arquivo NAO contem estado de admin: sessoes e tentativas de login ficam em outro banco
 -- (db/admin_schema.sql -> /admin-state/admin.db), em volume montado SOMENTE na api.
 -- Quem aplica este arquivo: SOMENTE o container api, na subida, de forma idempotente
--- (CREATE ... IF NOT EXISTS / INSERT OR IGNORE). Os workers esperam a tabela schema_meta existir
+-- (CREATE ... IF NOT EXISTS / INSERT OR IGNORE). Bancos criados na versao 1 sao migrados pela api na subida
+-- (api/app/db.py: ALTER TABLE slots ADD COLUMN so se a coluna faltar; schema_version 1 -> 2; nada se perde). Os workers esperam a tabela schema_meta existir
 -- e nunca criam nem alteram tabelas.
 -- Colunas e tabelas em ingles; os nomes dos campos JSON legados (portugues) estao em docs/legacy-formats.md.
 -- Quem le/escreve cada tabela: docs/data-model.md.
@@ -22,16 +23,22 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value TEXT NOT NULL
 ) STRICT;
 
-INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '1');
+INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '2');
 
 ------------------------------------------------------------------------
 -- Slots de lives configurados pelo admin (substitui lives_config.json)
 -- Sempre 4 linhas (1..4). url vazia = slot sem URL.
+-- goal  (v2): meta de likes do overlay; NULL = sem meta; 1 a 1.000.000.000.
+-- color (v2): cor da barra do overlay, '#RRGGBB' em MAIUSCULAS (GLOB e sensivel a caixa); padrao #FF0033.
+-- IMPORTANTE: a migracao em api/app/db.py repete estas duas definicoes de coluna; mantenha-as iguais.
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS slots (
     slot       INTEGER PRIMARY KEY CHECK (slot BETWEEN 1 AND 4),
     url        TEXT    NOT NULL DEFAULT '' CHECK (length(url) <= 2048),
-    updated_at TEXT                         -- ISO 8601 UTC com sufixo Z; NULL = nunca salvo
+    updated_at TEXT,                        -- ISO 8601 UTC com sufixo Z; NULL = nunca salvo
+    goal       INTEGER CHECK (goal IS NULL OR goal BETWEEN 1 AND 1000000000),
+    color      TEXT    NOT NULL DEFAULT '#FF0033'
+        CHECK (length(color) = 7 AND color GLOB '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]')
 ) STRICT;
 
 INSERT OR IGNORE INTO slots (slot, url) VALUES (1, ''), (2, ''), (3, ''), (4, '');

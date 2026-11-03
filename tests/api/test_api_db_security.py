@@ -13,6 +13,7 @@ import pytest
 
 from api_support import (
     APP_DIR,
+    BLANK_SLOTS,
     DB_DIR,
     REPO,
     START_EPOCH,
@@ -25,6 +26,7 @@ from api_support import (
     running_stack,
     seed_golden_lives,
     seed_subscribers,
+    slot_item,
     walk_keys,
 )
 from app import db
@@ -32,7 +34,10 @@ from app import db
 # ------------------------------------------------------------------------------------- API-DB-01
 SHARED_COLUMNS = {
     "schema_meta": [("key", "TEXT", 0, 1), ("value", "TEXT", 1, 0)],
-    "slots": [("slot", "INTEGER", 0, 1), ("url", "TEXT", 1, 0), ("updated_at", "TEXT", 0, 0)],
+    "slots": [
+        ("slot", "INTEGER", 0, 1), ("url", "TEXT", 1, 0), ("updated_at", "TEXT", 0, 0),
+        ("goal", "INTEGER", 0, 0), ("color", "TEXT", 1, 0),  # v2 (D34)
+    ],
     "live_stats": [
         ("slot", "INTEGER", 0, 1), ("active", "INTEGER", 1, 0), ("video_id", "TEXT", 1, 0), ("title", "TEXT", 1, 0),
         ("status", "TEXT", 1, 0), ("views", "INTEGER", 1, 0), ("likes", "INTEGER", 1, 0),
@@ -254,7 +259,7 @@ def test_api_sec_01_422_nunca_expoe_input(stack: Stack):
     h = {"X-CSRF-Token": csrf}
     responses = [
         ("/api/admin/login", stack.new_client().post("/api/admin/login", json={"username": sentinel, "password": [sentinel]})),
-        ("/api/admin/slots", stack.client.put("/api/admin/slots", json={"slots": [sentinel, "", "", ""]}, headers=h)),
+        ("/api/admin/slots", stack.client.put("/api/admin/slots", json={"slots": [slot_item(sentinel), *BLANK_SLOTS[1:]]}, headers=h)),
         ("/api/admin/slots", stack.client.put("/api/admin/slots", json={"slots": 7, sentinel: 1}, headers=h)),
         ("/api/admin/cookies", stack.client.post("/api/admin/cookies", json=[{"name": 1, "value": sentinel}], headers=h)),
         ("/api/admin/cookies", stack.client.post("/api/admin/cookies", json=[{"name": "a", "value": "b", "domain": sentinel + " !"}], headers=h)),
@@ -276,7 +281,7 @@ def test_api_sec_01_422_nunca_expoe_input(stack: Stack):
 def test_api_sec_01_valor_enviado_nao_volta_no_corpo(stack: Stack):
     csrf = stack.login_csrf()
     sentinel = "ENVIADO-" + secrets.token_hex(8)
-    resp = stack.client.put("/api/admin/slots", json={"slots": [sentinel, "", "", ""]}, headers={"X-CSRF-Token": csrf})
+    resp = stack.client.put("/api/admin/slots", json={"slots": [slot_item(sentinel), *BLANK_SLOTS[1:]]}, headers={"X-CSRF-Token": csrf})
     assert resp.status_code == 422 and sentinel not in resp.text
     resp = stack.client.post("/api/admin/cookies", json=[{"name": sentinel, "value": 5}], headers={"X-CSRF-Token": csrf})
     assert resp.status_code == 422 and sentinel not in resp.text
@@ -297,7 +302,7 @@ def test_api_sec_02_admin_responde_com_no_store(stack: Stack):
     csrf = login.json()["csrf_token"]
     checks.append(login)                                                                      # 200
     checks += [stack.client.get(p) for p in ("/api/admin/session", "/api/admin/slots", "/api/admin/workers/status", "/api/admin/nao-existe")]
-    checks.append(stack.client.put("/api/admin/slots", json={"slots": ["", "", "", ""]}, headers={"X-CSRF-Token": csrf}))
+    checks.append(stack.client.put("/api/admin/slots", json={"slots": BLANK_SLOTS}, headers={"X-CSRF-Token": csrf}))
     checks.append(stack.client.put("/api/admin/slots", json={"slots": []}, headers={"X-CSRF-Token": csrf}))
     checks.append(stack.client.post("/api/admin/cookies", json=[{"name": "a", "value": "b"}], headers={"X-CSRF-Token": csrf}))
     checks.append(stack.client.post("/api/admin/logout", headers={"X-CSRF-Token": csrf}))
@@ -453,7 +458,7 @@ def test_api_sec_06_banco_indisponivel_nao_vira_500_com_traceback(stack: Stack):
     assert resp.status_code == 503
     assert resp.json() == {"detail": "Banco de dados indisponível"}
     assert_matches_openapi(resp, "/api/admin/slots", "get")
-    put = stack.client.put("/api/admin/slots", json={"slots": ["", "", "", ""]}, headers={"X-CSRF-Token": csrf})
+    put = stack.client.put("/api/admin/slots", json={"slots": BLANK_SLOTS}, headers={"X-CSRF-Token": csrf})
     assert put.status_code == 503 and "Traceback" not in put.text
 
 
@@ -621,11 +626,11 @@ def test_api_val_01_respostas_conformes_ao_openapi(stack: Stack):
         resp = stack.client.get(path)
         assert resp.status_code in (200, 404)
         assert_matches_openapi(resp, tpl, "get")
-    for body, status in (({"slots": ["dQw4w9WgXcQ", "", "", ""]}, 200), ({"slots": ["abc", "", "", ""]}, 422)):
+    for body, status in (({"slots": [slot_item("dQw4w9WgXcQ"), *BLANK_SLOTS[1:]]}, 200), ({"slots": [slot_item("abc"), *BLANK_SLOTS[1:]]}, 422)):
         resp = stack.client.put("/api/admin/slots", json=body, headers=h)
         assert resp.status_code == status
         assert_matches_openapi(resp, "/api/admin/slots", "put")
-    forbidden = stack.client.put("/api/admin/slots", json={"slots": ["", "", "", ""]})
+    forbidden = stack.client.put("/api/admin/slots", json={"slots": BLANK_SLOTS})
     assert forbidden.status_code == 403
     assert_matches_openapi(forbidden, "/api/admin/slots", "put")
     for body, status in (([{"name": "a", "value": "b"}], 200), ([], 400), ([{"name": 1, "value": "b"}], 422)):
@@ -635,7 +640,7 @@ def test_api_val_01_respostas_conformes_ao_openapi(stack: Stack):
     forbidden = stack.client.post("/api/admin/cookies", json=[{"name": "a", "value": "b"}])
     assert forbidden.status_code == 403
     assert_matches_openapi(forbidden, "/api/admin/cookies", "post")
-    big = stack.client.put("/api/admin/slots", json={"slots": ["", "", "", ""], "x": "y" * 300_000}, headers=h)
+    big = stack.client.put("/api/admin/slots", json={"slots": BLANK_SLOTS, "x": "y" * 300_000}, headers=h)
     assert big.status_code == 413
     assert_matches_openapi(big, "/api/admin/slots", "put")
     logout = stack.client.post("/api/admin/logout", headers=h)
