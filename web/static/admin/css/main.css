@@ -205,6 +205,50 @@ body {
   font-size: 0.8rem;
 }
 .slot-input:focus { border-color: var(--red-dim); }
+.slot-extra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-end;
+  margin-top: 0.75rem;
+}
+.slot-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.slot-field-goal { flex: 1 1 8rem; }
+.slot-goal-label, .slot-color-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.slot-goal {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 0.8rem;
+}
+.slot-goal:focus { border-color: var(--red-dim); }
+.slot-goal::placeholder { color: var(--muted); }
+.slot-color {
+  width: 3rem;
+  height: 2.1rem;
+  padding: 2px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .slot-input::placeholder { color: var(--muted); }
 .slot-stats {
   margin-top: 0.75rem;
@@ -263,7 +307,30 @@ body {
   color: var(--muted);
   margin-bottom: 0.75rem;
 }
-.endpoint-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.endpoint-list { display: flex; flex-direction: column; gap: 1rem; }
+.ep-group { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.ep-group-title {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.ep-rows { display: flex; flex-direction: column; gap: 0.5rem; }
+.ep-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.ep-label { font-size: 0.75rem; color: var(--text); }
+.ep-copy {
+  flex: none;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  font-family: var(--body);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.ep-copy:hover { border-color: var(--red-dim); }
 .ep { display: flex; align-items: center; gap: 0.75rem; font-size: 0.8rem; min-width: 0; }
 .ep-badge {
   background: var(--surface2);

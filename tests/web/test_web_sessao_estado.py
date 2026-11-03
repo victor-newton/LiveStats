@@ -39,7 +39,7 @@ def test_web_login_06_token_csrf_antigo_nao_sobrevive_ao_logout_nem_a_expiracao(
     novo = current_csrf(api)
     assert novo != antigo
     assert "x-csrf-token" not in api.requests("POST", "/api/admin/login")[-1].headers
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     expect(page.locator("#saveMsg")).to_be_visible()
     assert api.requests("PUT", "/api/admin/slots")[-1].headers["x-csrf-token"] == novo
 
@@ -71,16 +71,16 @@ def test_web_login_07_mensagens_de_erro_somem_quando_o_estado_muda(page: Page, a
     tentar_login(page, api.username, api.password)
     expect(page.locator("#panelView")).to_be_visible()
     page.get_by_label("Slot 1", exact=True).fill("https://example.com/nao-e-youtube")
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     expect(page.locator("#saveErr")).to_contain_text("Slot 1")
     page.get_by_label("Slot 1", exact=True).fill("dQw4w9WgXcQ")
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     expect(page.locator("#saveMsg")).to_be_visible()
     expect(page.locator("#saveErr")).to_have_text("")
 
     # erros de slots e de cookies não vazam para a sessão seguinte
     page.get_by_label("Slot 2", exact=True).fill("https://example.com/de-novo-invalido")
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     expect(page.locator("#saveErr")).to_contain_text("Slot 2")
     page.locator("#cookiesInput").fill('[{"name": "so-o-nome"}]')
     page.get_by_role("button", name="Salvar cookies").click()

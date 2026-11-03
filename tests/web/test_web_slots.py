@@ -28,7 +28,7 @@ def test_web_slot_01_quatro_cartoes_com_valores_do_servidor(page: Page, api, bas
         expect(campo).to_have_attribute("placeholder", "https://youtube.com/watch?v=...")
         expect(campo).to_have_value(URLS[n - 1])
         expect(cards.nth(n - 1).locator(".slot-label")).to_have_text(f"Slot {n}")
-    expect(page.get_by_role("button", name="Salvar URLs")).to_be_visible()
+    expect(page.get_by_role("button", name="Salvar slots")).to_be_visible()
     assert n_get_slots(api) >= 1
 
 
@@ -85,14 +85,15 @@ def test_web_slot_02_salvar_envia_put_mostra_aviso_e_recarrega(page: Page, api, 
         page.get_by_label(f"Slot {n}", exact=True).fill(f"  {url}  ")
     antes = n_get_slots(api)
 
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     msg = page.locator("#saveMsg")
     expect(msg).to_have_text("✓ Salvo com sucesso")
     expect(msg).to_be_visible()
 
     puts = api.requests("PUT", "/api/admin/slots")
     assert len(puts) == 1
-    assert puts[0].body == {"slots": [f"  {u}  " for u in URLS]}
+    # D34: cada slot vai como {url, goal, color}; sem mexer em meta e cor: meta nula e cor padrão
+    assert puts[0].body == {"slots": [{"url": f"  {u}  ", "goal": None, "color": "#ff0033"} for u in URLS]}
     assert puts[0].status == 200
     assert api.slots == URLS  # o servidor aparou os espaços
     expect(page.get_by_label("Slot 1", exact=True)).to_have_value(URLS[0])  # campo reflete o salvo
@@ -146,7 +147,7 @@ def test_web_slot_04_polling_de_15s_preserva_o_que_o_usuario_digita(page: Page, 
 def test_web_slot_05_erro_422_ao_salvar_mostra_mensagem_e_nao_diz_salvo(page: Page, api, base_url):
     do_login(page, base_url, api)
     page.get_by_label("Slot 3", exact=True).fill("https://example.com/isto-nao-e-youtube")
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
 
     erro = page.locator("#saveErr")
     expect(erro).to_be_visible()
@@ -159,7 +160,7 @@ def test_web_slot_05_erro_422_ao_salvar_mostra_mensagem_e_nao_diz_salvo(page: Pa
 
     # corrigindo e salvando de novo: o erro some e o aviso de sucesso aparece
     page.get_by_label("Slot 3", exact=True).fill(URLS[2])
-    page.get_by_role("button", name="Salvar URLs").click()
+    page.get_by_role("button", name="Salvar slots").click()
     expect(page.locator("#saveMsg")).to_be_visible()
     expect(erro).to_be_hidden()
 
@@ -167,12 +168,13 @@ def test_web_slot_05_erro_422_ao_salvar_mostra_mensagem_e_nao_diz_salvo(page: Pa
 def test_web_slot_06_lista_endpoints_com_base_publica(page: Page, api, base_url):
     api.public_base_url = "https://live.exemplo.com.br/"
     do_login(page, base_url, api)
+    # a lista completa (17 endereços, agrupados e com "Copiar") é verificada em WEB-LIKE-05
     rows = page.locator("#epList .ep")
-    expect(rows).to_have_count(4)
+    expect(rows).to_have_count(17)
     for n in range(1, 5):
         expect(rows.nth(n - 1).locator(".ep-badge")).to_have_text("GET")
         expect(rows.nth(n - 1).locator(".ep-url")).to_have_text(f"https://live.exemplo.com.br/live{n}.json")
-    expect(page.get_by_role("heading", name="Endpoints JSON")).to_be_visible()
+    expect(page.get_by_role("heading", name="Endpoints", exact=True)).to_be_visible()
 
 
 def test_web_slot_06b_sem_base_publica_usa_a_origem_da_pagina(page: Page, api, base_url):
@@ -180,6 +182,6 @@ def test_web_slot_06b_sem_base_publica_usa_a_origem_da_pagina(page: Page, api, b
     do_login(page, base_url, api)
     origem = page.evaluate("window.location.origin")
     rows = page.locator("#epList .ep")
-    expect(rows).to_have_count(4)
+    expect(rows).to_have_count(17)
     for n in range(1, 5):
         expect(rows.nth(n - 1).locator(".ep-url")).to_have_text(f"{origem}/live{n}.json")

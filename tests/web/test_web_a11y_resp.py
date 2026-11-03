@@ -75,7 +75,7 @@ def test_web_a11y_01b_painel_com_rotulos_e_operavel_pelo_teclado(page: Page, api
     assert foco["style"] == "solid" and foco["width"] != "0px"
     page.keyboard.press("Enter")
     expect(page.locator("#saveMsg")).to_be_visible()
-    assert api.requests("PUT", "/api/admin/slots")[0].body["slots"][0] == "dQw4w9WgXcQ"
+    assert api.requests("PUT", "/api/admin/slots")[0].body["slots"][0]["url"] == "dQw4w9WgXcQ"
 
 
 def test_web_resp_01_largura_375_sem_rolagem_horizontal(page: Page, api, base_url):

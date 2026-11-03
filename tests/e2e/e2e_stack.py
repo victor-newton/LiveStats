@@ -313,8 +313,10 @@ class E2EStack:
         h.update(headers or {})
         return self.on_port(port, path, method, h, body)
 
-    def set_slots(self, slots: list[str]) -> None:
-        r = self.api("PUT", "/api/admin/slots", {"slots": slots})
+    def set_slots(self, slots: list) -> None:
+        """Grava os 4 slots (D34). Texto = so a URL (sem meta, cor padrao); dict = item completo ``{url, goal, color}``."""
+        items = [s if isinstance(s, dict) else {"url": s, "goal": None, "color": "#FF0033"} for s in slots]
+        r = self.api("PUT", "/api/admin/slots", {"slots": items})
         assert r["status"] == 200, r["body"]
 
     def upload_cookies(self, cookies: list[dict] | None = None) -> dict:

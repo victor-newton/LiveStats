@@ -64,7 +64,7 @@ def test_sec_01_toda_rota_admin_sem_sessao_401_e_sem_csrf_403_pela_8081(stack):
     for path in ("/api/admin/session", "/api/admin/slots", "/api/admin/workers/status"):
         assert stack.admin(path, "GET", h)["status"] == 200, path
     unsafe = [
-        ("PUT", "/api/admin/slots", json.dumps({"slots": ["", "", "", ""]})),
+        ("PUT", "/api/admin/slots", json.dumps({"slots": [{"url": "", "goal": None, "color": "#FF0033"}] * 4})),
         ("POST", "/api/admin/cookies", json.dumps([{"name": "a", "value": "b"}])),
         ("POST", "/api/admin/logout", "{}"),
     ]
@@ -83,7 +83,7 @@ def test_sec_01_toda_rota_admin_sem_sessao_401_e_sem_csrf_403_pela_8081(stack):
 
     # --- com sessao e CSRF corretos as mesmas rotas funcionam (controle: o 401/403 acima vem da protecao, nao de rota quebrada)
     ok = {**h, "X-CSRF-Token": own.csrf}
-    assert stack.admin("/api/admin/slots", "PUT", ok, json.dumps({"slots": ["", "", "", ""]}))["status"] == 200
+    assert stack.admin("/api/admin/slots", "PUT", ok, json.dumps({"slots": [{"url": "", "goal": None, "color": "#FF0033"}] * 4}))["status"] == 200
     assert stack.admin("/api/admin/cookies", "POST", ok, "[]")["status"] == 400  # passou pela auth e caiu na validacao
     assert stack.admin("/api/admin/rota-que-nao-existe", "GET", ok)["status"] == 404  # com sessao: 404 JSON
     stack.set_slots(stack.default_slots())

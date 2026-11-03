@@ -142,6 +142,8 @@ class ApiDouble:
             self.public_base_url: str | None = None
             self.sessions: dict[str, dict[str, Any]] = {}
             self.slots = ["", "", "", ""]
+            self.goals: list[int | None] = [None, None, None, None]  # D34: meta de likes por slot
+            self.colors = ["#FF0033"] * 4  # D34: cor da barra por slot
             self.saved_at: str | None = None
             self.stats: dict[int, dict[str, Any] | None] = {1: None, 2: None, 3: None, 4: None}
             self.subscribers: dict[str, str] | None = None
@@ -302,7 +304,10 @@ class ApiDouble:
         stats = self.stats[n]
         if stats is None:
             return error(503, "Dados ainda não disponíveis", cors())
-        return json_reply(200, [stats] if legacy else stats, cors())
+        if legacy:
+            return json_reply(200, [stats], cors())
+        # formato novo: o legado + goal e color do slot (D34); o legado NAO os tem
+        return json_reply(200, {**stats, "goal": self.goals[n - 1], "color": self.colors[n - 1]}, cors())
 
     # ---- admin -------------------------------------------------------------
 
@@ -381,7 +386,14 @@ class ApiDouble:
     def _slots_read(self) -> dict[str, Any]:
         return {
             "slots": [
-                {"slot": i + 1, "url": self.slots[i], "stats": self.stats[i + 1]} for i in range(4)
+                {
+                    "slot": i + 1,
+                    "url": self.slots[i],
+                    "goal": self.goals[i],
+                    "color": self.colors[i],
+                    "stats": self.stats[i + 1],
+                }
+                for i in range(4)
             ],
             "saved_at": self.saved_at,
         }
@@ -390,17 +402,21 @@ class ApiDouble:
         errs = self.contract.request_errors(self.contract.find("PUT", rec.path), rec.body)  # type: ignore[arg-type]
         if errs:
             return validation_error(errs)
-        values = [str(v).strip() for v in rec.body["slots"]]
+        items = rec.body["slots"]
+        values = [str(item["url"]).strip() for item in items]
         bad = [
-            {"loc": ["body", "slots", i], "msg": "Value error, URL ou ID de vídeo do YouTube inválido", "type": "value_error"}
+            {"loc": ["body", "slots", i, "url"], "msg": "Value error, URL ou ID de vídeo do YouTube inválido", "type": "value_error"}
             for i, v in enumerate(values)
             if v and extrai_video_id(v) is None
         ]
         if bad:
             return validation_error(bad)
         self.slots = values
+        self.goals = [item["goal"] for item in items]
+        self.colors = [str(item["color"]).upper() for item in items]  # a api normaliza em maiúsculas
         self.saved_at = utc_iso()
-        return json_reply(200, {"ok": True, "slots": values, "saved_at": self.saved_at})
+        saved = [{"url": values[i], "goal": self.goals[i], "color": self.colors[i]} for i in range(4)]
+        return json_reply(200, {"ok": True, "slots": saved, "saved_at": self.saved_at})
 
     def _cookies(self, rec: RequestRecord) -> Reply:
         # Ordem de validação do openapi.yaml (descrição de POST /api/admin/cookies).
