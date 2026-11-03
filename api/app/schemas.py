@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
+from .fonts import FONTS
 from .legacy import extract_video_id
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -46,12 +47,52 @@ SlotGoal = Annotated[StrictInt, Field(ge=1, le=GOAL_MAX)] | None
 SlotColor = Annotated[StrictStr, Field(max_length=7), AfterValidator(_check_color)]
 
 
+def _check_font(value: str) -> str:
+    if value not in FONTS:  # comparacao exata com a lista fechada: nada de CSS vindo do cliente
+        raise ValueError("Fonte fora da lista permitida")
+    return value
+
+
+Font = Annotated[StrictStr, Field(max_length=40), AfterValidator(_check_font)]
+TextColor = SlotColor  # D35: mesma regra #RRGGBB da D34
+
+CHANNEL_ID = re.compile(r"UC[0-9A-Za-z_-]{22}")
+
+
+def _check_channel(value: str) -> str:
+    if CHANNEL_ID.fullmatch(value) is None:
+        raise ValueError("ID de canal invalido: UC seguido de 22 caracteres (letras, numeros, _ ou -)")
+    return value
+
+
+ChannelId = Annotated[StrictStr, Field(max_length=24), AfterValidator(_check_channel)]
+
+
 class SlotWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     url: SlotText
     goal: SlotGoal
     color: SlotColor
+    # D35: opcionais; ausente = mantem o valor atual do slot.
+    font: Font | None = None
+    text_color: TextColor | None = None
+
+
+class SettingsWrite(BaseModel):
+    """Qualquer subconjunto (nao vazio) de canal, fonte e cor do contador de inscritos."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    channel_id: ChannelId | None = None
+    subs_font: Font | None = None
+    subs_text_color: TextColor | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "SettingsWrite":
+        if all(getattr(self, name) is None for name in ("channel_id", "subs_font", "subs_text_color")):
+            raise ValueError("Informe ao menos um campo")
+        return self
 
 
 class SlotsWrite(BaseModel):

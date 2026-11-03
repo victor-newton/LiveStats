@@ -27,6 +27,7 @@ _READ_OK: dict[str, set[str] | None] = {
     "schema_meta": None,
     "worker_status": {"worker"},
     "subscriber_reading": {"id"},
+    "settings": {"key", "value"},  # D35: so `channel_id` e consultado (WHERE key = 'channel_id')
 }
 _WRITE_OK = {"subscriber_reading", "worker_status"}
 
@@ -143,6 +144,11 @@ class Store:
             "SELECT id, key_id, ciphertext FROM cookie_sets WHERE id = ?", (set_id,)
         ).fetchone()
         return None if row is None else CookieSetRow(int(row[0]), str(row[1]), bytes(row[2]))
+
+    def get_channel_id(self) -> str | None:
+        """Canal configurado no painel (D35); None se a tabela nao tem a chave."""
+        row = self.con.execute("SELECT value FROM settings WHERE key = 'channel_id'").fetchone()
+        return None if row is None else str(row[0])
 
     # ------------------------------------------------------------------ escrita
     def save_reading(self, value: str, raw: str, read_at: str) -> None:

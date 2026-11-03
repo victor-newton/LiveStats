@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Iterator
 
 # Tabelas que a api pode ler (e, em alguns casos, escrever) em livestats.db.
-_SHARED_READ = {"schema_meta", "slots", "live_stats", "subscriber_reading", "worker_status", "cookie_sets"}
+_SHARED_READ = {"schema_meta", "settings", "slots", "live_stats", "subscriber_reading", "worker_status", "cookie_sets"}
 _SHARED_WRITE = {
     # tabela -> acoes permitidas
     "slots": {sqlite3.SQLITE_UPDATE},
+    "settings": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE},
     "cookie_sets": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE},
 }
 # A api so GRAVA o texto cifrado; nunca le de volta.
@@ -104,29 +105,33 @@ def connection(opener, path: str) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-# Colunas acrescentadas ao esquema compartilhado na versao 2 (D34). Devem ser identicas as de db/schema.sql.
-_SLOTS_V2_COLUMNS = (
+# Colunas acrescentadas ao esquema compartilhado nas versoes 2 (D34) e 3 (D35). Devem ser identicas as de db/schema.sql.
+_HEX_CHECK = "length({c}) = 7 AND {c} GLOB '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'"
+_SLOTS_ADDED_COLUMNS = (
     ("goal", "INTEGER CHECK (goal IS NULL OR goal BETWEEN 1 AND 1000000000)"),
-    (
-        "color",
-        "TEXT NOT NULL DEFAULT '#FF0033' "
-        "CHECK (length(color) = 7 AND color GLOB '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]')",
-    ),
+    ("color", "TEXT NOT NULL DEFAULT '#FF0033' CHECK (" + _HEX_CHECK.format(c="color") + ")"),
+    ("font", "TEXT NOT NULL DEFAULT 'Roboto' CHECK (length(font) BETWEEN 1 AND 40)"),
+    ("text_color", "TEXT NOT NULL DEFAULT '#FFFFFF' CHECK (" + _HEX_CHECK.format(c="text_color") + ")"),
 )
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 def _migrate_shared(conn: sqlite3.Connection) -> None:
-    """Migra um banco compartilhado v1 para v2 (idempotente; nada se perde). Roda so se ``slots`` existe."""
+    """Migra um banco compartilhado v1/v2 para v3 (idempotente; nada se perde). Roda so se ``slots`` existe.
+
+    A tabela ``settings`` ja foi criada por ``CREATE TABLE IF NOT EXISTS`` no ``executescript`` do esquema.
+    """
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'slots'").fetchone() is None:
         return  # banco que nao e o compartilhado (admin.db)
     conn.execute("BEGIN IMMEDIATE")
     try:
         present = {row[1] for row in conn.execute("PRAGMA table_info(slots)")}
-        for name, definition in _SLOTS_V2_COLUMNS:
+        for name, definition in _SLOTS_ADDED_COLUMNS:
             if name not in present:
                 conn.execute(f"ALTER TABLE slots ADD COLUMN {name} {definition}")  # noqa: S608 (constantes)
-        conn.execute("UPDATE schema_meta SET value = ? WHERE key = 'schema_version' AND value = '1'", (SCHEMA_VERSION,))
+        conn.execute(
+            "UPDATE schema_meta SET value = ? WHERE key = 'schema_version' AND value IN ('1', '2')", (SCHEMA_VERSION,)
+        )
     except BaseException:
         conn.execute("ROLLBACK")
         raise

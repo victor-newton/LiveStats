@@ -29,7 +29,8 @@ from .deps import (
     validate_body,
 )
 from .legacy import live_object
-from .schemas import LoginRequest, SlotsWrite
+from .fonts import DEFAULT_FONT, DEFAULT_TEXT_COLOR, FONTS
+from .schemas import LoginRequest, SettingsWrite, SlotsWrite
 
 log = logging.getLogger("livestats.api")
 
@@ -106,7 +107,7 @@ def get_session(session: SessionData = Depends(require_session), state: AppState
 @router.get("/slots")
 def get_slots(state: AppState = Depends(get_state)) -> dict[str, Any]:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        slot_rows = conn.execute("SELECT slot, url, goal, color, updated_at FROM slots ORDER BY slot").fetchall()
+        slot_rows = conn.execute("SELECT slot, url, goal, color, font, text_color, updated_at FROM slots ORDER BY slot").fetchall()
         stats = {
             row["slot"]: live_object(row)
             for row in conn.execute(f"SELECT {_LIVE_COLUMNS} FROM live_stats").fetchall()  # noqa: S608
@@ -119,6 +120,8 @@ def get_slots(state: AppState = Depends(get_state)) -> dict[str, Any]:
                 "url": row["url"],
                 "goal": row["goal"],
                 "color": row["color"],
+                "font": row["font"],
+                "text_color": row["text_color"],
                 "stats": stats.get(row["slot"]),
             }
             for row in slot_rows
@@ -139,10 +142,57 @@ def put_slots(
         with db.transaction(conn, immediate=True):
             for number, item in enumerate(body.slots, start=1):
                 conn.execute(
-                    "UPDATE slots SET url = ?, goal = ?, color = ?, updated_at = ? WHERE slot = ?",
-                    (item.url, item.goal, item.color, saved_at, number),
+                    "UPDATE slots SET url = ?, goal = ?, color = ?, font = COALESCE(?, font), "
+                    "text_color = COALESCE(?, text_color), updated_at = ? WHERE slot = ?",
+                    (item.url, item.goal, item.color, item.font, item.text_color, saved_at, number),
                 )
-    return {"ok": True, "slots": [item.model_dump() for item in body.slots], "saved_at": saved_at}
+        saved = conn.execute("SELECT url, goal, color, font, text_color FROM slots ORDER BY slot").fetchall()
+    return {
+        "ok": True,
+        "slots": [{k: row[k] for k in ("url", "goal", "color", "font", "text_color")} for row in saved],
+        "saved_at": saved_at,
+    }
+
+
+# ---------------------------------------------------------------------------- configuracoes (D35)
+def read_settings(conn: sqlite3.Connection) -> dict[str, Any]:
+    stored = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM settings")}
+    return {
+        "channel_id": stored.get("channel_id"),
+        "subs_font": stored.get("subs_font", DEFAULT_FONT),
+        "subs_text_color": stored.get("subs_text_color", DEFAULT_TEXT_COLOR),
+    }
+
+
+@router.get("/settings")
+def get_settings(state: AppState = Depends(get_state)) -> dict[str, Any]:
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        return read_settings(conn)
+
+
+@router.put("/settings")
+def put_settings(
+    session: SessionData = Depends(require_csrf),
+    raw: bytes = Depends(read_body),
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    body = validate_body(SettingsWrite, parse_json(raw))
+    changed = [key for key in ("channel_id", "subs_font", "subs_text_color") if getattr(body, key) is not None]
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        with db.transaction(conn, immediate=True):
+            for key in changed:
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, getattr(body, key)),
+                )
+        result = read_settings(conn)
+    log.info("configuracoes salvas (%s)", ",".join(changed))
+    return {"ok": True, **result}
+
+
+@router.get("/fonts")
+def get_fonts() -> dict[str, Any]:
+    return {"fonts": list(FONTS), "default": DEFAULT_FONT}
 
 
 # ---------------------------------------------------------------------------- cookies
