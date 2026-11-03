@@ -13,10 +13,19 @@ from sub_support import cookie, query
 
 MSG = "Sem permissao para este canal no YouTube Studio: confira o YOUTUBE_CHANNEL_ID e se a conta dos cookies tem acesso"
 
-COM_CONTADOR_E_PALAVRA = """<!DOCTYPE html><html><body>
-<yta-smooth-counter>460600</yta-smooth-counter>
-<p>Gerencie a permissão de acesso dos editores e o texto "you don't have permission" em outros canais.</p>
-</body></html>"""
+FRASES_COMPLETAS = [
+    "Ops, você não tem permissão para acessar esta página",
+    "Oops, you don't have permission to access this page",
+]
+
+
+def _pagina_com_contador_e_frase(frase: str) -> str:
+    return (
+        "<!DOCTYPE html><html><body>"
+        "<yta-smooth-counter>460600</yta-smooth-counter>"
+        f"<p>{frase}</p>"
+        "</body></html>"
+    )
 
 
 @pytest.mark.parametrize("pagina", ["sem_permissao_ptbr.html", "sem_permissao_en.html"])
@@ -56,8 +65,9 @@ def test_sub_auth_04_sem_permissao_conta_para_o_reload_de_30(env, make_worker, a
     assert query(env.db, "SELECT value FROM subscriber_reading") == []
 
 
-def test_sub_auth_05_contador_presente_com_palavra_permissao_nao_e_sem_permissao(env, make_worker, add_cookies):
-    env.server.html_override = COM_CONTADOR_E_PALAVRA
+@pytest.mark.parametrize("frase", FRASES_COMPLETAS)
+def test_sub_auth_05_contador_presente_com_frase_de_erro_nao_e_sem_permissao(env, make_worker, add_cookies, frase):
+    env.server.html_override = _pagina_com_contador_e_frase(frase)
     add_cookies([cookie("a", "1")])
     worker = make_worker()
     worker.step()
