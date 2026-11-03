@@ -21,6 +21,8 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from .cookies import filtrar_sessao, normalizar_cookies
+
 log = logging.getLogger("worker_inscritos.browser")
 
 USER_AGENT = (
@@ -155,6 +157,7 @@ class BrowserSession:
         self.context: BrowserContext | None = None
         self.page: Page | None = None
         self._crashed = False
+        self.context_renewed = False  # True quando o contexto foi recriado (cookies perdidos)
 
     # ------------------------------------------------------------------ ciclo de vida
     def start(self) -> None:
@@ -169,6 +172,7 @@ class BrowserSession:
             args=CHROMIUM_ARGS,
             ignore_default_args=IGNORE_DEFAULT_ARGS,
         )
+        self.context_renewed = True
         self.context = self._browser.new_context(user_agent=USER_AGENT, viewport=VIEWPORT)
         self.context.set_default_timeout(self.timings.nav_timeout * 1000)
         self.context.add_init_script(INIT_SCRIPT)
@@ -227,7 +231,25 @@ class BrowserSession:
         self.stop.wait(t.after_www)
         self.context.clear_cookies()
         self._add_cookies(cookies)
+        self.context_renewed = False  # o contexto atual recebeu cookies
 
+        self._open_studio()
+
+    def reload_studio(self) -> bool:
+        """D37: abre o Studio de novo SEM mexer nos cookies do contexto (a sessao viva, com as renovacoes do Google).
+
+        False se o contexto foi recriado (navegador caiu): ele esta vazio e o chamador deve reinjetar os cookies.
+        """
+        self._ensure_ready()
+        if self.context_renewed:
+            return False
+        self._open_studio()
+        return True
+
+    def _open_studio(self) -> None:
+        assert self.page is not None
+        t = self.timings
+        timeout_ms = t.nav_timeout * 1000
         log.info("[AUTH] Abrindo YouTube Studio Analytics...")
         self.page.goto(self.studio_url, timeout=timeout_ms)
         try:
@@ -242,6 +264,11 @@ class BrowserSession:
             log.error("[AUTH] *** REDIRECIONADO PARA LOGIN - atualize os cookies no painel admin! ***")
         else:
             log.info("[AUTH] OK - %s", urlsplit(url).netloc)
+
+    def export_cookies(self, hosts_extras: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        """Cookies atuais do contexto (so dominios da sessao), nos 5 campos da D13. Nada disto vai a log."""
+        assert self.context is not None
+        return filtrar_sessao(normalizar_cookies(self.context.cookies()), hosts_extras)
 
     def _add_cookies(self, cookies: list[dict[str, Any]]) -> None:
         assert self.context is not None

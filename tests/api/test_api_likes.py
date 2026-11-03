@@ -66,7 +66,7 @@ def test_api_like_01_banco_novo_nasce_na_v2_com_goal_e_color(tmp_path):
     path = tmp_path / "livestats.db"
     db.bootstrap_schema(str(path), str(DB_DIR / "schema.sql"))
     conn = sqlite3.connect(path)
-    assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone() == ("3",)
+    assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone() == ("4",)
     assert columns(conn) == [
         ("slot", "INTEGER", 0), ("url", "TEXT", 1), ("updated_at", "TEXT", 0), ("goal", "INTEGER", 0), ("color", "TEXT", 1),
         ("font", "TEXT", 1), ("text_color", "TEXT", 1),
@@ -151,7 +151,7 @@ def test_api_like_02_a_app_sobe_sobre_banco_v1_e_atende_o_painel(tmp_path, creds
         ]
         assert put(stack, csrf, [slot_item("dQw4w9WgXcQ", 10000, "#12ab34"), *BLANK_SLOTS[1:]]).status_code == 200
         with stack.shared() as conn:
-            assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == "3"
+            assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == "4"
 
 
 def test_api_like_02_workers_continuam_lendo_slots_como_antes(stack: Stack):

@@ -260,7 +260,7 @@ def workers_status(state: AppState = Depends(get_state)) -> dict[str, Any]:
             ).fetchall()
         }
         cookie_row = conn.execute(
-            "SELECT id, cookie_count, created_at FROM cookie_sets ORDER BY id DESC LIMIT 1"
+            "SELECT id, cookie_count, created_at, source, renewed_from FROM cookie_sets ORDER BY id DESC LIMIT 1"
         ).fetchone()
         reading = conn.execute("SELECT value, raw, read_at FROM subscriber_reading WHERE id = 1").fetchone()
 
@@ -274,6 +274,9 @@ def workers_status(state: AppState = Depends(get_state)) -> dict[str, Any]:
             "configured": cookie_row is not None,
             "count": cookie_row["cookie_count"] if cookie_row else 0,
             "uploaded_at": cookie_row["created_at"] if cookie_row else None,
+            "source": cookie_row["source"] if cookie_row else None,
+            "created_at": cookie_row["created_at"] if cookie_row else None,
+            "renewed_from": cookie_row["renewed_from"] if cookie_row else None,
             "applied": bool(cookie_row is not None and applied_id is not None and applied_id == cookie_row["id"]),
         },
         "subscribers": (

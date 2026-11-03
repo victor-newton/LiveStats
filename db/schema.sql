@@ -1,11 +1,11 @@
--- LiveStats - esquema SQLite COMPARTILHADO (versao 3)
--- Contrato T1 (revisado no V0, correcao C1; versao 2 = D34/C10: slots ganha goal e color; versao 3 = D35/C11: tabela settings e slots ganha font e text_color). Somente leitura para T2-T7: qualquer mudanca passa por nova versao do contrato.
+-- LiveStats - esquema SQLite COMPARTILHADO (versao 4)
+-- Contrato T1 (revisado no V0, correcao C1; versao 2 = D34/C10: slots ganha goal e color; versao 3 = D35/C11: tabela settings e slots ganha font e text_color; versao 4 = D37/C14: cookie_sets ganha source e renewed_from). Somente leitura para T2-T7: qualquer mudanca passa por nova versao do contrato.
 -- Arquivo: /data/livestats.db (modo WAL), no volume livestats-data, montado em api, worker-lives e worker-inscritos.
 -- Este arquivo NAO contem estado de admin: sessoes e tentativas de login ficam em outro banco
 -- (db/admin_schema.sql -> /admin-state/admin.db), em volume montado SOMENTE na api.
 -- Quem aplica este arquivo: SOMENTE o container api, na subida, de forma idempotente
 -- (CREATE ... IF NOT EXISTS / INSERT OR IGNORE). Bancos criados na versao 1 sao migrados pela api na subida
--- (api/app/db.py: ALTER TABLE slots ADD COLUMN so se a coluna faltar; schema_version 1/2 -> 3; nada se perde; tabela settings criada pelo proprio esquema). Os workers esperam a tabela schema_meta existir
+-- (api/app/db.py: ALTER TABLE slots ADD COLUMN so se a coluna faltar; schema_version 1/2/3 -> 4; nada se perde; tabela settings criada pelo proprio esquema). Os workers esperam a tabela schema_meta existir
 -- e nunca criam nem alteram tabelas.
 -- Colunas e tabelas em ingles; os nomes dos campos JSON legados (portugues) estao em docs/legacy-formats.md.
 -- Quem le/escreve cada tabela: docs/data-model.md.
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value TEXT NOT NULL
 ) STRICT;
 
-INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '3');
+INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '4');
 
 ------------------------------------------------------------------------
 -- Slots de lives configurados pelo admin (substitui lives_config.json)
@@ -100,8 +100,12 @@ CREATE TABLE IF NOT EXISTS subscriber_reading (
 -- Cookies do YouTube Studio, CIFRADOS (substitui cookies.json)
 -- ciphertext = PyNaCl SealedBox(chave PUBLICA) sobre o JSON normalizado do array de cookies.
 -- NUNCA gravar texto puro, nomes ou valores de cookies em nenhuma coluna.
--- Inserida pela api; lida e decifrada somente pelo worker-inscritos. Mantem-se apenas a ultima
--- linha (a api apaga as anteriores na mesma transacao do INSERT).
+-- Inserida pela api (source='admin') e pelo worker-inscritos ao renovar a sessao (source='worker', D37);
+-- lida e decifrada somente pelo worker-inscritos. Mantem-se apenas a ultima linha (quem insere apaga as
+-- anteriores na mesma transacao do INSERT).
+-- source       (v4): origem do conjunto: 'admin' (colado no painel, padrao) ou 'worker' (renovacao automatica).
+-- renewed_from (v4): id do conjunto aplicado que o worker renovou; NULL quando source='admin'.
+-- IMPORTANTE: a migracao em api/app/db.py repete as definicoes de coluna da versao 4; mantenha-as iguais.
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS cookie_sets (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +114,9 @@ CREATE TABLE IF NOT EXISTS cookie_sets (
     cookie_count INTEGER NOT NULL CHECK (cookie_count BETWEEN 1 AND 200),
     uploaded_by  TEXT    NOT NULL CHECK (length(uploaded_by) <= 64),
     created_at   TEXT    NOT NULL
-        CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z')
+        CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z'),
+    source       TEXT    NOT NULL DEFAULT 'admin' CHECK (source IN ('admin', 'worker')),
+    renewed_from INTEGER
 ) STRICT;
 
 ------------------------------------------------------------------------

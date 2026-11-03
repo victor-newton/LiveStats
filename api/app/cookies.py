@@ -117,7 +117,8 @@ def store_cookie_set(conn: sqlite3.Connection, ciphertext: bytes, key_id: str, c
     """INSERT da nova linha e DELETE das demais na mesma transacao (so a ultima e mantida)."""
     with db.transaction(conn, immediate=True):
         cur = conn.execute(
-            "INSERT INTO cookie_sets (ciphertext, key_id, cookie_count, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO cookie_sets (ciphertext, key_id, cookie_count, uploaded_by, created_at, source) "
+            "VALUES (?, ?, ?, ?, ?, 'admin')",
             (ciphertext, key_id, count, uploaded_by[:64], legacy_timestamp(now)),
         )
         new_id = int(cur.lastrowid)

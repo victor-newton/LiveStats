@@ -113,11 +113,15 @@ _SLOTS_ADDED_COLUMNS = (
     ("font", "TEXT NOT NULL DEFAULT 'Roboto' CHECK (length(font) BETWEEN 1 AND 40)"),
     ("text_color", "TEXT NOT NULL DEFAULT '#FFFFFF' CHECK (" + _HEX_CHECK.format(c="text_color") + ")"),
 )
-SCHEMA_VERSION = "3"
+_COOKIE_SETS_ADDED_COLUMNS = (  # versao 4 (D37)
+    ("source", "TEXT NOT NULL DEFAULT 'admin' CHECK (source IN ('admin', 'worker'))"),
+    ("renewed_from", "INTEGER"),
+)
+SCHEMA_VERSION = "4"
 
 
 def _migrate_shared(conn: sqlite3.Connection) -> None:
-    """Migra um banco compartilhado v1/v2 para v3 (idempotente; nada se perde). Roda so se ``slots`` existe.
+    """Migra um banco compartilhado v1/v2/v3 para v4 (idempotente; nada se perde). Roda so se ``slots`` existe.
 
     A tabela ``settings`` ja foi criada por ``CREATE TABLE IF NOT EXISTS`` no ``executescript`` do esquema.
     """
@@ -129,8 +133,13 @@ def _migrate_shared(conn: sqlite3.Connection) -> None:
         for name, definition in _SLOTS_ADDED_COLUMNS:
             if name not in present:
                 conn.execute(f"ALTER TABLE slots ADD COLUMN {name} {definition}")  # noqa: S608 (constantes)
+        present = {row[1] for row in conn.execute("PRAGMA table_info(cookie_sets)")}
+        for name, definition in _COOKIE_SETS_ADDED_COLUMNS:
+            if name not in present:
+                conn.execute(f"ALTER TABLE cookie_sets ADD COLUMN {name} {definition}")  # noqa: S608 (constantes)
         conn.execute(
-            "UPDATE schema_meta SET value = ? WHERE key = 'schema_version' AND value IN ('1', '2')", (SCHEMA_VERSION,)
+            "UPDATE schema_meta SET value = ? WHERE key = 'schema_version' AND value IN ('1', '2', '3')",
+            (SCHEMA_VERSION,),
         )
     except BaseException:
         conn.execute("ROLLBACK")

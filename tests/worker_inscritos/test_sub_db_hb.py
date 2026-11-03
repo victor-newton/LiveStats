@@ -29,7 +29,7 @@ def test_sub_db_01_o_que_o_worker_pode_fazer(env, add_cookies):
         # ler cookie_sets e schema_meta
         assert store.latest_cookie_set_id() == novo
         assert store.get_cookie_set(novo).id == novo
-        assert con.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone() == ("3",)
+        assert con.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone() == ("4",)
         # escrever subscriber_reading e worker_status (duas vezes: o UPSERT cobre INSERT e UPDATE)
         for _ in range(2):
             store.save_reading("460600", "460600", iso_utc(1_700_000_000))
@@ -51,10 +51,8 @@ def test_sub_db_01_o_que_o_worker_pode_fazer(env, add_cookies):
         "SELECT * FROM slots",
         "SELECT * FROM live_stats",
         "UPDATE live_stats SET title = 'x'",
-        "INSERT INTO cookie_sets (ciphertext, key_id, cookie_count, uploaded_by, created_at) "
-        "VALUES (zeroblob(60), '0123456789abcdef', 1, 'x', '2026-01-01T00:00:00Z')",
         "UPDATE cookie_sets SET uploaded_by = 'x'",
-        "DELETE FROM cookie_sets",
+        # D37 (C14): INSERT e DELETE em cookie_sets passaram a ser permitidos (renovacao); cobertos em test_sub_renov.py.
         "SELECT value, raw FROM subscriber_reading",  # so a chave do UPSERT e legivel
         "SELECT state FROM worker_status",
         "CREATE TABLE intruso (x)",

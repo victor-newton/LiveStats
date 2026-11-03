@@ -354,7 +354,7 @@ def no_svg(page: Page) -> dict:
 
 
 def test_web_mob_05_diagrama_de_saude_empilhado_na_vertical_sem_miniaturizar(page: Page, api, base_url):
-    api.cookies = {"configured": True, "count": 12, "uploaded_at": api.worker_state()["last_heartbeat_at"], "applied": True}
+    api.cookies = {"configured": True, "count": 12, "uploaded_at": api.worker_state()["last_heartbeat_at"], "applied": True, "source": "admin", "created_at": api.worker_state()["last_heartbeat_at"], "renewed_from": None}
     celular(page)
     do_login(page, base_url, api, tab="saude")
     expect(page.locator("#healthDiagram [data-node]")).to_have_count(6)

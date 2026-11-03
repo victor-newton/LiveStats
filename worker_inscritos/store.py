@@ -2,7 +2,7 @@
 
 - Nunca executa DDL e nunca cria o arquivo: quem aplica db/schema.sql e a api (data-model.md 1).
 - Toda conexao instala `set_authorizer` com as permissoes de data-model.md 2: leitura de `cookie_sets` e
-  `schema_meta`; escrita em `subscriber_reading` e `worker_status`; nada mais. E uma defesa contra BUG do
+  `schema_meta`; escrita em `subscriber_reading` e `worker_status`; em `cookie_sets` so INSERT e DELETE (D37); nada mais. E uma defesa contra BUG do
   proprio codigo (SQL errada), nao contra processo comprometido (o isolamento real e por volume e criptografia).
 - Este modulo desconhece o estado de admin (outro banco, outro volume).
 """
@@ -43,6 +43,7 @@ _ALWAYS_OK_ACTIONS = {
 def _make_authorizer(role: str):
     leitura = _HEALTHCHECK_READ_OK if role == "healthcheck" else _READ_OK
     escrita = set() if role == "healthcheck" else _WRITE_OK
+    insert_delete = escrita | ({"cookie_sets"} if escrita else set())  # D37: renovacao da sessao
 
     def authorizer(action, arg1, arg2, _db, _trigger):
         if action in _ALWAYS_OK_ACTIONS:
@@ -52,7 +53,9 @@ def _make_authorizer(role: str):
             if arg1 in leitura and (colunas is None or arg2 in colunas):
                 return sqlite3.SQLITE_OK
             return sqlite3.SQLITE_DENY
-        if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE):
+        if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE):
+            return sqlite3.SQLITE_OK if arg1 in insert_delete else sqlite3.SQLITE_DENY
+        if action == sqlite3.SQLITE_UPDATE:  # D37: nunca UPDATE em cookie_sets
             return sqlite3.SQLITE_OK if arg1 in escrita else sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_DENY  # DDL, PRAGMA, ATTACH, etc.
 
@@ -111,6 +114,8 @@ class CookieSetRow:
     id: int
     key_id: str
     ciphertext: bytes
+    source: str
+    created_at: str
 
 
 @dataclass
@@ -141,9 +146,13 @@ class Store:
 
     def get_cookie_set(self, set_id: int) -> CookieSetRow | None:
         row = self.con.execute(
-            "SELECT id, key_id, ciphertext FROM cookie_sets WHERE id = ?", (set_id,)
+            "SELECT id, key_id, ciphertext, source, created_at FROM cookie_sets WHERE id = ?", (set_id,)
         ).fetchone()
-        return None if row is None else CookieSetRow(int(row[0]), str(row[1]), bytes(row[2]))
+        return (
+            None
+            if row is None
+            else CookieSetRow(int(row[0]), str(row[1]), bytes(row[2]), str(row[3]), str(row[4]))
+        )
 
     def get_channel_id(self) -> str | None:
         """Canal configurado no painel (D35); None se a tabela nao tem a chave."""
@@ -158,6 +167,26 @@ class Store:
             "ON CONFLICT(id) DO UPDATE SET value = excluded.value, raw = excluded.raw, read_at = excluded.read_at",
             (value, raw[:256], read_at),
         )
+
+    def renew_cookie_set(
+        self, ciphertext: bytes, key_id: str, count: int, applied_id: int, created_at: str
+    ) -> int | None:
+        """D37: grava a renovacao so se o conjunto mais recente ainda e o aplicado (`MAX(id) = applied_id`).
+
+        INSERT da nova linha e DELETE das anteriores na mesma transacao. None = descartada (o admin colou outro).
+        """
+        with self.transaction():
+            atual = self.con.execute("SELECT MAX(id) FROM cookie_sets").fetchone()[0]
+            if atual is None or int(atual) != applied_id:
+                return None
+            cur = self.con.execute(
+                "INSERT INTO cookie_sets (ciphertext, key_id, cookie_count, uploaded_by, created_at, source, renewed_from) "
+                "VALUES (?, ?, ?, 'worker', ?, 'worker', ?)",
+                (ciphertext, key_id, count, created_at, applied_id),
+            )
+            novo = int(cur.lastrowid)
+            self.con.execute("DELETE FROM cookie_sets WHERE id <> ?", (novo,))
+        return novo
 
     def write_status(self, s: StatusRow) -> None:
         self.con.execute(

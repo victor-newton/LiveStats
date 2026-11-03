@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from nacl.public import PrivateKey
+from nacl.public import PrivateKey, PublicKey
 
 DEFAULT_DB_PATH = "/data/livestats.db"
 DEFAULT_WWW_BASE_URL = "https://www.youtube.com"
@@ -39,6 +39,7 @@ class ConfigError(Exception):
 class Config:
     db_path: str
     private_key_file: str
+    public_key_file: str
     channel_id: str
     scrape_interval: int
     debug_screenshot: bool
@@ -106,6 +107,10 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     if not key_file:
         raise ConfigError("COOKIE_PRIVATE_KEY_FILE e obrigatorio (caminho do arquivo de segredo)")
 
+    pub_file = env.get("COOKIE_PUBLIC_KEY_FILE", "").strip()
+    if not pub_file:
+        raise ConfigError("COOKIE_PUBLIC_KEY_FILE e obrigatorio (caminho do arquivo da chave publica, D37)")
+
     db_path = env.get("DB_PATH", "").strip() or DEFAULT_DB_PATH
     debug = env.get("DEBUG_SCREENSHOT", "").strip() == "1"
     debug_dir = str(Path(env.get("TMPDIR", "").strip() or "/tmp") / "debug")
@@ -121,6 +126,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     return Config(
         db_path=db_path,
         private_key_file=key_file,
+        public_key_file=pub_file,
         channel_id=channel_id,
         scrape_interval=_ler_intervalo(env),
         debug_screenshot=debug,
@@ -151,3 +157,23 @@ def ler_chave_privada(caminho: str) -> PrivateKey:
     if len(bruto) != PrivateKey.SIZE:
         raise ConfigError("chave privada invalida: esperado base64 de 32 bytes")
     return PrivateKey(bruto)
+
+
+def ler_chave_publica(caminho: str, private_key: PrivateKey) -> PublicKey:
+    """Le a chave PUBLICA (D37: so cifra) e confere que e o par da privada. Sem valor padrao."""
+    try:
+        conteudo = Path(caminho).read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        raise ConfigError("arquivo da chave publica (COOKIE_PUBLIC_KEY_FILE) nao encontrado") from None
+    except (OSError, UnicodeDecodeError):
+        raise ConfigError("arquivo da chave publica (COOKIE_PUBLIC_KEY_FILE) ilegivel") from None
+    try:
+        bruto = base64.b64decode(conteudo, validate=True)
+    except (binascii.Error, ValueError):
+        raise ConfigError("chave publica invalida: esperado base64 de 32 bytes") from None
+    if len(bruto) != PublicKey.SIZE:
+        raise ConfigError("chave publica invalida: esperado base64 de 32 bytes")
+    chave = PublicKey(bruto)
+    if bytes(chave) != bytes(private_key.public_key):
+        raise ConfigError("a chave publica (COOKIE_PUBLIC_KEY_FILE) nao e o par da chave privada")
+    return chave

@@ -9,10 +9,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from nacl.exceptions import CryptoError
-from nacl.public import PrivateKey, SealedBox
+from nacl.public import PrivateKey, PublicKey, SealedBox
 
 DEFAULT_DOMAIN = ".youtube.com"
 _MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
@@ -74,3 +75,32 @@ def decifrar_cookies(ciphertext: bytes, private_key: PrivateKey) -> list[dict[st
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise CookieDecryptError("conteudo dos cookies nao e JSON valido") from None
     return normalizar_cookies(bruto)
+
+
+# ---------------------------------------------------------------------- renovacao (D37)
+DOMINIOS_SESSAO = ("youtube.com", "google.com")
+
+
+def dominio_da_sessao(domain: str, hosts_extras: Iterable[str] = ()) -> bool:
+    """True para youtube.com, google.com e subdominios (com ou sem ponto inicial) e para os hosts-base configurados."""
+    d = domain.strip().lstrip(".").lower()
+    if any(d == base or d.endswith("." + base) for base in DOMINIOS_SESSAO):
+        return True
+    return d in {h.lower() for h in hosts_extras}
+
+
+def filtrar_sessao(cookies: list[dict[str, Any]], hosts_extras: Iterable[str] = ()) -> list[dict[str, Any]]:
+    extras = tuple(hosts_extras)
+    return [c for c in cookies if dominio_da_sessao(c["domain"], extras)]
+
+
+def impressao(cookies: list[dict[str, Any]]) -> str:
+    """Hash (so em memoria) do conjunto normalizado, independente da ordem. Nunca vai a disco nem a log."""
+    itens = sorted((c["name"], c["domain"], c["path"], c["value"], bool(c["secure"])) for c in cookies)
+    return hashlib.sha256(json.dumps(itens, ensure_ascii=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def cifrar_cookies(cookies: list[dict[str, Any]], public_key: PublicKey) -> bytes:
+    """SealedBox da chave publica sobre o mesmo JSON compacto que a api grava."""
+    claro = json.dumps(cookies, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return SealedBox(public_key).encrypt(claro)

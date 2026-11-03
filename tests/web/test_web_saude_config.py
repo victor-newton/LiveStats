@@ -310,7 +310,7 @@ def test_web_apr_05_valor_estranho_vindo_da_rede_e_descartado_na_live(page: Page
 
 # --------------------------------------------------------------------------------------------- WEB-SAU
 def test_web_sau_01_cartoes_e_diagrama_com_tudo_saudavel(page: Page, api, base_url):
-    api.cookies = {"configured": True, "count": 12, "uploaded_at": api.worker_state()["last_heartbeat_at"], "applied": True}
+    api.cookies = {"configured": True, "count": 12, "uploaded_at": api.worker_state()["last_heartbeat_at"], "applied": True, "source": "admin", "created_at": api.worker_state()["last_heartbeat_at"], "renewed_from": None}
     entra(page, base_url, api, tab="saude")
     expect(page.locator(".hc")).to_have_count(5)
     nomes = page.locator(".hc .hc-name").all_inner_texts()
@@ -345,7 +345,7 @@ def test_web_sau_02_worker_degradado_destaca_a_ligacao_com_o_youtube(page: Page,
 
 
 def test_web_sau_03_erro_de_cookies_marca_a_ligacao_em_falha_sem_animacao(page: Page, api, base_url):
-    api.cookies = {"configured": True, "count": 3, "uploaded_at": api.worker_state()["last_heartbeat_at"], "applied": True}
+    api.cookies = {"configured": True, "count": 3, "uploaded_at": api.worker_state()["last_heartbeat_at"], "applied": True, "source": "admin", "created_at": api.worker_state()["last_heartbeat_at"], "renewed_from": None}
     api.inscritos_worker = {
         **api.worker_state("error", last_error_code="login_required", last_error_message="Login perdido no YouTube Studio"),
         "auth_state": "login_required",

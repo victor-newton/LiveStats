@@ -10,7 +10,7 @@ LEITURA = {"inscritos": "460.600", "raw": "460.600", "atualizado_em": "2026-11-0
 
 def test_web_st_01_mostra_leitura_cookies_e_workers(page: Page, api, base_url):
     api.subscribers = dict(LEITURA)
-    api.cookies = {"configured": True, "count": 12, "uploaded_at": "2026-11-02T10:00:00Z", "applied": True}
+    api.cookies = {"configured": True, "count": 12, "uploaded_at": "2026-11-02T10:00:00Z", "applied": True, "source": "admin", "created_at": "2026-11-02T10:00:00Z", "renewed_from": None}
     api.lives_worker = api.worker_state("ok")
     api.inscritos_worker = {
         **api.worker_state("degraded", consecutive_failures=3, last_error_code="counter_not_found",
@@ -59,7 +59,7 @@ def test_web_st_01b_sem_cookies_e_sem_leitura(page: Page, api, base_url):
 
 
 def test_web_st_01c_cookies_expirados_geram_aviso_destacado(page: Page, api, base_url):
-    api.cookies = {"configured": True, "count": 12, "uploaded_at": "2026-11-02T10:00:00Z", "applied": True}
+    api.cookies = {"configured": True, "count": 12, "uploaded_at": "2026-11-02T10:00:00Z", "applied": True, "source": "admin", "created_at": "2026-11-02T10:00:00Z", "renewed_from": None}
     api.inscritos_worker = {
         **api.worker_state("error", consecutive_failures=5, last_error_code="login_required",
                            last_error_message="O YouTube Studio pediu login"),

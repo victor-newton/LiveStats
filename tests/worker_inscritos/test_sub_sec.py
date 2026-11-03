@@ -313,7 +313,11 @@ def test_sub_cfg_01_url_do_studio_igual_a_do_legado_caractere_a_caractere():
         "&time_period=4_weeks&explore_type=SUBSCRIBERS"
     )
     cfg = load_config(
-        {"YOUTUBE_CHANNEL_ID": "UCxxxxxxxxxxxxxxxxxxxxxx", "COOKIE_PRIVATE_KEY_FILE": "/run/secrets/cookie_private_key"}
+        {
+            "YOUTUBE_CHANNEL_ID": "UCxxxxxxxxxxxxxxxxxxxxxx",
+            "COOKIE_PRIVATE_KEY_FILE": "/run/secrets/cookie_private_key",
+            "COOKIE_PUBLIC_KEY_FILE": "/run/secrets/cookie_public_key",
+        }
     )
     assert cfg.studio_url == esperado
 
