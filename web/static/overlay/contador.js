@@ -4,6 +4,8 @@
 // Diferenças (decisão D12): o JS é um arquivo da mesma origem, busca o caminho
 // absoluto da api e monta o carrossel sem HTML em texto.
 
+import { aplicarAparencia } from './aparencia.js';
+
 const URL_JSON = '/api/public/subscribers';
 const INTERVALO_MS = 5000;
 const CURVA = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
@@ -92,10 +94,11 @@ async function atualizar() {
     const res = await fetch(`${URL_JSON}?t=${Date.now()}`);
     if (!res.ok) return;
     const data = await res.json();
-    const novo = data.inscritos;
-    if (!novo || novo === valorAtual) return;
     const container = document.getElementById('contador');
     if (!container) return;
+    aplicarAparencia(container, data); // fonte e cor (D35): a cada leitura, mesmo sem mudar o número
+    const novo = data.inscritos;
+    if (!novo || novo === valorAtual) return;
     if (valorAtual === null) {
       construirCarrossel(container, novo);
       const inners = /** @type {NodeListOf<HTMLElement>} */ (container.querySelectorAll('.digito-inner'));

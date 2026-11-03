@@ -9,6 +9,7 @@ from . import db
 from .clock import legacy_timestamp
 from .deps import AppState, get_state
 from .legacy import dumps, live_object, subscribers_object
+from .routes_admin import read_settings
 
 router = APIRouter()
 
@@ -32,12 +33,16 @@ def _live_object_or_error(state: AppState, slot: int) -> dict:
     return live_object(row)
 
 
-def _subscribers_body(state: AppState) -> bytes:
+def _subscribers_object_or_error(state: AppState) -> dict:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         row = conn.execute("SELECT value, raw, read_at FROM subscriber_reading WHERE id = 1").fetchone()
     if row is None:
         raise HTTPException(status_code=503, detail=NOT_READY_SUBSCRIBERS)
-    return dumps(subscribers_object(row))
+    return subscribers_object(row)
+
+
+def _subscribers_body(state: AppState) -> bytes:
+    return dumps(_subscribers_object_or_error(state))
 
 
 @router.get("/health")
@@ -61,13 +66,19 @@ def public_live(slot: int, state: AppState = Depends(get_state)) -> Response:
     """Formato novo (objeto): o legado acrescido de ``goal`` e ``color`` do slot (D34). Os ``/live{n}.json`` nao mudam."""
     obj = _live_object_or_error(state, slot)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        row = conn.execute("SELECT goal, color FROM slots WHERE slot = ?", (slot,)).fetchone()
-    return _json(dumps({**obj, "goal": row["goal"], "color": row["color"]}))
+        row = conn.execute("SELECT goal, color, font, text_color FROM slots WHERE slot = ?", (slot,)).fetchone()
+    return _json(
+        dumps({**obj, "goal": row["goal"], "color": row["color"], "font": row["font"], "text_color": row["text_color"]})
+    )
 
 
 @router.get("/api/public/subscribers")
 def public_subscribers(state: AppState = Depends(get_state)) -> Response:
-    return _json(_subscribers_body(state))
+    """Formato novo: o legado acrescido de ``font`` e ``text_color`` do contador (D35). ``/inscritos.json`` nao muda."""
+    obj = _subscribers_object_or_error(state)
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        look = read_settings(conn)
+    return _json(dumps({**obj, "font": look["subs_font"], "text_color": look["subs_text_color"]}))
 
 
 @router.get("/live{n}.json")

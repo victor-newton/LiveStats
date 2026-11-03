@@ -63,7 +63,7 @@ paths:
       tags: [public]
       operationId: getPublicLive
       summary: Estatísticas de um slot (objeto único) com meta e cor
-      description: Mesmos dados de `/live{n}.json`, porém como objeto (o alias legado devolve um array de 1 elemento) e acrescidos de `goal` (meta de likes; nulo = sem meta) e `color` (cor da barra do overlay, `#RRGGBB` em maiúsculas), ambos configurados no painel (D34). Os `/live{n}.json` legados NÃO ganham esses campos. Sem autenticação.
+      description: Mesmos dados de `/live{n}.json`, porém como objeto (o alias legado devolve um array de 1 elemento) e acrescidos de `goal` (meta de likes; nulo = sem meta), `color` (cor da barra do overlay, `#RRGGBB` em maiúsculas), `font` (família do texto) e `text_color` (cor do texto), todos configurados no painel (D34/D35). Os `/live{n}.json` legados NÃO ganham esses campos. Sem autenticação.
       x-ports: [8080, 8081]
       parameters:
         - name: slot
@@ -112,7 +112,7 @@ paths:
       tags: [public]
       operationId: getPublicSubscribers
       summary: Última leitura de inscritos
-      description: Corpo idêntico ao de `/inscritos.json`. Sem autenticação.
+      description: Corpo de `/inscritos.json` acrescido de `font` e `text_color` do contador, configurados no painel (D35). `/inscritos.json` legado NÃO ganha esses campos. Sem autenticação.
       x-ports: [8080, 8081]
       responses:
         "200":
@@ -123,7 +123,7 @@ paths:
             Access-Control-Allow-Methods: { schema: { type: string, const: GET }, description: 'Emitido pelo Nginx' }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Subscribers" }
+              schema: { $ref: "#/components/schemas/PublicSubscribers" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503":
           description: Ainda não há leitura
@@ -403,10 +403,11 @@ paths:
       operationId: adminPutSlots
       summary: Salva os 4 slots
       description: |
-        Substitui `POST /config`. Exatamente 4 itens, cada um um objeto com **os três campos obrigatórios** `url`, `goal` e `color` (D34):
+        Substitui `POST /config`. Exatamente 4 itens, cada um um objeto com **os três campos obrigatórios** `url`, `goal` e `color` (D34) e os **opcionais** `font` e `text_color` (D35; ausente = mantém o valor atual do slot):
         - `url`: vazio, ou URL/ID do YouTube de onde se extrai um ID de vídeo pelo mesmo padrão do worker (`docs/legacy-formats.md` §1.3); espaços nas pontas são removidos antes de gravar;
         - `goal`: inteiro de 1 a 1.000.000.000, ou `null` (sem meta). Texto, decimal, booleano, 0 e negativos -> 422;
-        - `color`: texto que case exatamente `^#[0-9A-Fa-f]{6}$` (normalizado para maiúsculas ao gravar). Nomes de cor (`red`), `#FFF`, `url(...)`, `expression(...)`, sufixos como `#FF0033;x` etc. -> 422.
+        - `color` e `text_color`: texto que case exatamente `^#[0-9A-Fa-f]{6}$` (normalizado para maiúsculas ao gravar). Nomes de cor (`red`), `#FFF`, `url(...)`, `expression(...)`, sufixos como `#FF0033;x` etc. -> 422;
+        - `font`: exatamente um nome da lista fechada de `GET /api/admin/fonts` (comparação exata, sem aspas nem CSS). Qualquer outro texto (`Arial; } body{`, `url(x)`, `"Arial"`, `arial`) -> 422.
 
         **Compatibilidade:** o formato antigo (lista de textos) deixou de ser aceito -> 422; o painel é servido pelo mesmo `web` e foi atualizado junto. Qualquer outro valor (inclusive HTML) -> 422 e nada é gravado (a gravação dos 4 itens é uma transação única).
       servers: [{ url: "http://localhost:8081" }]
@@ -468,6 +469,75 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/settings:
+    get:
+      tags: [admin]
+      operationId: adminGetSettings
+      summary: Canal e aparência do contador de inscritos
+      description: Canal monitorado pelo worker-inscritos (`null` = nada salvo; vale o `YOUTUBE_CHANNEL_ID` do ambiente) e fonte e cor do texto do overlay do contador (D35).
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Configurações atuais
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    put:
+      tags: [admin]
+      operationId: adminPutSettings
+      summary: Salva canal e/ou aparência do contador
+      description: |
+        Aceita qualquer subconjunto NÃO vazio de `channel_id`, `subs_font` e `subs_text_color` (os ausentes ficam como estão; `null` explícito -> 422). Validação estrita (D35):
+        - `channel_id`: exatamente `^UC[0-9A-Za-z_-]{22}$`;
+        - `subs_font`: um nome de `GET /api/admin/fonts` (comparação exata);
+        - `subs_text_color`: `^#[0-9A-Fa-f]{6}$` (gravado em maiúsculas).
+        Qualquer outro valor, campo desconhecido ou corpo vazio -> 422 e nada é gravado. O worker-inscritos lê o canal a cada ciclo e recarrega o Studio quando ele muda.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsWrite" }
+      responses:
+        "200":
+          description: Gravado; devolve o estado completo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsSaved" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/admin/fonts:
+    get:
+      tags: [admin]
+      operationId: adminGetFonts
+      summary: Lista fechada de fontes dos overlays
+      description: Única fonte da lista (definida na api). O painel monta os dropdowns a partir dela; são famílias de sistema do Windows (o overlay roda no OBS/vMix), mais `Roboto`, o padrão.
+      servers: [{ url: "http://localhost:8081" }]
+      x-ports: [8081]
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: Fontes aceitas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Fonts" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /api/admin/workers/status:
     get:
@@ -645,8 +715,8 @@ components:
     PublicLive:
       type: object
       description: |
-        `LiveSlot` acrescido de `goal` e `color` do slot (D34), nesta ordem, no fim do objeto (as propriedades de `LiveSlot` são repetidas aqui porque ele é um objeto fechado). Só o formato novo (`/api/public/lives/{slot}`) os tem; `/live{n}.json` continua exatamente igual ao legado.
-      required: [slot, ativo, video_id, titulo, status, views, likes, views_formatado, likes_formatado, atualizado_em, goal, color]
+        `LiveSlot` acrescido de `goal`, `color` (D34), `font` e `text_color` (D35) do slot, nesta ordem, no fim do objeto (as propriedades de `LiveSlot` são repetidas aqui porque ele é um objeto fechado). Só o formato novo (`/api/public/lives/{slot}`) os tem; `/live{n}.json` continua exatamente igual ao legado.
+      required: [slot, ativo, video_id, titulo, status, views, likes, views_formatado, likes_formatado, atualizado_em, goal, color, font, text_color]
       additionalProperties: false
       properties:
         slot: { type: integer, minimum: 1, maximum: 4 }
@@ -661,6 +731,8 @@ components:
         atualizado_em: { $ref: "#/components/schemas/LegacyTimestamp" }
         goal: { $ref: "#/components/schemas/SlotGoal" }
         color: { $ref: "#/components/schemas/SlotColor" }
+        font: { $ref: "#/components/schemas/OverlayFont" }
+        text_color: { $ref: "#/components/schemas/SlotColor" }
 
     LegacyLiveArray:
       type: array
@@ -677,6 +749,70 @@ components:
         inscritos: { type: string, minLength: 2, maxLength: 32, examples: ["460600", "460.600"], description: String (não número), após filtrar_numero }
         raw: { type: string, maxLength: 256 }
         atualizado_em: { $ref: "#/components/schemas/LegacyTimestamp" }
+
+    PublicSubscribers:
+      type: object
+      description: "`Subscribers` acrescido de `font` e `text_color` (D35), nesta ordem, no fim do objeto. Só `/api/public/subscribers` os tem."
+      required: [inscritos, raw, atualizado_em, font, text_color]
+      additionalProperties: false
+      properties:
+        inscritos: { type: string, minLength: 2, maxLength: 32 }
+        raw: { type: string, maxLength: 256 }
+        atualizado_em: { $ref: "#/components/schemas/LegacyTimestamp" }
+        font: { $ref: "#/components/schemas/OverlayFont" }
+        text_color: { $ref: "#/components/schemas/SlotColor" }
+
+    OverlayFont:
+      type: string
+      minLength: 1
+      maxLength: 40
+      description: Família do texto do overlay, sempre um valor da lista fechada de `GET /api/admin/fonts` (o overlay descarta qualquer outro e usa o padrão). Aplicada via CSSOM com fallback genérico.
+
+    Fonts:
+      type: object
+      required: [fonts, default]
+      additionalProperties: false
+      properties:
+        fonts: { type: array, minItems: 1, uniqueItems: true, items: { $ref: "#/components/schemas/OverlayFont" } }
+        default: { $ref: "#/components/schemas/OverlayFont" }
+
+    ChannelId:
+      type: string
+      pattern: '^UC[0-9A-Za-z_-]{22}$'
+
+    Settings:
+      type: object
+      required: [channel_id, subs_font, subs_text_color]
+      additionalProperties: false
+      properties:
+        channel_id:
+          oneOf:
+            - { $ref: "#/components/schemas/ChannelId" }
+            - { type: "null" }
+        subs_font: { $ref: "#/components/schemas/OverlayFont" }
+        subs_text_color: { $ref: "#/components/schemas/SlotColor" }
+
+    SettingsWrite:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        channel_id: { $ref: "#/components/schemas/ChannelId" }
+        subs_font: { $ref: "#/components/schemas/OverlayFont" }
+        subs_text_color: { $ref: "#/components/schemas/SlotColor" }
+
+    SettingsSaved:
+      type: object
+      required: [ok, channel_id, subs_font, subs_text_color]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, const: true }
+        channel_id:
+          oneOf:
+            - { $ref: "#/components/schemas/ChannelId" }
+            - { type: "null" }
+        subs_font: { $ref: "#/components/schemas/OverlayFont" }
+        subs_text_color: { $ref: "#/components/schemas/SlotColor" }
 
     LoginRequest:
       type: object
@@ -712,13 +848,15 @@ components:
 
     SlotItem:
       type: object
-      required: [slot, url, goal, color, stats]
+      required: [slot, url, goal, color, font, text_color, stats]
       additionalProperties: false
       properties:
         slot: { type: integer, minimum: 1, maximum: 4 }
         url: { type: string, maxLength: 2048 }
         goal: { $ref: "#/components/schemas/SlotGoal" }
         color: { $ref: "#/components/schemas/SlotColor" }
+        font: { $ref: "#/components/schemas/OverlayFont" }
+        text_color: { $ref: "#/components/schemas/SlotColor" }
         stats:
           oneOf:
             - { $ref: "#/components/schemas/LiveSlot" }
@@ -758,6 +896,19 @@ components:
         url: { type: string, maxLength: 2048 }
         goal: { $ref: "#/components/schemas/SlotGoal" }
         color: { $ref: "#/components/schemas/SlotColor" }
+        font: { $ref: "#/components/schemas/OverlayFont" }
+        text_color: { $ref: "#/components/schemas/SlotColor" }
+
+    SlotConfigSaved:
+      type: object
+      required: [url, goal, color, font, text_color]
+      additionalProperties: false
+      properties:
+        url: { type: string, maxLength: 2048 }
+        goal: { $ref: "#/components/schemas/SlotGoal" }
+        color: { $ref: "#/components/schemas/SlotColor" }
+        font: { $ref: "#/components/schemas/OverlayFont" }
+        text_color: { $ref: "#/components/schemas/SlotColor" }
 
     SlotsWrite:
       type: object
@@ -780,8 +931,8 @@ components:
           type: array
           minItems: 4
           maxItems: 4
-          items: { $ref: "#/components/schemas/SlotConfig" }
-          description: Os 4 itens como foram gravados (url sem espaços nas pontas, cor em maiúsculas).
+          items: { $ref: "#/components/schemas/SlotConfigSaved" }
+          description: Os 4 itens como ficaram gravados (com `font` e `text_color` atuais mesmo se omitidos no pedido) (url sem espaços nas pontas, cor em maiúsculas).
         saved_at: { type: string, format: date-time }
 
     CookieIn:

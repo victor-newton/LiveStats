@@ -61,6 +61,9 @@ EXPECTED_ADMIN_ROUTES = {
     ("GET", "/api/admin/slots"),
     ("PUT", "/api/admin/slots"),
     ("POST", "/api/admin/cookies"),
+    ("GET", "/api/admin/settings"),
+    ("PUT", "/api/admin/settings"),
+    ("GET", "/api/admin/fonts"),
     ("GET", "/api/admin/workers/status"),
     ("POST", "/api/admin/logout"),
     *{(m, "/api/admin") for m in ALL_METHODS},
@@ -104,6 +107,7 @@ def test_api_auth_02_csrf_obrigatorio_nos_metodos_que_alteram_estado(stack: Stac
     attempts = {
         "PUT /api/admin/slots": ("PUT", "/api/admin/slots", slots_body),
         "POST /api/admin/cookies": ("POST", "/api/admin/cookies", cookies_body),
+        "PUT /api/admin/settings": ("PUT", "/api/admin/settings", {"subs_font": "Arial"}),
         "POST /api/admin/logout": ("POST", "/api/admin/logout", None),
     }
     for label, (method, path, body) in attempts.items():
@@ -115,13 +119,14 @@ def test_api_auth_02_csrf_obrigatorio_nos_metodos_que_alteram_estado(stack: Stac
     assert stack.client.get("/api/admin/session").status_code == 200
 
     # GETs funcionam sem token
-    for path in ("/api/admin/session", "/api/admin/slots", "/api/admin/workers/status"):
+    for path in ("/api/admin/session", "/api/admin/slots", "/api/admin/workers/status", "/api/admin/settings", "/api/admin/fonts"):
         assert stack.client.get(path).status_code == 200, path
 
     # Com o token correto: 2xx (logout por ultimo, encerra a sessao)
     headers = {"X-CSRF-Token": csrf}
     assert stack.client.put("/api/admin/slots", json=slots_body, headers=headers).status_code == 200
     assert stack.client.post("/api/admin/cookies", json=cookies_body, headers=headers).status_code == 200
+    assert stack.client.put("/api/admin/settings", json={"subs_font": "Arial"}, headers=headers).status_code == 200
     assert stack.client.post("/api/admin/logout", headers=headers).status_code == 200
 
 

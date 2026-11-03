@@ -6,6 +6,7 @@
 // Nada vindo do servidor vira HTML: só textContent e CSSOM (style.setProperty).
 
 import { criarCarrossel } from './carousel.js';
+import { aplicarAparencia } from './aparencia.js';
 
 const INTERVALO_MS = 5000;
 const COR_PADRAO = '#FF0033';
@@ -59,6 +60,7 @@ function iniciar(slot, raiz) {
       const meta = inteiroNaoNegativo(dados.goal) && dados.goal > 0 ? dados.goal : null;
       const cor = typeof dados.color === 'string' && COR_VALIDA.test(dados.color) ? dados.color : COR_PADRAO;
 
+      aplicarAparencia(contagem, dados); // fonte e cor do texto (D35)
       const texto = meta === null ? milhar(likes) : `${milhar(likes)}/${milhar(meta)}`;
       contagem.setAttribute('aria-label', texto);
       carrossel.mostrar(texto);

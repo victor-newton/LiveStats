@@ -37,7 +37,9 @@ SHARED_COLUMNS = {
     "slots": [
         ("slot", "INTEGER", 0, 1), ("url", "TEXT", 1, 0), ("updated_at", "TEXT", 0, 0),
         ("goal", "INTEGER", 0, 0), ("color", "TEXT", 1, 0),  # v2 (D34)
+        ("font", "TEXT", 1, 0), ("text_color", "TEXT", 1, 0),  # v3 (D35)
     ],
+    "settings": [("key", "TEXT", 0, 1), ("value", "TEXT", 1, 0)],  # v3 (D35)
     "live_stats": [
         ("slot", "INTEGER", 0, 1), ("active", "INTEGER", 1, 0), ("video_id", "TEXT", 1, 0), ("title", "TEXT", 1, 0),
         ("status", "TEXT", 1, 0), ("views", "INTEGER", 1, 0), ("likes", "INTEGER", 1, 0),

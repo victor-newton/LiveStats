@@ -20,7 +20,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import __version__
 from .browser import BrowserSession, Timings, is_login_url
-from .config import Config
+from .config import CHANNEL_ID_RE, Config
 from .cookies import CookieDecryptError, decifrar_cookies, key_id
 from .numero import filtrar_numero, valor_aceito
 from .store import StatusRow, Store, connect, iso_utc
@@ -61,6 +61,7 @@ class Worker:
         self.clock = clock
         self.stop = stop or threading.Event()
 
+        self.channel_id = config.channel_id  # canal em uso (D35: o do banco vence o do ambiente)
         self.applied_id: int | None = None  # cookie_sets.id aplicado no navegador
         self.failed_id: int | None = None  # cookie_sets.id que nao pode ser decifrado
         self.falhas = 0  # leituras ruins desde o ultimo sucesso/recarga (dispara a recarga)
@@ -170,7 +171,19 @@ class Worker:
             self._set("degraded", "db_error", MSG_DB)
             self.publish()
 
+    def _sync_channel(self) -> None:
+        """D35: o canal vem de `settings.channel_id`; o ambiente so vale com a tabela vazia (ou valor invalido)."""
+        canal = self.store.get_channel_id()
+        if canal is None or CHANNEL_ID_RE.fullmatch(canal) is None:
+            canal = self.config.channel_id
+        if canal != self.channel_id:
+            log.info("[CANAL] canal alterado no painel - recarregando o Studio...")
+            self.channel_id = canal
+            self.session.studio_url = self.config.studio_url_for(canal)
+            self.applied_id = None  # forca a recarga (cookies reinjetados e Studio do canal novo)
+
     def _step(self) -> None:
+        self._sync_channel()
         set_id = self.store.latest_cookie_set_id()
         if set_id is None:
             self.applied_id = None

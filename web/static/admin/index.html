@@ -10,11 +10,13 @@
 </head>
 <body>
 <header class="topbar">
-  <h1>LiveStats</h1>
-  <span class="tag">Painel de controle</span>
+  <div class="brand">
+    <span class="pill">Painel de controle</span>
+    <h1>Live<span class="dim">Stats</span></h1>
+  </div>
   <div class="user-box" id="userBox" hidden>
     <span class="user-name" id="userName"></span>
-    <button type="button" class="btn-ghost" id="logoutBtn">Sair</button>
+    <button type="button" class="btn btn-ghost" id="logoutBtn">Sair</button>
   </div>
 </header>
 
@@ -22,6 +24,7 @@
   <p class="loading" id="loadingView" role="status">Carregando…</p>
 
   <section class="login-card" id="loginView" aria-labelledby="loginTitle" hidden>
+    <span class="pill">Acesso restrito</span>
     <h2 id="loginTitle">Entrar</h2>
     <form id="loginForm" method="post" novalidate>
       <div class="field">
@@ -32,63 +35,122 @@
         <label for="loginPass">Senha</label>
         <input class="text-input" id="loginPass" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
       </div>
-      <button type="submit" class="btn-primary" id="loginBtn">Entrar</button>
+      <button type="submit" class="btn btn-primary" id="loginBtn">Entrar</button>
       <p class="msg err" id="loginMsg" role="alert" hidden></p>
     </form>
   </section>
 
   <div id="panelView" hidden>
+    <nav class="sections-nav" aria-label="Seções do painel">
+      <button type="button" class="nav-pill" data-target="lives">Lives</button>
+      <button type="button" class="nav-pill" data-target="saude">Saúde</button>
+      <button type="button" class="nav-pill" data-target="config">Configurações</button>
+      <button type="button" class="nav-pill" data-target="inscritos">Inscritos</button>
+      <button type="button" class="nav-pill" data-target="cookies">Cookies</button>
+      <button type="button" class="nav-pill" data-target="endpoints">Endpoints</button>
+    </nav>
     <p class="msg err" id="panelNotice" role="alert" hidden></p>
 
-    <section class="section" aria-labelledby="lives-title">
-      <h2 class="section-title" id="lives-title">Lives</h2>
-      <div class="slots-grid" id="slotsGrid"></div>
-      <div class="actions">
-        <button type="button" class="btn-save" id="saveBtn">Salvar slots</button>
-        <span class="save-msg" id="saveMsg" role="status" hidden>✓ Salvo com sucesso</span>
-        <span class="msg err" id="saveErr" role="alert" hidden></span>
-      </div>
-      <div class="endpoints">
-        <h3>Endpoints</h3>
+    <div class="bento">
+      <section class="card card-wide" id="lives" aria-labelledby="lives-title">
+        <span class="pill">Transmissões</span>
+        <h2 class="section-title" id="lives-title">Suas <span class="dim">lives</span></h2>
+        <p class="hint">Cole a URL ou o ID de até quatro lives. Meta e cor valem para a barra do overlay de likes.</p>
+        <div class="slots-grid" id="slotsGrid"></div>
+        <div class="actions">
+          <button type="button" class="btn btn-save" id="saveBtn">Salvar slots</button>
+          <span class="save-msg" id="saveMsg" role="status" hidden>✓ Salvo com sucesso</span>
+          <span class="msg err" id="saveErr" role="alert" hidden></span>
+        </div>
+      </section>
+
+      <section class="card card-wide" id="saude" aria-labelledby="health-title">
+        <span class="pill">Monitoramento</span>
+        <h2 class="section-title" id="health-title">Saúde do <span class="dim">sistema</span></h2>
+        <p class="hint">Atualizado a cada 10 segundos. <span id="healthUpdated" role="status">Aguardando a primeira leitura…</span></p>
+        <div class="diagram-wrap">
+          <svg class="diagram" id="healthDiagram" viewBox="0 0 920 250" role="img" aria-labelledby="diagramLabel">
+            <title id="diagramLabel">Fluxo de dados</title>
+          </svg>
+        </div>
+        <ul class="legend" aria-label="Legenda do diagrama">
+          <li><span class="swatch ok"></span>saudável</li>
+          <li><span class="swatch degraded"></span>degradado</li>
+          <li><span class="swatch error"></span>em falha</li>
+          <li><span class="swatch unknown"></span>sem dados</li>
+        </ul>
+        <div class="health-grid" id="healthCards"></div>
+      </section>
+
+      <section class="card card-main" id="config" aria-labelledby="cfg-title">
+        <span class="pill">Configurações</span>
+        <h2 class="section-title" id="cfg-title">Canal e <span class="dim">aparência</span></h2>
+        <form id="channelForm" novalidate>
+          <div class="field">
+            <label for="channelInput">ID do canal do YouTube</label>
+            <input class="text-input mono" id="channelInput" name="channel" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="UC…" aria-describedby="channelHelp">
+            <span class="hint" id="channelHelp">Começa com UC e tem 24 caracteres. O contador de inscritos passa a ler este canal em segundos.</span>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="channelBtn">Salvar canal</button>
+            <span class="save-msg" id="channelOk" role="status" hidden>✓ Canal salvo</span>
+            <span class="msg err" id="channelErr" role="alert" hidden></span>
+          </div>
+        </form>
+        <h3 class="sub-title">Fonte e cor do texto dos overlays</h3>
+        <div class="look-list" id="lookList"></div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="lookBtn">Salvar aparência</button>
+          <span class="save-msg" id="lookOk" role="status" hidden>✓ Aparência salva</span>
+          <span class="msg err" id="lookErr" role="alert" hidden></span>
+        </div>
+      </section>
+
+      <section class="card card-side" id="inscritos" aria-labelledby="subs-title">
+        <span class="pill">Contador</span>
+        <h2 class="section-title" id="subs-title">Inscri<span class="dim">tos</span></h2>
+        <div class="stat-row">
+          <div class="stat">
+            <span class="stat-name">Inscritos atuais</span>
+            <span class="stat-big" id="subsCurrent">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-name">Última leitura</span>
+            <span class="stat-small" id="subsLast">—</span>
+          </div>
+        </div>
+        <div class="status-badge bad" id="cookieBadge">❌ Nenhum cookie — scraper não autenticado</div>
+        <p class="msg err auth-alert" id="authAlert" role="alert" hidden></p>
+        <h3 class="sub-title">Workers</h3>
+        <ul class="workers" id="workerList"></ul>
+      </section>
+
+      <section class="card card-wide" id="cookies" aria-labelledby="ck-title">
+        <span class="pill">Autenticação</span>
+        <h2 class="section-title" id="ck-title">Atualizar <span class="dim">cookies</span></h2>
+        <div class="steps" id="cookieSteps">
+          <b>Como exportar pelo EditThisCookie:</b><br>
+          1. No Chrome, acesse <code>studio.youtube.com</code> logado na conta do canal<br>
+          2. Clique no ícone do <b>EditThisCookie</b> na barra de extensões<br>
+          3. Clique no botão <b>Export</b> (ícone de seta para baixo ↓)<br>
+          4. O JSON é copiado para a área de transferência automaticamente<br>
+          5. Cole aqui abaixo e clique em Salvar
+        </div>
+        <div class="field">
+          <label for="cookiesInput">JSON de cookies do EditThisCookie</label>
+          <textarea class="cookies-input" id="cookiesInput" autocomplete="off" spellcheck="false" placeholder="Cole aqui o JSON do EditThisCookie...&#10;&#10;Exemplo:&#10;[&#10;  {&quot;name&quot;: &quot;SID&quot;, &quot;value&quot;: &quot;g.a000...&quot;, &quot;domain&quot;: &quot;.youtube.com&quot;, ...},&#10;  ...&#10;]"></textarea>
+        </div>
+        <button type="button" class="btn btn-primary" id="cookiesBtn">💾 Salvar cookies e recarregar scraper</button>
+        <p class="msg" id="cookiesMsg" role="status" hidden></p>
+      </section>
+
+      <section class="card card-wide" id="endpoints" aria-labelledby="ep-title">
+        <span class="pill">Saídas públicas</span>
+        <h2 class="section-title" id="ep-title">Endpoints</h2>
+        <p class="hint">Todos os endereços que o sistema publica, prontos para copiar no OBS, no vMix ou em qualquer lugar.</p>
         <div class="endpoint-list" id="epList"></div>
-      </div>
-    </section>
-
-    <section class="section" aria-labelledby="subs-title">
-      <h2 class="section-title" id="subs-title">Inscritos</h2>
-      <div class="stat-row">
-        <div class="stat">
-          <span class="stat-name">Inscritos atuais</span>
-          <span class="stat-big" id="subsCurrent">—</span>
-        </div>
-        <div class="stat">
-          <span class="stat-name">Última leitura</span>
-          <span class="stat-small" id="subsLast">—</span>
-        </div>
-      </div>
-      <div class="status-badge bad" id="cookieBadge">❌ Nenhum cookie — scraper não autenticado</div>
-      <p class="msg err auth-alert" id="authAlert" role="alert" hidden></p>
-      <h3 class="sub-title">Workers</h3>
-      <ul class="workers" id="workerList"></ul>
-    </section>
-
-    <section class="section" aria-labelledby="ck-title">
-      <h2 class="section-title" id="ck-title">🍪 Atualizar cookies de autenticação</h2>
-      <div class="steps" id="cookieSteps">
-        <b>Como exportar pelo EditThisCookie:</b><br>
-        1. No Chrome, acesse <code>studio.youtube.com</code> logado na conta do canal<br>
-        2. Clique no ícone do <b>EditThisCookie</b> na barra de extensões<br>
-        3. Clique no botão <b>Export</b> (ícone de seta para baixo ↓)<br>
-        4. O JSON é copiado para a área de transferência automaticamente<br>
-        5. Cole aqui abaixo e clique em Salvar
-      </div>
-      <div class="field">
-        <label for="cookiesInput">JSON de cookies do EditThisCookie</label>
-        <textarea class="cookies-input" id="cookiesInput" autocomplete="off" spellcheck="false" placeholder="Cole aqui o JSON do EditThisCookie...&#10;&#10;Exemplo:&#10;[&#10;  {&quot;name&quot;: &quot;SID&quot;, &quot;value&quot;: &quot;g.a000...&quot;, &quot;domain&quot;: &quot;.youtube.com&quot;, ...},&#10;  ...&#10;]"></textarea>
-      </div>
-      <button type="button" class="btn-primary" id="cookiesBtn">💾 Salvar cookies e recarregar scraper</button>
-      <p class="msg" id="cookiesMsg" role="status" hidden></p>
-    </section>
+      </section>
+    </div>
   </div>
 </main>
 
@@ -114,6 +176,30 @@
   </div>
 </template>
 
+<template id="lookTemplate">
+  <div class="look-row">
+    <span class="look-name"></span>
+    <div class="look-field">
+      <label class="look-font-label"></label>
+      <select class="look-font"></select>
+    </div>
+    <div class="look-field look-field-color">
+      <label class="look-color-label"></label>
+      <input class="look-color" type="color" value="#ffffff">
+    </div>
+  </div>
+</template>
+
+<template id="healthCardTemplate">
+  <article class="hc">
+    <header class="hc-head">
+      <h3 class="hc-name"></h3>
+      <span class="hc-state"></span>
+    </header>
+    <dl class="hc-rows"></dl>
+  </article>
+</template>
+
 <template id="endpointGroupTemplate">
   <div class="ep-group" role="group">
     <h4 class="ep-group-title"></h4>
@@ -128,7 +214,7 @@
       <span class="ep-label"></span>
       <span class="ep-url"></span>
     </span>
-    <button type="button" class="ep-copy">Copiar</button>
+    <button type="button" class="btn ep-copy">Copiar</button>
   </div>
 </template>
 </body>

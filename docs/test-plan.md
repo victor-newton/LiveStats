@@ -386,6 +386,71 @@ Decisão de compatibilidade do `PUT /api/admin/slots`: **só o formato novo** (`
 
 ---
 
+## C11 — Painel de saúde, canal configurável, aparência por overlay e novo visual (D35)
+
+Regras anti-burla do topo valem aqui. Testes antigos só foram **atualizados** para os formatos novos (versão do esquema 3, `font`/`text_color` nos JSON novos, seis seções no painel, status dos workers consultado pela seção Saúde); nenhuma verificação foi removida e os golden files não mudaram.
+
+### api (`tests/api/test_api_settings.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| API-SET-01 | Esquema v3 e migração | banco v2 → v3 preserva URLs, metas, cores e `updated_at`, `font`=`Roboto` e `text_color`=`#FFFFFF`; 3 subidas seguidas dão o mesmo resultado; não sobrescreve o que já foi gravado; `settings` só aceita as 3 chaves e rejeita valor vazio e cor minúscula | migração não idempotente; chave livre |
+| API-SET-02 | `GET/PUT /api/admin/settings` | padrões em banco novo; PUT grava, normaliza a cor em maiúsculas, aceita subconjunto e nunca duplica linhas; resposta conforme o openapi | upsert duplicando; cor sem normalizar |
+| API-SET-03 | Validação do canal, fonte e cor | 15 canais ruins (curto, longo, minúsculo, quebra de linha, espaço, `é`, SQL…) e 6 tipos errados, 25 fontes/injeções (`Arial; } body{`, `url(x)`, `"Arial"`, fora da lista, vazio, nulo…), cores ruins, corpo vazio/desconhecido: 422 sem `input` e sem gravar nada (nem os campos bons do mesmo pedido) | aceitar CSS vindo do cliente; gravar parcialmente |
+| API-SET-04 | `GET /api/admin/fonts` | lista fechada única (`api/app/fonts.py`) com as famílias da D35 e `Roboto`; cada uma é aceita no contador e nos slots; nenhuma tem caractere de CSS | lista duplicada; nome perigoso na lista |
+| API-SET-05 | `font`/`text_color` nos slots | injeções → 422 apontando `slots/N/font`; cor inválida → 422; gravação normaliza; omitir os campos mantém o valor atual | omitir apagando; fonte fora da lista |
+| API-SET-06 | Público | `/api/public/lives/{n}` e `/api/public/subscribers` carregam `font` e `text_color` no fim; `/live{n}.json` e `/inscritos.json` sem nenhuma palavra nova | legado alterado |
+| API-SET-07 | Autenticação | rotas novas: 401 sem sessão, 403 sem CSRF no PUT | rota aberta |
+| API-SET-08 | Autorizador da api | INSERT/UPDATE em `settings` permitidos; DELETE, DROP e ALTER negados | permissão a mais |
+
+### worker-inscritos (`tests/worker_inscritos/test_sub_canal.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| SUB-CAN-01 | Tabela vazia | usa `YOUTUBE_CHANNEL_ID` do ambiente | ignorar o ambiente |
+| SUB-CAN-02 | Canal no banco vence o do ambiente | primeira carga já abre o Studio do canal do banco | ler só o ambiente |
+| SUB-CAN-03 | Troca de canal em execução | o Studio é reaberto no canal novo (cookies reinjetados, sem nova linha em `cookie_sets`), sem recargas extras enquanto o canal não muda, e uma segunda troca também vale | não recarregar; recarregar sempre |
+| SUB-CAN-04 | Valor inválido no banco | cai para o ambiente, sem recarregar | abrir URL com valor ruim |
+| SUB-CAN-05 | Autorizador | lê `settings.channel_id`; INSERT/UPDATE/DELETE em `settings` negados | escrita permitida |
+
+### front (`tests/web/test_web_saude_config.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| WEB-CFG-01 | Dropdown de fontes | 5 dropdowns (contador e 4 lives) com as opções vindas de `/api/admin/fonts`; cada opção desenhada na própria fonte (CSSOM) | lista fixa no front |
+| WEB-CFG-02 | Estado salvo | canal, fontes e cores aparecem nos campos | campos vazios |
+| WEB-CFG-03 | Canal inválido | barrado no navegador, nenhuma requisição | enviar valor ruim |
+| WEB-CFG-04 | Salvar canal | `PUT /api/admin/settings` só com `channel_id`, com CSRF | enviar mais campos |
+| WEB-CFG-05 | Erro 422 | mensagem como texto, nada injetado | `innerHTML` |
+| WEB-CFG-06 | Salvar aparência | settings + slots; URL, meta e cor dos slots são os **gravados**, não rascunhos do navegador | gravar rascunho |
+| WEB-CFG-07 | Erro ao salvar | mensagem, sem "salvo", sem segundo PUT | dizer salvo com erro |
+| WEB-CFG-08 | "Salvar slots" | não envia `font`/`text_color`: a aparência não é apagada | apagar aparência |
+| WEB-CFG-09 | A11y | nomes únicos ("Fonte da live 3"), foco visível, teclado | controle sem nome |
+| WEB-APR-01..02 | Contador | fonte e cor da api via CSSOM (herdadas pelos dígitos); padrão Roboto/branco mantém o visual original; mudança vale no polling seguinte mesmo sem mudar o número | ignorar a aparência |
+| WEB-APR-03 | Contador, valor malicioso da rede | 7 combinações (CSS injetado, `url()`, aspas, 41 caracteres, cor inválida…): descartado, vale o padrão, `style` vazio | aplicar valor estranho |
+| WEB-APR-04..05 | Live | idem para `live.html`; cada slot lê o seu; cor da barra independente da cor do texto | misturar slots |
+| WEB-SAU-01 | Cartões e diagrama | 5 cartões (api, banco, worker-lives, worker-inscritos, cookies/autenticação) com estado, último sinal, último sucesso, falhas seguidas, intervalo e mensagem; diagrama com 6 nós e 6 ligações, pontos animados (CSS) nas saudáveis | cartão faltando |
+| WEB-SAU-02..05 | Estados | degradado destaca só a ligação com o YouTube; cookies expirados marcam `YouTube→inscritos` em falha (vermelha, tracejada, sem animação); `db_error` marca worker→banco; worker sem dados = "sem dados" | ligação errada destacada |
+| WEB-SAU-06 | Atualização | a cada 10 s (nem antes), só `/health` e `/api/admin/workers/status` | intervalo errado; outra fonte |
+| WEB-SAU-07 | API fora | `/health` 503: cartão da API em erro, falhas seguidas, ligações destacadas, recupera | esconder a falha |
+| WEB-SAU-08 | Texto do servidor | mensagem com `<img onerror>` vira texto; o diagrama só contém `title/g/path/rect/text` | `innerHTML` |
+| WEB-SAU-09 | `prefers-reduced-motion` | animações dos pontos e dos botões desligadas | animar sempre |
+| WEB-SAU-10 | Sessão expirada | volta ao login e esvazia a saúde | manter dados |
+| WEB-BTN-01 | Botões | pílula, `conic-gradient` animado por `@property` (`--chrome-angle`, `chrome-spin`), só CSS | borda estática |
+| WEB-BTN-02 | Visual bento | fundo quase preto, cartões com borda 1 px e cantos 16 px, pílulas, uma palavra cinza nos títulos | visual antigo |
+| WEB-END-01 | Endpoints | tudo o que é público no `openapi.yaml` (GET, fora de admin) está na seção com URL completa e botão Copiar, mais os overlays de likes; nada de admin | saída pública faltando |
+| (existentes) | CSP/terceiros | `WEB-CSP-01`, `WEB-NET-01*`, `WEB-XSS-*` e a varredura estática seguem passando com os arquivos novos (sem `innerHTML`, sem `style=`, sem script inline) | — |
+
+### integração (`tests/e2e/test_int_c11.py`, pilha real)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| INT-C11-01 | Trocar o canal no painel | canal inválido barrado; canal válido salvo; o worker passa a abrir o Studio falso no canal novo e segue `ok`; restaurar volta ao canal do ambiente | worker ignorar o banco |
+| INT-C11-02 | Fonte e cor | escolhidas no painel aparecem no JSON novo (cor em maiúsculas), **não** nos legados, e no `/contador` e `/overlay/live.html` reais; mudar no painel muda o overlay aberto sem recarregar; sem CSP violada nem terceiros | aparência não chegar ao overlay |
+| INT-C11-03 | Validação e saúde na pilha real | canal/fonte/cor inválidos → 422 sem `input` e sem mudar nada; a seção Saúde mostra api, banco e workers em `ok` | aceitar valor ruim |
+
+---
+
 ## Cobertura cruzada (PLANO §4 → testes)
 
 | Item do PLANO §4 | Testes |

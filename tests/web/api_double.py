@@ -57,6 +57,12 @@ MIME = {
     ".txt": "text/plain; charset=utf-8",
 }
 
+# D35: lista fechada de fontes (copia do contrato para o dublê; a api real a define em api/app/fonts.py)
+FONTS = [
+    "Roboto", "Segoe UI", "Segoe UI Black", "Arial", "Arial Black", "Bahnschrift", "Calibri", "Cambria", "Candara",
+    "Consolas", "Constantia", "Corbel", "Franklin Gothic Medium", "Georgia", "Impact", "Lucida Console",
+    "Palatino Linotype", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana",
+]
 HTML_PAGES = {"/", "/admin"}
 OVERLAY_PAGES = {"/contador", "/overlay/inscritos"}
 
@@ -144,6 +150,11 @@ class ApiDouble:
             self.slots = ["", "", "", ""]
             self.goals: list[int | None] = [None, None, None, None]  # D34: meta de likes por slot
             self.colors = ["#FF0033"] * 4  # D34: cor da barra por slot
+            self.fonts = ["Roboto"] * 4  # D35: fonte do texto por slot
+            self.text_colors = ["#FFFFFF"] * 4  # D35: cor do texto por slot
+            self.channel_id: str | None = None  # D35
+            self.subs_font = "Roboto"
+            self.subs_text_color = "#FFFFFF"
             self.saved_at: str | None = None
             self.stats: dict[int, dict[str, Any] | None] = {1: None, 2: None, 3: None, 4: None}
             self.subscribers: dict[str, str] | None = None
@@ -269,7 +280,7 @@ class ApiDouble:
         if rec.method != "GET":
             return error(405, "Method Not Allowed")
         if path in ("/inscritos.json", "/api/public/subscribers"):
-            return self._subscribers()
+            return self._subscribers(new_format=path == "/api/public/subscribers")
         m = re.fullmatch(r"/live(\d+)\.json", path)
         if m:
             return self._live(int(m.group(1)), legacy=True)
@@ -293,9 +304,12 @@ class ApiDouble:
             },
         )
 
-    def _subscribers(self) -> Reply:
+    def _subscribers(self, new_format: bool = False) -> Reply:
         if self.subscribers_status == 503 or self.subscribers is None:
             return error(503, "Dados ainda não disponíveis. Scraper inicializando...", cors())
+        if new_format:  # D35: o legado + font e text_color do contador
+            body = {**self.subscribers, "font": self.subs_font, "text_color": self.subs_text_color}
+            return json_reply(200, body, cors())
         return json_reply(200, self.subscribers, cors())
 
     def _live(self, n: int, legacy: bool) -> Reply:
@@ -307,7 +321,11 @@ class ApiDouble:
         if legacy:
             return json_reply(200, [stats], cors())
         # formato novo: o legado + goal e color do slot (D34); o legado NAO os tem
-        return json_reply(200, {**stats, "goal": self.goals[n - 1], "color": self.colors[n - 1]}, cors())
+        extra = {
+            "goal": self.goals[n - 1], "color": self.colors[n - 1],
+            "font": self.fonts[n - 1], "text_color": self.text_colors[n - 1],
+        }
+        return json_reply(200, {**stats, **extra}, cors())
 
     # ---- admin -------------------------------------------------------------
 
@@ -330,6 +348,7 @@ class ApiDouble:
             known = route in {
                 ("POST", "/api/admin/logout"),
                 ("PUT", "/api/admin/slots"),
+                ("PUT", "/api/admin/settings"),
                 ("POST", "/api/admin/cookies"),
             }
             if known and (not token or not same(token, sess["csrf"])):
@@ -350,6 +369,12 @@ class ApiDouble:
             return self._cookies(rec)
         if route == ("GET", "/api/admin/workers/status"):
             return json_reply(200, self._workers_status())
+        if route == ("GET", "/api/admin/fonts"):
+            return json_reply(200, {"fonts": FONTS, "default": "Roboto"})
+        if route == ("GET", "/api/admin/settings"):
+            return json_reply(200, self._settings())
+        if route == ("PUT", "/api/admin/settings"):
+            return self._settings_write(rec)
         return error(404, "Not Found")
 
     def _login(self, rec: RequestRecord) -> Reply:
@@ -391,6 +416,8 @@ class ApiDouble:
                     "url": self.slots[i],
                     "goal": self.goals[i],
                     "color": self.colors[i],
+                    "font": self.fonts[i],
+                    "text_color": self.text_colors[i],
                     "stats": self.stats[i + 1],
                 }
                 for i in range(4)
@@ -414,9 +441,39 @@ class ApiDouble:
         self.slots = values
         self.goals = [item["goal"] for item in items]
         self.colors = [str(item["color"]).upper() for item in items]  # a api normaliza em maiúsculas
+        for i, item in enumerate(items):  # D35: font/text_color opcionais (ausente = mantém)
+            if "font" in item:
+                if item["font"] not in FONTS:
+                    return validation_error([{"loc": ["body", "slots", i, "font"], "msg": "Value error, Fonte fora da lista permitida", "type": "value_error"}])
+        for i, item in enumerate(items):
+            if "font" in item:
+                self.fonts[i] = item["font"]
+            if "text_color" in item:
+                self.text_colors[i] = str(item["text_color"]).upper()
         self.saved_at = utc_iso()
-        saved = [{"url": values[i], "goal": self.goals[i], "color": self.colors[i]} for i in range(4)]
+        saved = [
+            {"url": values[i], "goal": self.goals[i], "color": self.colors[i], "font": self.fonts[i], "text_color": self.text_colors[i]}
+            for i in range(4)
+        ]
         return json_reply(200, {"ok": True, "slots": saved, "saved_at": self.saved_at})
+
+    def _settings(self) -> dict[str, Any]:
+        return {"channel_id": self.channel_id, "subs_font": self.subs_font, "subs_text_color": self.subs_text_color}
+
+    def _settings_write(self, rec: RequestRecord) -> Reply:
+        errs = self.contract.request_errors(self.contract.find("PUT", rec.path), rec.body)  # type: ignore[arg-type]
+        if errs:
+            return validation_error(errs)
+        body = rec.body
+        if "subs_font" in body and body["subs_font"] not in FONTS:
+            return validation_error([{"loc": ["body", "subs_font"], "msg": "Value error, Fonte fora da lista permitida", "type": "value_error"}])
+        if "channel_id" in body:
+            self.channel_id = body["channel_id"]
+        if "subs_font" in body:
+            self.subs_font = body["subs_font"]
+        if "subs_text_color" in body:
+            self.subs_text_color = str(body["subs_text_color"]).upper()
+        return json_reply(200, {"ok": True, **self._settings()})
 
     def _cookies(self, rec: RequestRecord) -> Reply:
         # Ordem de validação do openapi.yaml (descrição de POST /api/admin/cookies).

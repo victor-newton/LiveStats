@@ -43,7 +43,10 @@ def test_api_slot_01_get_em_banco_novo(stack: Stack):
     assert resp.status_code == 200
     body = resp.json()
     assert body == {
-        "slots": [{"slot": n, "url": "", "goal": None, "color": DEFAULT_COLOR, "stats": None} for n in (1, 2, 3, 4)],
+        "slots": [
+            {"slot": n, "url": "", "goal": None, "color": DEFAULT_COLOR, "font": "Roboto", "text_color": "#FFFFFF", "stats": None}
+            for n in (1, 2, 3, 4)
+        ],
         "saved_at": None,
     }
     assert_matches_openapi(resp, "/api/admin/slots", "get")

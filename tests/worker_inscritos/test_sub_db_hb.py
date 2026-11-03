@@ -29,7 +29,7 @@ def test_sub_db_01_o_que_o_worker_pode_fazer(env, add_cookies):
         # ler cookie_sets e schema_meta
         assert store.latest_cookie_set_id() == novo
         assert store.get_cookie_set(novo).id == novo
-        assert con.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone() == ("2",)
+        assert con.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone() == ("3",)
         # escrever subscriber_reading e worker_status (duas vezes: o UPSERT cobre INSERT e UPDATE)
         for _ in range(2):
             store.save_reading("460600", "460600", iso_utc(1_700_000_000))

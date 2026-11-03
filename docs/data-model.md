@@ -1,6 +1,6 @@
 # Modelo de dados — LiveStats
 
-Contrato T1. Fontes da verdade dos esquemas: [`db/schema.sql`](../db/schema.sql) (dados compartilhados) e [`db/admin_schema.sql`](../db/admin_schema.sql) (estado de admin, volume exclusivo da api); ambos somente leitura para T2–T7.
+Contrato T1 (esquema na **versão 3**: ver §1.1). Fontes da verdade dos esquemas: [`db/schema.sql`](../db/schema.sql) (dados compartilhados) e [`db/admin_schema.sql`](../db/admin_schema.sql) (estado de admin, volume exclusivo da api); ambos somente leitura para T2–T7.
 
 ## 1. Bancos
 
@@ -20,6 +20,18 @@ Ambos em modo **WAL** (`-wal` e `-shm` ao lado). O `web` não monta volume algum
 - Datas: textos ISO 8601 UTC com sufixo `Z` onde o valor vai literalmente para um JSON legado (`live_stats.updated_at`, `subscriber_reading.read_at`, `slots.updated_at`, `cookie_sets.created_at`); inteiros epoch (segundos UTC) nas tabelas de segurança e de status (`admin_sessions`, `login_attempts`, `worker_status`), para comparação simples.
 - Permissões: todos os containers que usam os bancos rodam como `10001:10001`; cada processo chama `os.umask(0o007)` na subida; `/data` é `2770` (D1) e `/admin-state` é `0700` (só a api). Nenhum arquivo é legível por "outros".
 
+### 1.1 Versões do esquema
+
+| Versão | Decisão | O que muda |
+|---|---|---|
+| 1 | T1 | esquema original |
+| 2 | D34 (C10) | `slots` ganha `goal` (meta de likes, `NULL` = sem meta, 1 a 1.000.000.000) e `color` (`#RRGGBB` em maiúsculas, padrão `#FF0033`) |
+| 3 | D35 (C11) | tabela nova `settings` e `slots` ganha `font` (família da lista fechada de `api/app/fonts.py`, padrão `Roboto`) e `text_color` (`#RRGGBB` em maiúsculas, padrão `#FFFFFF`) |
+
+**Migração idempotente (feita só pela api, na subida):** `CREATE TABLE IF NOT EXISTS settings` (no próprio `schema.sql`), `ALTER TABLE slots ADD COLUMN` apenas para a coluna que faltar (as definições repetem as de `schema.sql`) e `schema_version` 1 ou 2 → 3, tudo numa transação. Repetir a migração não muda nada; dados existentes (URLs, metas, cores, `updated_at`) são preservados. Bancos novos já nascem na v3.
+
+**`settings` (v3):** `key TEXT PRIMARY KEY CHECK (key IN ('channel_id', 'subs_font', 'subs_text_color'))`, `value TEXT NOT NULL CHECK (length(value) BETWEEN 1 AND 40)`, `STRICT`. O CHECK só garante o conjunto de chaves e o tamanho; **o formato** (canal `^UC[0-9A-Za-z_-]{22}$`, fonte da lista fechada, cor `#RRGGBB`) é validado pela api antes de gravar. Ausência de linha = padrão: sem `channel_id` o `worker-inscritos` usa `YOUTUBE_CHANNEL_ID` do ambiente; fonte `Roboto`; cor `#FFFFFF`. O `worker-inscritos` lê `channel_id` a cada ciclo (autorizador: leitura de `settings`, nenhuma escrita), ignora valor que não case o formato (usa o do ambiente) e recarrega o Studio quando o canal muda.
+
 ## 2. Tabelas e quem lê/escreve
 
 Legenda: **R** = lê, **W** = escreve (INSERT/UPDATE/DELETE), **—** = não toca.
@@ -29,7 +41,8 @@ Legenda: **R** = lê, **W** = escreve (INSERT/UPDATE/DELETE), **—** = não toc
 | Tabela | api | worker-lives | worker-inscritos | Conteúdo |
 |---|---|---|---|---|
 | `schema_meta` | W (cria) / R | R | R | versão do esquema |
-| `slots` | **R/W** | R | — | URL de cada um dos 4 slots (admin salva → api grava → worker-lives lê) |
+| `slots` | **R/W** | R | — | URL de cada um dos 4 slots (admin salva → api grava → worker-lives lê); `goal`, `color` (v2) e `font`, `text_color` (v3) são só da api e do overlay |
+| `settings` (v3) | **R/W** (INSERT/UPDATE; sem DELETE) | — | **R** (só `channel_id`) | chave/valor com chaves de lista fechada: `channel_id`, `subs_font`, `subs_text_color` |
 | `live_stats` | R | **W** | — | estatísticas de cada slot, já no formato dos JSON legados |
 | `subscriber_reading` | R | — | **W** | última leitura de inscritos (linha única) |
 | `cookie_sets` | **W** (INSERT + DELETE das antigas); R só de metadados (`id`, `key_id`, `cookie_count`, `uploaded_by`, `created_at`) | — | **R** (inclui `ciphertext`) | cookies cifrados |

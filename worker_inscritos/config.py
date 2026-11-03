@@ -27,7 +27,7 @@ DEFAULT_SCRAPE_INTERVAL = 10
 MIN_SCRAPE_INTERVAL = 5
 MAX_SCRAPE_INTERVAL = 3600  # worker_status.interval_seconds BETWEEN 1 AND 3600
 
-_CHANNEL_ID_RE = re.compile(r"^UC[0-9A-Za-z_-]{22}$")
+CHANNEL_ID_RE = re.compile(r"UC[0-9A-Za-z_-]{22}")
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -49,7 +49,10 @@ class Config:
     @property
     def studio_url(self) -> str:
         """URL da pagina de analytics de inscritos (identica a do scraper original)."""
-        cid = self.channel_id
+        return self.studio_url_for(self.channel_id)
+
+    def studio_url_for(self, cid: str) -> str:
+        """Mesma URL para um canal qualquer (D35: o canal pode vir da tabela `settings`)."""
         return (
             f"{self.studio_base_url}/channel/{cid}"
             f"/analytics/tab-overview/period-default/explore"
@@ -96,7 +99,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     channel_id = env.get("YOUTUBE_CHANNEL_ID", "").strip()
     if not channel_id:
         raise ConfigError("YOUTUBE_CHANNEL_ID e obrigatorio")
-    if not _CHANNEL_ID_RE.match(channel_id):
+    if not CHANNEL_ID_RE.fullmatch(channel_id):
         raise ConfigError("YOUTUBE_CHANNEL_ID invalido (formato UC + 22 caracteres)")
 
     key_file = env.get("COOKIE_PRIVATE_KEY_FILE", "").strip()
