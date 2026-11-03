@@ -559,6 +559,7 @@ Contratos que mudaram e os testes antigos tocados (cada verificação foi mantid
 | ID | Verifica | Resultado esperado | Falha se (mutação) |
 |---|---|---|---|
 | INFRA-CFG-15 | Chaves dos cookies no compose (estático) | `worker-inscritos` monta privada e pública e tem `COOKIE_PUBLIC_KEY_FILE=/run/secrets/cookie_public_key`; a privada não está em nenhum outro serviço; `worker-lives` e `web` não montam nenhuma das duas | privada fora do worker; pública em `worker-lives`/`web` |
+| SEC-09b | Mapa de secrets nos containers reais (`tests/security/test_sec_container.py`) | `/run/secrets`: `worker-inscritos` = privada + pública; `api` = pública + hash da senha; `worker-lives` = só a chave da API; `web` = só TLS do admin | privada fora do worker; pública no `worker-lives`/`web` |
 | INT-SES-01 | Pilha real (`tests/e2e/test_int_sessao.py`, `E2E_PUBLIC_PORT=18080 E2E_ADMIN_PORT=18081`) | o Studio falso rotaciona o cookie de sessão (valor colado vale uma vez); o worker grava a renovação (`source='worker'` no status e no banco, decifrada dentro do worker); logs sem cookie; depois de reiniciar o `worker-inscritos` a leitura continua e o Studio recebe só o cookie renovado, sem colar nada | reinício volta ao cookie colado e cai em login |
 
 ## Cobertura cruzada (PLANO §4 → testes)
