@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from web_helpers import Watch, do_login, fetch_status, freeze_clock
+from web_helpers import Watch, do_login, fetch_status, freeze_clock, open_tab
 from playwright.sync_api import Page, expect
 
 ADMIN_PATHS = ("/api/admin/slots", "/api/admin/workers/status")
@@ -59,12 +59,13 @@ def test_web_login_02_senha_errada_e_bloqueio_tem_mensagens_distintas(page: Page
 
 def test_web_login_03_csrf_so_em_memoria_e_enviado_nas_escritas(page: Page, api, base_url):
     api.set_stats(1, api.live_stats(1))
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     csrf = current_csrf(api)
 
     page.locator("#inp1").fill("https://youtube.com/watch?v=dQw4w9WgXcQ")
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveMsg")).to_be_visible()
+    page.get_by_role("button", name="Salvar slot 1", exact=True).click()
+    expect(page.locator("#saveMsg1")).to_be_visible()
+    open_tab(page, "inscritos")
     page.locator("#cookiesInput").fill('[{"name":"SID","value":"abc","domain":".youtube.com"}]')
     page.get_by_role("button", name="Salvar cookies").click()
     expect(page.locator("#cookiesMsg")).to_contain_text("cookies salvos")
@@ -107,7 +108,7 @@ def test_web_login_04_401_durante_a_sessao_volta_ao_login_e_limpa_o_painel(page:
     api.slots[0] = "https://youtube.com/watch?v=dQw4w9WgXcQ"
     api.set_stats(1, api.live_stats(1, titulo="Titulo que nao pode sobrar"))
     freeze_clock(page)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     expect(page.locator(".slot-title:not([hidden])")).to_have_text("Titulo que nao pode sobrar")
     expect(page.locator("#inp1")).to_have_value("https://youtube.com/watch?v=dQw4w9WgXcQ")
 
@@ -121,7 +122,7 @@ def test_web_login_04_401_durante_a_sessao_volta_ao_login_e_limpa_o_painel(page:
     assert page.locator("#inp1").input_value() == ""
     assert page.locator("#slotsGrid .slot-title:not([hidden])").count() == 0
     assert "Titulo que nao pode sobrar" not in page.evaluate("() => document.body.innerText")
-    assert page.locator("#epList .ep").count() == 0
+    assert page.locator(".ep").count() == 0  # nenhum endereço (de nenhuma aba) sobra no DOM
     # e o painel não continua consultando a api
     antes = len(api.requests("GET", "/api/admin/slots"))
     page.clock.run_for(45000)

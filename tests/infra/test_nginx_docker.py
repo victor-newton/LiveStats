@@ -378,16 +378,29 @@ def test_infra_ng_06_overlays_nas_duas_portas(stack_default):
     for port in (8080, 8081):
         res = stack_default.client(
             "23",
-            [{"path": "/contador"}, {"path": "/overlay/inscritos"}, {"path": "/overlay/contador.html"},
+            [{"path": "/contador"}, {"path": "/overlay/contador.html"},
              {"path": "/overlay/contador.js"}, {"path": "/overlay/contador.css"}, {"path": "/overlay/"},
              {"path": "/overlay/inscritos/"}, {"path": "/overlay/../admin-assets/index.html"}, {"path": "/overlay/x/../../etc/passwd"}],
             port=port,
         )
-        assert [r["body"] for r in res[:3]] == [html, html, html]
-        assert header(res[3], "Content-Type").startswith("application/javascript")
-        assert header(res[4], "Content-Type").startswith("text/css")
+        assert [r["body"] for r in res[:2]] == [html, html]
+        assert header(res[2], "Content-Type").startswith("application/javascript")
+        assert header(res[3], "Content-Type").startswith("text/css")
         # ../ e normalizado pelo Nginx: na 8080 cai fora do mapa (404); na 8081 e o painel legitimo
-        assert statuses(res[5:]) == [404, 404, 404 if port == 8080 else 200, 404]
+        assert statuses(res[4:]) == [404, 404, 404 if port == 8080 else 200, 404]
+
+
+def test_infra_ng_16_overlay_inscritos_removido_e_so_o_contador_responde(stack_default):
+    """D36: `/overlay/inscritos` (e variações) é 404 nas duas portas, com os cabeçalhos estritos do Nginx;
+    `/contador` segue 200 com o mesmo HTML de `contador.html`."""
+    html = (dh.STATIC_FIXTURE / "overlay" / "contador.html").read_text(encoding="utf-8")
+    removed = ["/overlay/inscritos", "/overlay/inscritos?x=1", "/overlay/inscritos/", "/overlay/INSCRITOS", "/overlay/inscritos.html"]
+    for port in (8080, 8081):
+        res = stack_default.client("24", [{"path": p} for p in removed] + [{"path": "/contador"}], port=port)
+        for path, resp in zip(removed, res):
+            assert resp["status"] == 404, (port, path, resp["status"])
+            assert html not in resp["body"], (port, path)
+        assert res[-1]["status"] == 200 and res[-1]["body"] == html, port
 
 
 # ---------------------------------------------------------------------------------------------- cabecalhos
@@ -434,7 +447,7 @@ def test_infra_ng_02_overlays_embutiveis_e_o_resto_nao(stack_default):
     for port in (8080, 8081):
         res = stack_default.client(
             "32",
-            [{"path": p} for p in ("/contador", "/overlay/inscritos", "/overlay/contador.js", "/overlay/contador.css", "/health")]
+            [{"path": p} for p in ("/contador", "/overlay/contador.html", "/overlay/contador.js", "/overlay/contador.css", "/health")]
             + [{"path": "/overlay/nao-existe.js"}],
             port=port,
         )
@@ -703,7 +716,7 @@ def test_infra_ng_08_cors_nos_dados_publicos(stack_default, port):
 @pytest.mark.parametrize("port", [8080, 8081])
 def test_infra_ng_08_sem_cors_nas_demais_rotas(stack_default, port):
     origin = {"Origin": "https://qualquer.example", "X-Fake-Cors": "1"}
-    paths = ["/health", "/contador", "/overlay/inscritos", "/overlay/contador.js", "/", "/admin", "/admin-assets/js/main.js",
+    paths = ["/health", "/contador", "/overlay/contador.html", "/overlay/contador.js", "/", "/admin", "/admin-assets/js/main.js",
              "/api/admin/session", "/api/admin/login", "/api/admin/nao-existe", "/nao-existe", "/api/public"]
     specs = []
     for p in paths:

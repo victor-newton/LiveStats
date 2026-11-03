@@ -242,22 +242,8 @@ paths:
     get:
       tags: [legacy, pages]
       operationId: getLegacyCounterPage
-      summary: Alias legado do overlay do contador de inscritos
-      description: HTML estático servido pelo Nginx (fundo transparente para OBS/vMix). Mesmo documento de `/overlay/inscritos`. CSP com `frame-ancestors *` (embutível). Sem autenticação.
-      x-ports: [8080, 8081]
-      responses:
-        "200":
-          description: Página HTML
-          content:
-            text/html: { schema: { type: string } }
-        "429": { $ref: "#/components/responses/TooManyRequests" }
-
-  /overlay/inscritos:
-    get:
-      tags: [pages]
-      operationId: getCounterOverlay
       summary: Overlay do contador de inscritos
-      description: Mesmo conteúdo de `/contador`. Busca `/api/public/subscribers` a cada 5 s.
+      description: HTML estático servido pelo Nginx (fundo transparente para OBS/vMix); é o único endereço oficial do overlay de inscritos (D36; `/overlay/inscritos` não existe mais e responde 404). Busca `/api/public/subscribers` a cada 5 s. CSP com `frame-ancestors *` (embutível). Sem autenticação.
       x-ports: [8080, 8081]
       responses:
         "200":

@@ -11,7 +11,7 @@ import pytest
 import yaml
 from api_double import FONTS, error, json_reply
 from playwright.sync_api import Page, expect
-from web_helpers import do_login, freeze_clock, no_html_injected, wait_until
+from web_helpers import do_login, freeze_clock, no_html_injected, open_tab, wait_until
 
 OPENAPI = Path(__file__).resolve().parents[2] / "docs" / "openapi.yaml"
 CHANNEL = "UC" + "x1Y2z3" * 3 + "ab_-"  # 22 caracteres depois do UC
@@ -20,12 +20,15 @@ assert re.fullmatch(r"UC[0-9A-Za-z_-]{22}", CHANNEL)
 SUBS = {"inscritos": "460600", "raw": "460600", "atualizado_em": "2026-11-02T14:32:10.654321Z"}
 
 
-def entra(page: Page, base_url: str, api) -> None:
-    """Login + dropdowns de fonte preenchidos + configurações aplicadas."""
+def entra(page: Page, base_url: str, api, tab: str | None = None) -> None:
+    """Login + dropdowns de fonte preenchidos + configurações aplicadas; `tab` abre uma aba do painel (D36)."""
     do_login(page, base_url, api)
     expect(page.locator("#font-subs option")).to_have_count(len(FONTS))
+    expect(page.locator("#font-1 option")).to_have_count(len(FONTS))
     wait_until(lambda: len(api.requests("GET", "/api/admin/settings")) >= 1, "settings carregado")
     page.wait_for_timeout(100)
+    if tab is not None:
+        open_tab(page, tab)
 
 
 def estado(page: Page, componente: str) -> str:
@@ -44,11 +47,16 @@ def campo(page: Page, componente: str, rotulo: str) -> str:
 def test_web_cfg_01_dropdown_de_fontes_vem_da_api_e_cada_opcao_usa_a_propria_fonte(page: Page, api, base_url):
     entra(page, base_url, api)
     assert len(api.requests("GET", "/api/admin/fonts")) >= 1
-    rotulos = ["Fonte do contador"] + [f"Fonte da live {n}" for n in range(1, 5)]
-    for rotulo in rotulos:
-        select = page.get_by_label(rotulo, exact=True)
-        expect(select).to_be_visible()
-        assert select.locator("option").all_inner_texts() == FONTS
+    # D36: a fonte do contador está na aba Inscritos; a de cada live, no cartão da live (aba Lives)
+    for tab, rotulos in (
+        ("inscritos", ["Fonte do contador"]),
+        ("lives", [f"Fonte da live {n}" for n in range(1, 5)]),
+    ):
+        open_tab(page, tab)
+        for rotulo in rotulos:
+            select = page.get_by_label(rotulo, exact=True)
+            expect(select).to_be_visible()
+            assert select.locator("option").all_inner_texts() == FONTS
     opcoes = page.evaluate(
         "[...document.querySelectorAll('#font-subs option')].map((o) => [o.textContent, o.style.fontFamily])"
     )
@@ -56,9 +64,13 @@ def test_web_cfg_01_dropdown_de_fontes_vem_da_api_e_cada_opcao_usa_a_propria_fon
     for nome, familia in opcoes:
         # o navegador serializa sem aspas os nomes de uma palavra; o fallback genérico vem sempre no fim
         assert familia.lstrip('"').startswith(nome) and familia.endswith("sans-serif"), (nome, familia)
-    # o próprio dropdown mostra a fonte escolhida
+    # o próprio dropdown mostra a fonte escolhida (também o de cada live)
+    open_tab(page, "inscritos")
     page.get_by_label("Fonte do contador", exact=True).select_option("Impact")
     assert page.evaluate("document.getElementById('font-subs').style.fontFamily").lstrip('"').startswith("Impact")
+    open_tab(page, "lives")
+    page.get_by_label("Fonte da live 2", exact=True).select_option("Georgia")
+    assert page.evaluate("document.getElementById('font-2').style.fontFamily").lstrip('"').startswith("Georgia")
 
 
 def test_web_cfg_02_dropdowns_refletem_o_estado_salvo(page: Page, api, base_url):
@@ -111,29 +123,44 @@ def test_web_cfg_05_erro_422_da_api_aparece_como_texto(page: Page, api, base_url
     no_html_injected(page)
 
 
-def test_web_cfg_06_salvar_aparencia_manda_settings_e_slots_sem_mexer_em_url_meta_e_cor(page: Page, api, base_url):
+def test_web_cfg_06_salvar_aparencia_do_contador_manda_so_settings(page: Page, api, base_url):
     api.slots = ["dQw4w9WgXcQ", "", "", ""]
-    api.goals[0], api.colors[0] = 5000, "#00AA11"
-    entra(page, base_url, api)
-    expect(page.get_by_label("Slot 1", exact=True)).to_have_value("dQw4w9WgXcQ")
-    page.get_by_label("Slot 1", exact=True).fill("rascunho nao salvo")  # edição pendente NÃO é gravada aqui
-
+    entra(page, base_url, api, tab="lives")
+    page.get_by_label("Slot 1", exact=True).fill("rascunho nao salvo")  # edição pendente numa live
+    open_tab(page, "inscritos")
     page.get_by_label("Fonte do contador", exact=True).select_option("Segoe UI Black")
     page.get_by_label("Cor do texto do contador", exact=True).fill("#ff8800")
-    page.get_by_label("Fonte da live 3", exact=True).select_option("Times New Roman")
-    page.get_by_label("Cor do texto da live 3", exact=True).fill("#0a0b0c")
     page.get_by_role("button", name="Salvar aparência").click()
     expect(page.locator("#lookOk")).to_be_visible()
 
     (settings,) = api.requests("PUT", "/api/admin/settings")
     assert settings.body == {"subs_font": "Segoe UI Black", "subs_text_color": "#ff8800"}
+    assert settings.headers["x-csrf-token"]
+    assert api.requests("PUT", "/api/admin/slots") == []  # D36: a aparência do contador é do cartão do contador
+    assert api.subs_font == "Segoe UI Black" and api.subs_text_color == "#FF8800"
+    open_tab(page, "lives")
+    expect(page.get_by_label("Slot 1", exact=True)).to_have_value("rascunho nao salvo")  # segue só no navegador
+
+
+def test_web_cfg_06b_salvar_a_live_manda_url_meta_cor_fonte_e_cor_do_texto_so_daquele_cartao(page: Page, api, base_url):
+    api.slots = ["dQw4w9WgXcQ", "", "", ""]
+    api.goals[0], api.colors[0] = 5000, "#00AA11"
+    entra(page, base_url, api, tab="lives")
+    expect(page.get_by_label("Slot 1", exact=True)).to_have_value("dQw4w9WgXcQ")
+    page.get_by_label("Slot 1", exact=True).fill("rascunho nao salvo")  # edição pendente de OUTRO cartão NÃO é gravada
+
+    page.get_by_label("Fonte da live 3", exact=True).select_option("Times New Roman")
+    page.get_by_label("Cor do texto da live 3", exact=True).fill("#0a0b0c")
+    page.get_by_role("button", name="Salvar slot 3", exact=True).click()
+    expect(page.locator("#saveMsg3")).to_be_visible()
+
+    assert api.requests("PUT", "/api/admin/settings") == []
     (slots,) = api.requests("PUT", "/api/admin/slots")
     assert slots.headers["x-csrf-token"]
     enviados = slots.body["slots"]
     assert len(enviados) == 4
-    assert enviados[0] == {"url": "dQw4w9WgXcQ", "goal": 5000, "color": "#00AA11", "font": "Roboto", "text_color": "#ffffff"}
-    assert enviados[2] == {"url": "", "goal": None, "color": "#FF0033", "font": "Times New Roman", "text_color": "#0a0b0c"}
-    assert api.subs_font == "Segoe UI Black" and api.subs_text_color == "#FF8800"
+    assert enviados[0] == {"url": "dQw4w9WgXcQ", "goal": 5000, "color": "#00AA11", "font": "Roboto", "text_color": "#FFFFFF"}
+    assert enviados[2] == {"url": "", "goal": None, "color": "#ff0033", "font": "Times New Roman", "text_color": "#0a0b0c"}
     assert api.fonts == ["Roboto", "Roboto", "Times New Roman", "Roboto"]
     assert api.text_colors[2] == "#0A0B0C"
     expect(page.get_by_label("Slot 1", exact=True)).to_have_value("rascunho nao salvo")  # segue só no navegador
@@ -148,17 +175,29 @@ def test_web_cfg_07_erro_ao_salvar_aparencia_mostra_mensagem_e_nao_diz_salvo(pag
     expect(page.locator("#lookErr")).to_contain_text("Banco indisponível")
     expect(page.locator("#lookOk")).to_be_hidden()
     assert api.requests("PUT", "/api/admin/slots") == []
+    # o mesmo vale para o cartão de uma live
+    open_tab(page, "lives")
+    api.override("PUT", "/api/admin/slots", error(503, "Banco indisponível"))
+    page.get_by_label("Fonte da live 2", exact=True).select_option("Arial")
+    page.get_by_role("button", name="Salvar slot 2", exact=True).click()
+    expect(page.locator("#saveErr2")).to_contain_text("Banco indisponível")
+    expect(page.locator("#saveMsg2")).to_be_hidden()
+    assert api.fonts[1] == "Roboto"
 
 
-def test_web_cfg_08_slots_salvos_pelo_botao_antigo_nao_apagam_a_aparencia(page: Page, api, base_url):
+def test_web_cfg_08_salvar_a_url_de_um_cartao_nao_apaga_a_aparencia_gravada(page: Page, api, base_url):
     api.fonts[0], api.text_colors[0] = "Impact", "#112233"
-    entra(page, base_url, api)
+    api.fonts[1], api.text_colors[1] = "Verdana", "#445566"
+    entra(page, base_url, api, tab="lives")
     page.get_by_label("Slot 1", exact=True).fill("dQw4w9WgXcQ")
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveMsg")).to_be_visible()
+    page.get_by_role("button", name="Salvar slot 1", exact=True).click()
+    expect(page.locator("#saveMsg1")).to_be_visible()
     (req,) = api.requests("PUT", "/api/admin/slots")
-    assert "font" not in req.body["slots"][0] and "text_color" not in req.body["slots"][0]
+    # a aparência vai junto, com o que já estava gravado (nada de font/text_color vazios ou padrão)
+    assert req.body["slots"][0]["font"] == "Impact" and req.body["slots"][0]["text_color"].lower() == "#112233"
+    assert req.body["slots"][1]["font"] == "Verdana" and req.body["slots"][1]["text_color"].lower() == "#445566"
     assert api.fonts[0] == "Impact" and api.text_colors[0] == "#112233"
+    assert api.fonts[1] == "Verdana" and api.text_colors[1] == "#445566"
 
 
 def test_web_cfg_09_a11y_nomes_unicos_e_teclado(page: Page, api, base_url):
@@ -167,6 +206,7 @@ def test_web_cfg_09_a11y_nomes_unicos_e_teclado(page: Page, api, base_url):
         f"{t} da live {n}" for n in range(1, 5) for t in ("Fonte", "Cor do texto")
     ]:
         expect(page.get_by_label(rotulo, exact=True)).to_have_count(1)
+    open_tab(page, "lives")
     page.get_by_label("Fonte da live 4", exact=True).focus()
     foco = page.evaluate("(() => { const c = getComputedStyle(document.activeElement); return [c.outlineStyle, c.outlineWidth]; })()")
     assert foco[0] == "solid" and foco[1] != "0px"
@@ -271,7 +311,7 @@ def test_web_apr_05_valor_estranho_vindo_da_rede_e_descartado_na_live(page: Page
 # --------------------------------------------------------------------------------------------- WEB-SAU
 def test_web_sau_01_cartoes_e_diagrama_com_tudo_saudavel(page: Page, api, base_url):
     api.cookies = {"configured": True, "count": 12, "uploaded_at": api.worker_state()["last_heartbeat_at"], "applied": True}
-    entra(page, base_url, api)
+    entra(page, base_url, api, tab="saude")
     expect(page.locator(".hc")).to_have_count(5)
     nomes = page.locator(".hc .hc-name").all_inner_texts()
     assert nomes == ["API", "Banco de dados", "Worker de lives", "Worker de inscritos", "Cookies e autenticação"]
@@ -295,7 +335,7 @@ def test_web_sau_02_worker_degradado_destaca_a_ligacao_com_o_youtube(page: Page,
     api.lives_worker = api.worker_state(
         "degraded", consecutive_failures=3, last_error_code="http_error", last_error_message="O YouTube respondeu com erro"
     )
-    entra(page, base_url, api)
+    entra(page, base_url, api, tab="saude")
     assert estado(page, "lives") == "degradado"
     assert campo(page, "lives", "Falhas seguidas") == "3"
     assert campo(page, "lives", "Mensagem") == "O YouTube respondeu com erro"
@@ -310,7 +350,7 @@ def test_web_sau_03_erro_de_cookies_marca_a_ligacao_em_falha_sem_animacao(page: 
         **api.worker_state("error", last_error_code="login_required", last_error_message="Login perdido no YouTube Studio"),
         "auth_state": "login_required",
     }
-    entra(page, base_url, api)
+    entra(page, base_url, api, tab="saude")
     assert estado(page, "inscritos") == "erro" and estado(page, "auth") == "erro"
     assert "pediu login" in campo(page, "auth", "Mensagem")
     assert link(page, "youtube-inscritos") == "error"
@@ -327,13 +367,13 @@ def test_web_sau_03_erro_de_cookies_marca_a_ligacao_em_falha_sem_animacao(page: 
 
 def test_web_sau_04_db_error_marca_a_ligacao_worker_banco_e_nao_a_do_youtube(page: Page, api, base_url):
     api.lives_worker = api.worker_state("degraded", last_error_code="db_error", last_error_message="Erro ao acessar o banco de dados")
-    entra(page, base_url, api)
+    entra(page, base_url, api, tab="saude")
     assert link(page, "lives-db") == "error" and link(page, "youtube-lives") == "ok"
 
 
 def test_web_sau_05_workers_sem_dados_ficam_sem_dados(page: Page, api, base_url):
     api.lives_worker = {**api.worker_state("starting"), "last_heartbeat_at": None, "last_success_at": None, "interval_seconds": 30}
-    entra(page, base_url, api)
+    entra(page, base_url, api, tab="saude")
     assert estado(page, "lives") == "sem dados"
     assert campo(page, "lives", "Último sucesso") == "—"
     assert link(page, "youtube-lives") == "unknown"
@@ -341,7 +381,7 @@ def test_web_sau_05_workers_sem_dados_ficam_sem_dados(page: Page, api, base_url)
 
 def test_web_sau_06_atualiza_a_cada_10_segundos_com_dados_so_de_health_e_status(page: Page, api, base_url):
     freeze_clock(page)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="saude")
     wait_until(lambda: len(api.requests("GET", "/health")) >= 1, "primeiro /health")
     expect(page.locator(".hc")).to_have_count(5)
     h0 = len(api.requests("GET", "/health"))
@@ -370,7 +410,7 @@ def test_web_sau_06_atualiza_a_cada_10_segundos_com_dados_so_de_health_e_status(
 
 def test_web_sau_07_api_fora_do_ar_mostra_erro_na_api_e_o_diagrama_destaca(page: Page, api, base_url):
     freeze_clock(page)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="saude")
     expect(page.locator(".hc")).to_have_count(5)
     api.override("GET", "/health", error(503, "Serviço indisponível"))
     page.clock.run_for(10000)
@@ -388,7 +428,7 @@ def test_web_sau_08_texto_do_servidor_nunca_vira_html_nem_entra_no_diagrama(page
     api.lives_worker = api.worker_state(
         "degraded", last_error_code="http_error", last_error_message="<img src=x onerror=window.__xss=1><svg onload=window.__xss=2>"
     )
-    entra(page, base_url, api)
+    entra(page, base_url, api, tab="saude")
     assert "<img src=x" in campo(page, "lives", "Mensagem")
     no_html_injected(page)
     tags = set(page.evaluate("[...document.querySelectorAll('#healthDiagram *')].map((e) => e.tagName.toLowerCase())"))
@@ -398,17 +438,17 @@ def test_web_sau_08_texto_do_servidor_nunca_vira_html_nem_entra_no_diagrama(page
 
 def test_web_sau_09_prefers_reduced_motion_desliga_as_animacoes(page: Page, api, base_url):
     page.emulate_media(reduced_motion="reduce")
-    entra(page, base_url, api)
+    entra(page, base_url, api, tab="saude")
     nomes = page.evaluate(
         """() => [getComputedStyle(document.querySelector('[data-link="db-api"] .link-dots')).animationName,
-                   getComputedStyle(document.querySelector('#saveBtn')).animationName]"""
+                   getComputedStyle(document.querySelector('#lookBtn')).animationName]"""
     )
     assert nomes == ["none", "none"]
 
 
 def test_web_sau_10_sessao_expirada_na_saude_volta_ao_login(page: Page, api, base_url):
     freeze_clock(page)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="saude")
     expect(page.locator(".hc")).to_have_count(5)
     api.expire_sessions()
     page.clock.run_for(10000)
@@ -419,21 +459,27 @@ def test_web_sau_10_sessao_expirada_na_saude_volta_ao_login(page: Page, api, bas
 # --------------------------------------------------------------------------------------------- WEB-BTN
 def test_web_btn_01_botoes_em_pilula_com_borda_cromada_animada_so_com_css(page: Page, api, base_url):
     entra(page, base_url, api)
-    for seletor in ("#saveBtn", "#channelBtn", "#lookBtn", "#cookiesBtn", "#logoutBtn", ".ep-copy"):
+    # (aba, seletor): cada botão é medido com a sua aba aberta (D36)
+    botoes = [
+        ("inscritos", "#channelBtn"), ("inscritos", "#lookBtn"), ("inscritos", "#cookiesBtn"), ("inscritos", "#logoutBtn"),
+        ("inscritos", "#epSubs .ep-copy"), ("lives", "#saveBtn1"), ("lives", "#saveBtn4"), ("lives", ".slot-card .ep-copy"),
+        ("saude", "#epHealth .ep-copy"),
+    ]
+    for tab, seletor in botoes:
+        open_tab(page, tab)
         info = page.evaluate(
             """(s) => { const e = document.querySelector(s), c = getComputedStyle(e);
-            return [c.animationName, c.backgroundImage, parseFloat(c.borderTopLeftRadius) >= e.getBoundingClientRect().height / 2 - 1, c.animationIterationCount]; }""",
+            return [c.animationName, c.backgroundImage, parseFloat(c.borderTopLeftRadius) >= e.getBoundingClientRect().height / 2 - 1, c.animationIterationCount, e.getBoundingClientRect().height]; }""",
             seletor,
         )
+        assert info[4] > 0, f"{seletor} não está visível na aba {tab}"
         assert info[0] == "chrome-spin" and info[3] == "infinite", (seletor, info)
         assert "conic-gradient" in info[1], (seletor, info)
         assert info[2], f"{seletor} não é pílula"
     # o ângulo é uma propriedade registrada (@property) animada pelo navegador
-    angulos = {
-        page.evaluate("getComputedStyle(document.querySelector('#saveBtn')).getPropertyValue('--chrome-angle')")
-        for _ in range(1)
-    }
-    assert all(a.strip().endswith("deg") for a in angulos), angulos
+    open_tab(page, "lives")
+    angulo = page.evaluate("getComputedStyle(document.querySelector('#saveBtn1')).getPropertyValue('--chrome-angle')")
+    assert angulo.strip().endswith("deg"), angulo
 
 
 def test_web_btn_02_visual_do_painel_bento(page: Page, api, base_url):
@@ -464,21 +510,30 @@ def caminhos_publicos_do_openapi() -> set[str]:
     return saida
 
 
-def test_web_end_01_secao_endpoints_lista_tudo_que_e_publico_com_url_completa_e_copiar(page: Page, api, base_url):
+def test_web_end_01_abas_listam_juntas_tudo_que_e_publico_com_url_completa_e_copiar(page: Page, api, base_url):
     entra(page, base_url, api)
     esperados = caminhos_publicos_do_openapi()
     assert {"/health", "/contador", "/inscritos.json", "/api/public/subscribers", "/live1.json", "/api/public/lives/4"} <= esperados
-    urls = page.locator("#endpoints .ep-url").all_inner_texts()
+    assert "/overlay/inscritos" not in esperados  # D36: removido do contrato
     base = base_url.rstrip("/")
-    assert all(u.startswith(base + "/") for u in urls)
-    listados = {u[len(base):] for u in urls}
+    todos: list[str] = []
+    for tab in ("inscritos", "lives", "saude"):
+        open_tab(page, tab)
+        urls = page.locator(f"#{tab} .ep-url").all_inner_texts()
+        assert urls, tab
+        assert all(u.startswith(base + "/") for u in urls)
+        expect(page.locator(f"#{tab} .ep-copy")).to_have_count(len(urls))
+        todos += urls
+    assert len(todos) == len(set(todos))  # nenhuma aba repete o endereço de outra
+    listados = {u[len(base):] for u in todos}
     assert esperados <= listados, esperados - listados
     # os overlays de likes (fora do openapi por serem estáticos) continuam na lista
     assert {f"/overlay/live.html?slot={n}" for n in range(1, 5)} <= listados
-    assert len(urls) == len(set(urls))
-    expect(page.locator("#endpoints .ep-copy")).to_have_count(len(urls))
-    assert not any("/api/admin" in u for u in urls)  # nada de admin entre as saídas públicas
-    assert page.get_by_role("heading", name="Endpoints", level=2).count() == 1
+    # a união é EXATAMENTE o conjunto público: o contrato mais os 4 overlays de likes
+    assert listados == esperados | {f"/overlay/live.html?slot={n}" for n in range(1, 5)}
+    assert len(todos) == 16
+    assert not any("/api/admin" in u for u in todos)  # nada de admin entre as saídas públicas
+    assert page.get_by_role("heading", name="Endpoints", exact=True).count() == 0  # a seção global deixou de existir
 
 
 # --------------------------------------------------------------------------------------------- autoteste do detector

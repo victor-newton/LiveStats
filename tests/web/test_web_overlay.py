@@ -1,4 +1,4 @@
-"""WEB-OV-01..06: overlay do contador de inscritos (/contador e /overlay/inscritos)."""
+"""WEB-OV-01..07: overlay do contador de inscritos (/contador; D36 removeu /overlay/inscritos)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from PIL import Image, ImageChops
 from playwright.sync_api import Page, expect
 from web_helpers import Watch, freeze_clock, wait_until
 
-PATHS = ["/contador", "/overlay/inscritos"]
+PATHS = ["/contador"]
 CURVA = "cubic-bezier(0.25, 0.46, 0.45, 0.94)"
 LEGACY = "/__legacy__/contador.html"
 
@@ -412,3 +412,16 @@ def test_web_ov_06b_pagina_servida_e_transparente_e_embutivel(page: Page, api, b
         host.close()
         servidor.shutdown()
         servidor.server_close()
+
+
+def test_web_ov_07_overlay_inscritos_foi_removido_so_o_contador_existe(page: Page, api, base_url):
+    """D36: um só overlay de inscritos. /overlay/inscritos devolve 404 (como qualquer rota inexistente),
+    /contador segue servindo o overlay."""
+    for path in ("/overlay/inscritos", "/overlay/inscritos/"):
+        resp = page.goto(f"{base_url}{path}")
+        assert resp is not None and resp.status == 404, (path, resp and resp.status)
+        assert page.locator(".digito-wrap").count() == 0
+    api.subscribers = leitura("460.600")
+    resp = page.goto(f"{base_url}/contador")
+    assert resp is not None and resp.status == 200
+    expect(page.locator(".digito-wrap")).to_have_count(6)

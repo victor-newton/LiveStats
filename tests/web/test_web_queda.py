@@ -91,11 +91,11 @@ def test_web_queda_01b_queda_que_muda_varios_digitos_760000_para_759999(page: Pa
     assert mesmos_elementos(page)
 
 
-def test_web_queda_01c_caminho_novo_do_overlay_tambem_mostra_o_valor_menor(page: Page, api, base_url):
-    abrir_contador(page, api, base_url, "753.880", "/overlay/inscritos")
+def test_web_queda_01c_arquivo_estatico_do_overlay_tambem_mostra_o_valor_menor(page: Page, api, base_url):
+    abrir_contador(page, api, base_url, "753.880", "/overlay/contador.html")
     api.subscribers = leitura("753.879")
     page.clock.run_for(5000)
-    wait_until(lambda: transforms(page) == esperado("753879"), "/overlay/inscritos: 753.879")
+    wait_until(lambda: transforms(page) == esperado("753879"), "/overlay/contador.html: 753.879")
 
 
 # ---------------------------------------------------------------------------

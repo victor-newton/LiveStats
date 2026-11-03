@@ -216,7 +216,7 @@ def test_sec_16_cors_aberto_so_nos_get_publicos_de_dados(stack):
 
     # demais rotas: NENHUM Access-Control-Allow-*, mesmo com Origin e em preflight
     for port in (8080, 8081):
-        others = ["/health", "/contador", "/overlay/inscritos", "/", "/admin", "/api/admin/session", "/api/admin/slots", "/api/admin/workers/status"]
+        others = ["/health", "/contador", "/overlay/contador.html", "/", "/admin", "/api/admin/session", "/api/admin/slots", "/api/admin/workers/status"]
         for path in others:
             for method in ("GET", "OPTIONS"):
                 r = stack.on_port(port, path, method, {**origin, "Access-Control-Request-Method": "GET"})

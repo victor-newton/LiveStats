@@ -7,12 +7,15 @@ import {
   byId, inputById, buttonById, setVisible, showMessage, clearMessage,
 } from './dom.js';
 import {
-  initSlots, resetSlots, loadSlots, saveSlots, renderEndpoints,
+  initSlots, resetSlots, loadSlots, renderSlotEndpoints, setSlotHooks,
 } from './slots.js';
+import { renderEndpointList, subscribersEndpoints, healthEndpoints, clearEndpointTimers } from './endpoints.js';
+import { initTabs } from './tabs.js';
+import { loadFonts, resetFonts } from './fonts.js';
 import { resetStatus } from './status.js';
 import { saveCookies, resetCookies } from './cookies.js';
 import {
-  initSettings, loadFonts, applySettings, applySlotLooks, resetSettings, saveChannel, saveLooks, wireChannelInput,
+  initSettings, applySettings, resetSettings, saveChannel, saveLooks, wireSettingsInputs,
 } from './settings.js';
 import { startHealth, resetHealth, refreshHealthNow } from './health.js';
 
@@ -69,6 +72,10 @@ function clearSession() {
   resetStatus();
   resetCookies();
   resetSettings();
+  resetFonts();
+  clearEndpointTimers();
+  byId('epSubs').replaceChildren();
+  byId('epHealth').replaceChildren();
   resetHealth();
   notices.data = '';
   notices.status = '';
@@ -118,7 +125,6 @@ async function refreshAll() {
     if (gen !== generation || seq < appliedSeq) return;
     appliedSeq = seq;
     if (handleAuthLoss(slots) || handleAuthLoss(settings)) return;
-    if (slots.ok && slots.data) applySlotLooks(slots.data);
     if (settings.ok && settings.data) applySettings(settings.data);
     if (!slots.ok || !settings.ok) {
       const bad = !slots.ok ? slots : settings;
@@ -144,7 +150,9 @@ function enterPanel(session) {
     ? session.public_base_url.replace(/\/+$/, '')
     : window.location.origin;
   byId('userName').textContent = session.username;
-  renderEndpoints(publicBase);
+  renderSlotEndpoints(publicBase);
+  renderEndpointList(byId('epSubs'), publicBase, subscribersEndpoints());
+  renderEndpointList(byId('epHealth'), publicBase, healthEndpoints());
   clearMessage(byId('loginMsg'));
   showView('panel');
   // A lista de fontes vem primeiro: os dropdowns precisam das opções antes de receber os valores salvos.
@@ -232,9 +240,11 @@ async function onLogout() {
 }
 
 function wire() {
+  initTabs();
   initSlots();
   initSettings();
-  wireChannelInput();
+  wireSettingsInputs();
+  setSlotHooks({ onUnauthorized, reloadAll: () => void refreshAll() });
   byId('channelForm').addEventListener('submit', (ev) => {
     ev.preventDefault();
     void saveChannel({ onUnauthorized });
@@ -242,17 +252,8 @@ function wire() {
   byId('lookBtn').addEventListener('click', () => {
     void saveLooks({ onUnauthorized, reload: () => void refreshAll() });
   });
-  for (const pill of document.querySelectorAll('.nav-pill')) {
-    pill.addEventListener('click', () => {
-      const target = pill instanceof HTMLElement ? pill.dataset.target : undefined;
-      if (target) byId(target).scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }
   byId('loginForm').addEventListener('submit', (ev) => void onLoginSubmit(ev));
   byId('logoutBtn').addEventListener('click', () => void onLogout());
-  byId('saveBtn').addEventListener('click', () => {
-    void saveSlots({ onUnauthorized, reloadAll: () => void refreshAll() });
-  });
   byId('cookiesBtn').addEventListener('click', () => {
     void saveCookies({ onUnauthorized, onSaved: () => { void refreshAll(); refreshHealthNow(); } });
   });

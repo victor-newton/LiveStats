@@ -219,26 +219,26 @@ Chromium e Playwright reais, contra um servidor local (`http://127.0.0.1`, porta
 | WEB-LOGIN-03 | Login ok | painel aparece; `X-CSRF-Token` enviado em `PUT slots`, `POST cookies`, `POST logout` (o dublê rejeita sem ele); o token **não** está em `localStorage`, `sessionStorage`, `document.cookie` nem no DOM | persistir o token |
 | WEB-LOGIN-04 | 401 durante a sessão (expirou) | volta ao login sem recarregar dados antigos; painel limpo | continuar mostrando dados |
 | WEB-LOGIN-05 | Logout | chama `POST /logout` com CSRF e volta ao login | só esconder o painel |
-| WEB-SLOT-01 | Painel carregado | 4 cartões "Slot 1..4", `placeholder` `https://youtube.com/watch?v=...`, valores vindos de `GET /slots`; botão "Salvar URLs" | campos ausentes |
-| WEB-SLOT-02 | Salvar | `PUT /api/admin/slots` com `{slots:[4 strings]}`; aparece "✓ Salvo com sucesso" e some em 2,5 s; 3 s depois recarrega estatísticas (relógio do Playwright) | não enviar / sem feedback |
+| WEB-SLOT-01 | Painel carregado (aba Lives, C13/D36) | 4 cartões "Slot 1..4", `placeholder` `https://youtube.com/watch?v=...`, valores vindos de `GET /slots`; **um botão "Salvar slot N" por cartão** (o botão global "Salvar slots" foi substituído por WEB-TAB-06) | campos ausentes |
+| WEB-SLOT-02 | Salvar (por cartão, C13/D36) | `PUT /api/admin/slots` com os 4 slots (o cartão salvo com o que está na tela, os outros três com o que já estava gravado; rascunhos de outros cartões não vão); aparece "✓ Salvo com sucesso" e some em 2,5 s; 3 s depois recarrega estatísticas (relógio do Playwright) | não enviar / sem feedback |
 | WEB-SLOT-03 | Estados do cartão | ponto de status com classe `ao_vivo`/`encerrada`/`agendada`/sem classe; com `views>0` mostra `views_formatado`/`likes_formatado` e rótulos "Views"/"Likes"; sem dados: "Aguardando dados..." (com URL) ou "Sem dados — insira uma URL" (sem URL); título presente como texto | classes/mensagens trocadas |
 | WEB-SLOT-04 | Atualização periódica | polling a cada 15 s (relógio do Playwright avança 15 s → nova chamada a `GET /slots`) **sem** apagar o texto que o usuário está digitando nos campos | recarregar sobrescrevendo edição |
 | WEB-SLOT-05 | Erro 422 ao salvar (URL inválida) | mensagem de erro visível (texto); nada de "Salvo" | ignorar erro |
-| WEB-SLOT-06 | Lista "Endpoints JSON" | 4 linhas `GET` com `{public_base_url ou origem}/live{n}.json` | lista errada |
+| WEB-SLOT-06 | Endereços do slot (C13/D36; substitui a lista global "Endpoints JSON") | cada cartão tem 3 linhas `GET`: `/live{n}.json`, `/api/public/lives/{n}`, `/overlay/live.html?slot={n}` com `{public_base_url ou origem}`; não existe mais `#epList` nem título "Endpoints" | lista errada |
 | WEB-CK-01 | Painel de cookies: texto de instruções do EditThisCookie, textarea | presentes | — |
 | WEB-CK-02 | Validação no navegador: vazio; JSON malformado; JSON que não é array | mensagens "Cole o JSON dos cookies antes de salvar.", "JSON inválido: …", "JSON inválido: Deve ser um array JSON"; **nenhuma** requisição enviada | enviar mesmo assim |
 | WEB-CK-03 | Envio válido | `POST /api/admin/cookies` com o **array** como corpo e `X-CSRF-Token`; mostra `message` do servidor; limpa o textarea; atualiza o status (sem `location.reload`) | enviar objeto/sem CSRF; manter segredo na tela |
 | WEB-CK-04 | Erros do servidor (400/401/403/422/503) | mensagem do `detail` como texto; em 401 volta ao login | engolir |
 | WEB-CK-05 | Cookies nunca reaparecem | após enviar, nenhum texto do cookie no DOM, `localStorage`, `sessionStorage` | guardar rascunho |
-| WEB-ST-01 | Status | "Inscritos atuais", "Última leitura", badge "✅ N cookies carregados" ou "❌ Nenhum cookie — scraper não autenticado"; estado de cada worker; aviso destacado quando `auth_state=login_required` ("cookies expirados") | campos faltando |
-| WEB-OV-01 | Overlay `/contador` e `/overlay/inscritos`: estrutura | com valor `460600`: container `#contador`, 6 `.digito-wrap`, cada `.digito-inner` com 10 `span`; com `460.600`: 6 dígitos + 1 `.separador`; `,` idem; transform final de cada dígito = `translateY(-<d>em)` | estrutura diferente |
+| WEB-ST-01 | Status (C13: o worker de inscritos e a autenticação ficam na aba Inscritos; o de lives, na aba Lives) | "Inscritos atuais", "Última leitura", badge "✅ N cookies carregados" ou "❌ Nenhum cookie — scraper não autenticado"; estado de cada worker; aviso destacado quando `auth_state=login_required` ("cookies expirados") | campos faltando |
+| WEB-OV-01 | Overlay `/contador`: estrutura (o caminho `/overlay/inscritos` foi **removido** em C13/D36: a parametrização nos dois caminhos foi substituída por `/contador` + WEB-OV-07) | com valor `460600`: container `#contador`, 6 `.digito-wrap`, cada `.digito-inner` com 10 `span`; com `460.600`: 6 dígitos + 1 `.separador`; `,` idem; transform final de cada dígito = `translateY(-<d>em)` | estrutura diferente |
 | WEB-OV-02 | Estilos computados vs. original (`tests/contract/legacy/contador.original.html`) | fundo transparente, `font-size 80px`, `font-weight 700`, cor branca, `letter-spacing -2px`, `drop-shadow(0 2px 8px rgba(0,0,0,.5))`, `.digito-wrap` altura `1em` com `overflow:hidden` | CSS alterado |
 | WEB-OV-03 | Comparação visual: servir o original e o novo com o **mesmo** JSON (`460600`, `460.600`, `1.234.567`), esperar as animações, capturar screenshot com fundo magenta | diferença de pixels = 0 | visual diferente |
 | WEB-OV-04 | Animação: mudança `460600 → 460601` (mesma estrutura) | só o último dígito muda `transform`, com `transition: transform 0.45s cubic-bezier(0.25,0.46,0.45,0.94)`; `99999 → 100000` (estrutura diferente) reconstrói com atrasos de 40 ms por dígito e 0,5 s | recriar sempre ou sem animação |
 | WEB-OV-05 | Polling (relógio do Playwright) | uma requisição a `/api/public/subscribers?t=<ms>` na carga e outra a cada 5000 ms; resposta não-OK e valor igual/vazio são ignorados sem erro; exceção só gera `console.warn` | intervalo ≠ 5000 |
 | WEB-OV-06 | HTML do overlay | sem script/estilo inline; CSS e JS do mesmo domínio em `/overlay/`; `<title>Inscritos</title>`; fundo transparente | inline |
-| WEB-A11Y-01 | Painel e login | campos com `label`/`aria-label`, foco visível, navegação por teclado, `lang="pt-BR"` | — |
-| WEB-RESP-01 | Largura 375 px | sem rolagem horizontal; `slots-grid` em 1 coluna (< 600 px) | layout quebrado |
+| WEB-A11Y-01 | Painel e login (C13: em cada aba; cada cartão aponta para um título; ordem de Tab de um cartão de live: meta, cor da barra, fonte, cor do texto, Salvar) | campos com `label`/`aria-label`, foco visível, navegação por teclado, `lang="pt-BR"` | — |
+| WEB-RESP-01 | Largura 375 px (C13: em cada aba) | sem rolagem horizontal; `slots-grid` em 1 coluna (< 720 px) | layout quebrado |
 
 ---
 
@@ -307,7 +307,7 @@ Pilha completa via `docker compose` (arquivo de teste em `tests/e2e/`) com: segr
 | SEC-13 | Segredos não estão no ambiente | `docker inspect` `Config.Env` de todos sem sentinelas e sem variável `YOUTUBE_API_KEY`/`COOKIE_*KEY` com valor | segredo em env |
 | SEC-14 | Cookies cifrados no disco | após upload de cookies com sentinelas, `grep` em `/data/livestats.db*` (volume) não encontra nome nem valor; ciphertext decifra no `worker-inscritos` | texto puro |
 | SEC-15 | Sessão | o id do cookie não aparece em `/admin-state/admin.db*` (volume `livestats-admin`) nem em `/data/livestats.db*`; em `admin.db` só o SHA-256 | id em claro |
-| SEC-16 | CORS (C6) | **rotas públicas de dados** (`/live1..4.json`, `/inscritos.json`, `/api/public/lives/1`, `/api/public/subscribers`) em 8080 e 8081, com `Origin: https://qualquer.example`: `Access-Control-Allow-Origin: *` e `Access-Control-Allow-Methods: GET`, também nas respostas 404/503; `OPTIONS` (preflight) → 204 com esses dois cabeçalhos; **demais rotas** (`/health`, `/contador`, `/overlay/inscritos`, `/`, `/admin`, `/api/admin/*`) com o mesmo `Origin`: nenhum `Access-Control-Allow-*` | CORS ausente nos públicos, ou presente nas demais |
+| SEC-16 | CORS (C6; C13: `/overlay/inscritos` deixou de existir e saiu da lista, no lugar entrou `/overlay/contador.html`) | **rotas públicas de dados** (`/live1..4.json`, `/inscritos.json`, `/api/public/lives/1`, `/api/public/subscribers`) em 8080 e 8081, com `Origin: https://qualquer.example`: `Access-Control-Allow-Origin: *` e `Access-Control-Allow-Methods: GET`, também nas respostas 404/503; `OPTIONS` (preflight) → 204 com esses dois cabeçalhos; **demais rotas** (`/health`, `/contador`, `/overlay/contador.html`, `/`, `/admin`, `/api/admin/*`) com o mesmo `Origin`: nenhum `Access-Control-Allow-*` | CORS ausente nos públicos, ou presente nas demais |
 | SEC-17 | Cookie de sessão via Nginx | `Set-Cookie` com `__Host-livestats_session`, `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/` (cliente HTTPS simulado ou `localhost`) | atributo ausente |
 | SEC-18 | Permissões dos volumes | arquivos de `/data` sem acesso de "outros", `/data` `2770`; `/admin-state` `0700` dono `10001`; os 3 containers leem/escrevem `/data`; só a api acessa `/admin-state` | 777 ou falha de permissão |
 | SEC-19 | Segredos fora do Git | `git ls-files secrets` lista só `secrets/README.md`; nenhum `.env`; nenhuma ocorrência de `AIza[0-9A-Za-z_-]{35}` ou de ID de canal real no repositório rastreado | arquivo de segredo versionado |
@@ -344,7 +344,7 @@ Pilha completa via `docker compose` (arquivo de teste em `tests/e2e/`) com: segr
 
 ## C10 — Overlay de likes com meta e barra por live (D34)
 
-Acréscimo da C10; nenhuma linha anterior foi alterada. Onde a D34 muda o que uma linha anterior descreve, vale esta seção e a linha anterior é lida assim: **API-DB-01** e **API-SLOT-01..05** passam a usar itens `{url, goal, color}` (a verificação de cada ID é a mesma, só o formato do corpo/da coluna mudou; `slots` ganha as colunas `goal` e `color` e `schema_version` é `2`); **API-PUB-01/06** e **API-LEG-02/06** passam a esperar `goal` e `color` no fim do objeto **novo** (`/api/public/lives/{n}`), enquanto os `/live{n}.json` continuam byte a byte iguais; **WEB-SLOT-02** envia itens `{url, goal, color}`; **WEB-SLOT-06** passa a listar 17 endereços (ver WEB-LIKE-05); **WEB-A11Y-01b** percorre 12 paradas de `Tab` até o botão (meta e cor de cada slot); o botão de salvar chama-se "Salvar slots".
+Acréscimo da C10; nenhuma linha anterior foi alterada. Onde a D34 muda o que uma linha anterior descreve, vale esta seção e a linha anterior é lida assim: **API-DB-01** e **API-SLOT-01..05** passam a usar itens `{url, goal, color}` (a verificação de cada ID é a mesma, só o formato do corpo/da coluna mudou; `slots` ganha as colunas `goal` e `color` e `schema_version` é `2`); **API-PUB-01/06** e **API-LEG-02/06** passam a esperar `goal` e `color` no fim do objeto **novo** (`/api/public/lives/{n}`), enquanto os `/live{n}.json` continuam byte a byte iguais; **WEB-SLOT-02** envia itens `{url, goal, color}`; **WEB-SLOT-06** passa a listar 17 endereços (ver WEB-LIKE-05); **WEB-A11Y-01b** percorre 12 paradas de `Tab` até o botão (meta e cor de cada slot); o botão de salvar chama-se "Salvar slots". (C13/D36 substitui estas leituras: um "Salvar slot N" por cartão e uma lista de endereços por aba; ver a seção C13.)
 
 Decisão de compatibilidade do `PUT /api/admin/slots`: **só o formato novo** (`{slots: [{url, goal, color} × 4]}`, os três campos obrigatórios). A lista de textos antiga devolve 422 (`API-LIKE-04`, `INT-C10-03`); o painel é servido pelo mesmo `web` e foi atualizado junto.
 
@@ -364,10 +364,10 @@ Decisão de compatibilidade do `PUT /api/admin/slots`: **só o formato novo** (`
 | ID | Verifica | Resultado esperado | Falha se (mutação) |
 |---|---|---|---|
 | WEB-LIKE-01 | Campos do cartão | cada slot tem `<input type="number">` (min 1, max 1.000.000.000, "Sem meta") e `<input type="color">` com rótulos "Meta de likes"/"Cor da barra" (nome único por slot para leitor de tela); valores do servidor aparecem nos campos | campo ausente; valor ignorado |
-| WEB-LIKE-02 | Salvar | o `PUT` leva `{url, goal, color}` dos 4 slots (meta vazia = `null`); o painel mostra o valor gravado (cor normalizada); apagar a meta envia `null` | meta/cor fora do corpo |
+| WEB-LIKE-02 | Salvar (por cartão, C13/D36) | cada `PUT` leva `{url, goal, color, font, text_color}` dos 4 slots (o cartão salvo + o gravado nos outros) (meta vazia = `null`); o painel mostra o valor gravado (cor normalizada); apagar a meta envia `null` | meta/cor fora do corpo |
 | WEB-LIKE-03 | Meta inválida | 0, 1.5, > 1e9, negativa não vão ao servidor e o erro cita "Slot N" e "meta de likes"; 422 do servidor em cor/meta mostra "Slot N (cor)"/"(meta de likes)" | enviar valor ruim; erro genérico |
 | WEB-LIKE-04 | Polling do painel | campos de meta/cor em edição não são sobrescritos; os demais seguem o servidor | sobrescrever o que o usuário digita |
-| WEB-LIKE-05 | Endpoints | a lista tem **exatamente** 17 endereços públicos, gerados de `PUBLIC_BASE_URL` (sem barra final) ou da origem atual: `/live{1..4}.json`, `/api/public/lives/{1..4}`, `/inscritos.json`, `/api/public/subscribers`, `/contador`, `/overlay/inscritos`, `/overlay/live.html?slot={1..4}`, `/health`, agrupados (JSON por live, JSON de inscritos, Overlays, Saúde); nenhum `/api/admin` nem `:8081`; cada linha tem rótulo e botão "Copiar" que põe o endereço completo na área de transferência (`navigator.clipboard.writeText`) | endereço faltando/sobrando; endereço de admin; botão copiando outro endereço |
+| WEB-LIKE-05 | Endpoints (C13/D36: era 1 lista de 17 com `/overlay/inscritos`, **substituída** por uma lista por aba) | as três abas listam **exatamente 16** endereços públicos somados, gerados de `PUBLIC_BASE_URL` (sem barra final) ou da origem atual: Inscritos (`/inscritos.json`, `/api/public/subscribers`, `/contador`), Lives (por slot: `/live{n}.json`, `/api/public/lives/{n}`, `/overlay/live.html?slot={n}`), Saúde (`/health`); sem repetidos; nenhum `/api/admin` nem `:8081`; cada linha tem rótulo e botão "Copiar" que põe o endereço completo na área de transferência (`navigator.clipboard.writeText`) | endereço faltando/sobrando; endereço de admin; botão copiando outro endereço |
 | WEB-LIKE-06 | Texto do overlay | `1.000/10.000` (milhar com `.`; mesma estrutura de dígitos do contador); vários tamanhos; cada slot lê a própria live; sem meta só os likes e **sem barra** | formato/separador errado; barra sem meta |
 | WEB-LIKE-07 | Barra | largura `min(likes/meta,1)` (25 %, 0.56 %, 100 % ao passar da meta e na meta), medida no layout; cor do slot por CSSOM (`--cor-barra`) aplicada ao fundo; fina e colada embaixo | largura sem limite; cor ignorada |
 | WEB-LIKE-08 | Animação e polling | mesmos atrasos/curva do contador (50+60 ms por dígito na carga inicial; 0,45 s só nos dígitos que mudam, sem recriar; 40 ms por dígito ao mudar a estrutura); consulta `/api/public/lives/N` a cada 5 s; meta/cor alteradas no painel chegam ao overlay | tempos/curva diferentes do contador |
@@ -422,9 +422,9 @@ Regras anti-burla do topo valem aqui. Testes antigos só foram **atualizados** p
 | WEB-CFG-03 | Canal inválido | barrado no navegador, nenhuma requisição | enviar valor ruim |
 | WEB-CFG-04 | Salvar canal | `PUT /api/admin/settings` só com `channel_id`, com CSRF | enviar mais campos |
 | WEB-CFG-05 | Erro 422 | mensagem como texto, nada injetado | `innerHTML` |
-| WEB-CFG-06 | Salvar aparência | settings + slots; URL, meta e cor dos slots são os **gravados**, não rascunhos do navegador | gravar rascunho |
-| WEB-CFG-07 | Erro ao salvar | mensagem, sem "salvo", sem segundo PUT | dizer salvo com erro |
-| WEB-CFG-08 | "Salvar slots" | não envia `font`/`text_color`: a aparência não é apagada | apagar aparência |
+| WEB-CFG-06 | Salvar aparência (C13/D36) | o cartão do contador grava só `PUT settings` (`subs_font`, `subs_text_color`), sem tocar em slots; o cartão da live (WEB-CFG-06b) grava o `PUT slots` completo com os outros três **gravados**, não rascunhos do navegador | gravar rascunho |
+| WEB-CFG-07 | Erro ao salvar (contador e cartão de live) | mensagem, sem "salvo", sem segundo PUT | dizer salvo com erro |
+| WEB-CFG-08 | Salvar a URL de um cartão (C13/D36; antes: "Salvar slots" sem `font`/`text_color`) | a aparência gravada (fonte e cor do texto) volta no corpo e não é apagada | apagar aparência |
 | WEB-CFG-09 | A11y | nomes únicos ("Fonte da live 3"), foco visível, teclado | controle sem nome |
 | WEB-APR-01..02 | Contador | fonte e cor da api via CSSOM (herdadas pelos dígitos); padrão Roboto/branco mantém o visual original; mudança vale no polling seguinte mesmo sem mudar o número | ignorar a aparência |
 | WEB-APR-03 | Contador, valor malicioso da rede | 7 combinações (CSS injetado, `url()`, aspas, 41 caracteres, cor inválida…): descartado, vale o padrão, `style` vazio | aplicar valor estranho |
@@ -438,7 +438,7 @@ Regras anti-burla do topo valem aqui. Testes antigos só foram **atualizados** p
 | WEB-SAU-10 | Sessão expirada | volta ao login e esvazia a saúde | manter dados |
 | WEB-BTN-01 | Botões | pílula, `conic-gradient` animado por `@property` (`--chrome-angle`, `chrome-spin`), só CSS | borda estática |
 | WEB-BTN-02 | Visual bento | fundo quase preto, cartões com borda 1 px e cantos 16 px, pílulas, uma palavra cinza nos títulos | visual antigo |
-| WEB-END-01 | Endpoints | tudo o que é público no `openapi.yaml` (GET, fora de admin) está na seção com URL completa e botão Copiar, mais os overlays de likes; nada de admin | saída pública faltando |
+| WEB-END-01 | Endpoints (C13/D36: cada aba tem os seus; a seção global saiu) | tudo o que é público no `openapi.yaml` (GET, fora de admin) está nas abas com URL completa e botão Copiar, mais os overlays de likes; a união é exatamente esse conjunto (16); nada de admin; sem título "Endpoints" | saída pública faltando |
 | (existentes) | CSP/terceiros | `WEB-CSP-01`, `WEB-NET-01*`, `WEB-XSS-*` e a varredura estática seguem passando com os arquivos novos (sem `innerHTML`, sem `style=`, sem script inline) | — |
 
 ### integração (`tests/e2e/test_int_c11.py`, pilha real)
@@ -467,7 +467,7 @@ No app antigo, quando os inscritos do canal desciam, o contador ficava parado at
 | ID | Verifica | Resultado esperado | Falha se (mutação) |
 |---|---|---|---|
 | WEB-QUEDA-01 | `/api/public/subscribers` de `753.880` para `753.879` e `753.878` | cada `translateY` corresponde ao número novo, mesmos elementos, transição de 0,45 s; sobe de novo para `753.881` | overlay ignorar valor menor (`if (novo < valorAtual) return`) |
-| WEB-QUEDA-01b..c | Vários dígitos (`760.000` → `759.999`) e o caminho `/overlay/inscritos` | idem | idem |
+| WEB-QUEDA-01b..c | Vários dígitos (`760.000` → `759.999`) e o arquivo estático `/overlay/contador.html` (WEB-QUEDA-01c; **substituído** o caminho `/overlay/inscritos`, removido na D36) | idem | idem |
 | WEB-QUEDA-02 | `1.000` → `999` (menos dígitos e sem separador) | carrossel reconstruído com 3 dígitos, atrasos de 40 ms, `translateY(-9em)` em todos; `999` → `1.000` volta | idem |
 | WEB-QUEDA-03 | Likes `1.000/10.000` → `999/10.000` (`/overlay/live.html?slot=1`) | texto e dígitos novos, 8 dígitos/separadores, barra de `10%` para `9.99%` (medida em pixels); sobe de novo | carrossel de likes ignorar valor menor |
 | WEB-QUEDA-03b | Likes `2.500` → `2.400` com meta | só o dígito que mudou troca o `transform` (0,45 s), barra de `25%` para `24%` | idem |
@@ -481,6 +481,38 @@ No app antigo, quando os inscritos do canal desciam, o contador ficava parado at
 | INT-QUEDA-02 | `1000` → `999` | JSON e overlay passam a 3 dígitos | idem |
 
 ---
+
+## C13 — Painel em abas, um só overlay de inscritos e celular (D36)
+
+Rota removida: `/overlay/inscritos` (404 nas duas portas). IDs antigos afetados e o que os substituiu: `WEB-OV-01` (parametrização nos dois caminhos → só `/contador`; a ausência da rota é `WEB-OV-07`), `WEB-QUEDA-01c` (caminho removido → `/overlay/contador.html`), `WEB-LIKE-05`, `WEB-END-01` e `WEB-SLOT-06` (lista global de 17 endereços, com a rota removida → uma lista por aba, 16 somados; `WEB-TAB-05`), `WEB-SLOT-01/02` e `WEB-CFG-06/08` ("Salvar slots" único → um Salvar por cartão; `WEB-TAB-06`), `SEC-16`, `API-LEG-08` e `INFRA-NG-02/06/08` (a rota saiu das listas de caminhos; `/contador` e `/overlay/contador.html` seguem cobertos; a ausência da rota é `INFRA-NG-15/16`).
+
+### front (`tests/web/test_web_tabs_mobile.py`, `test_web_overlay.py`; Chromium real contra o dublê validado pelo openapi)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| WEB-TAB-01 | Papéis e estado inicial | `tablist` "Seções do painel" com 3 `tab` (Inscritos, Lives, Saúde), cada um com `aria-controls` para um `tabpanel` com `aria-labelledby`; só Inscritos selecionada e visível; `tabindex` 0/-1/-1; sem `#endpoints`/`#epList`/`.nav-pill`; login e logout fora das abas | abas sem ARIA; seção global de endpoints |
+| WEB-TAB-02 | Troca por clique | clicar mostra só o painel da aba, atualiza `aria-selected` e `location.hash` (`#lives`, `#saude`, `#inscritos`); Voltar do navegador volta pelas abas | mostrar tudo; hash ignorado |
+| WEB-TAB-03 | Teclado | setas direita/esquerda (com volta), Home e End trocam e movem o foco; só a aba selecionada fica no Tab; foco visível; outras teclas não mexem | só mouse; foco preso |
+| WEB-TAB-04 | `hash` abre a aba certa | `/#inscritos`, `/#lives`, `/#saude` abertos antes do login mostram a aba certa depois dele; mudar o hash troca a aba; vazio, `#nada`, `#config` e `#__proto__` caem em Inscritos | ignorar o hash; hash arbitrário |
+| WEB-TAB-05 | Cada aba com o SEU conteúdo e endereços | Inscritos: `/inscritos.json`, `/api/public/subscribers`, `/contador`; Lives: por cartão `/live{n}.json`, `/api/public/lives/{n}`, `/overlay/live.html?slot={n}`; Saúde: `/health`; elementos de uma aba não aparecem nas outras; a união são os 16 endereços públicos, sem repetidos e sem nenhum de admin nem `/overlay/inscritos` | endereço na aba errada, faltando ou de admin |
+| WEB-TAB-06 | Salvar por cartão/assunto | Inscritos: canal, aparência e cookies são botões separados (PUT settings `{channel_id}`, PUT settings `{subs_*}`, POST cookies) sem tocar nos slots; Lives: "Salvar slot N" grava só aquele cartão (a meta de outro cartão segue só no navegador) | um botão único; salvar tudo junto |
+| WEB-MOB-01 | Barra de abas no celular (375×812) | `position: fixed`, colada embaixo, largura total, visível em todas as abas e depois de rolar; `padding-bottom` com `env(safe-area-inset-bottom)` no CSS; meta viewport com `width=device-width` e `viewport-fit=cover`; o fim do conteúdo não fica atrás da barra | barra rolando com a página; sem safe-area |
+| WEB-MOB-02 | Coluna única e sem rolagem horizontal | a 375 px, em cada aba, `scrollWidth ≤ clientWidth`, nenhum elemento passa de 375, cartões na mesma borda esquerda, cartões de saúde em 1 coluna, mesmo com URL, domínio e mensagem muito longos | rolagem horizontal |
+| WEB-MOB-03 | Alvos de toque e teclado | todo botão, campo, `select`, `textarea` e aba visível tem ≥ 44×44 px (também no login); `goal` com `inputmode="numeric"`, URL com `inputmode="url"`, canal sem autocapitalizar | alvo pequeno |
+| WEB-MOB-04 | Tipografia | corpo ≥ 14 px; texto corrido (dicas, endereços, rótulos de endereço, valores dos cartões de saúde, workers) ≥ 14 px; nada visível < 12 px; campos com 16 px | texto miúdo |
+| WEB-MOB-05 | Diagrama de saúde empilhado | a 375 px: layout `vertical` (YouTube em cima, os 2 workers lado a lado, depois Banco, API, Web); escala ≥ 0,85, texto ≥ 13,5 px na tela, rótulos cabem nos nós, tudo dentro da janela; 6 nós e 6 ligações com o estado; ao alargar para 1440 vira horizontal (viewBox 920) e voltando fica vertical, sem perder o estado | diagrama miniaturizado; sem redesenho |
+| WEB-MOB-05b | Falha no diagrama vertical | worker de lives com erro marca só `youtube-lives` (vermelha, sem pontos correndo) | estado perdido no layout vertical |
+| WEB-MOB-06 | Desktop 1440×900 | barra de abas comum (não fixa) acima do conteúdo; cartões de Inscritos lado a lado; Lives em 2 colunas; Saúde com diagrama horizontal largo e cartões em ≥ 3 colunas; visual da D35 (fundo `rgb(5,5,6)`, borda 1 px, raio 16 px); sem rolagem horizontal | barra fixa no desktop |
+| WEB-MOB-07 | Aba por clique e teclado no celular | clicar nas 3 abas troca o painel e o hash; setas funcionam na barra de baixo | — |
+| WEB-OV-07 | `/overlay/inscritos` removido (front, dublê) | 404 (com e sem `/` final), nenhum dígito na página; `/contador` segue 200 com o overlay | rota ainda servida |
+
+### infra (`tests/infra/`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| INFRA-NG-15 | Estático: não existe `location = /overlay/inscritos` | nenhuma `location` com `inscritos` além de `= /inscritos.json`; `= /contador` segue mapeada; nenhum arquivo de `web/nginx/**` cita `overlay/inscritos` | rota recolocada |
+| INFRA-NG-16 | Container real (docker): rota removida | `/overlay/inscritos` (também com `?x=1`, `/` final, `INSCRITOS` e `.html`) → 404 nas portas 8080 e 8081, sem o HTML do contador; `/contador` → 200 com o conteúdo de `contador.html` | rota servida; `/contador` quebrado |
+
 
 ## Cobertura cruzada (PLANO §4 → testes)
 

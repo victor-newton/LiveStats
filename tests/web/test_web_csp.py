@@ -158,7 +158,7 @@ def test_web_csp_02_paginas_funcionam_sob_a_csp_do_contrato(page: Page, api, bas
     expect(page.locator("#panelView")).to_be_visible()
 
     # overlay (frame-ancestors * e sem X-Frame-Options)
-    for path in ("/contador", "/overlay/inscritos"):
+    for path in ("/contador",):
         resp = page.goto(f"{base_url}{path}")
         assert resp is not None
         assert parse_csp(resp.headers["content-security-policy"]) == parse_csp(CSP_OVERLAY)

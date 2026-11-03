@@ -1,5 +1,5 @@
 // @ts-check
-// Seção "Saúde" (D35): cartões por componente e diagrama de linhas finas
+// Aba "Saúde" (D35/D36): cartões por componente e diagrama de linhas finas
 // YouTube → workers → banco → api → web. Os dados vêm SÓ de /api/admin/workers/status
 // e /health, a cada 10 s. Nada vindo do servidor vira HTML: só textContent e atributos de dados.
 // As animações (pontos nas ligações saudáveis) são CSS; prefers-reduced-motion as desliga.
@@ -33,19 +33,42 @@ const COMPONENTS = [
   ['auth', 'Cookies e autenticação'],
 ];
 
-/** Nós do diagrama: id, rótulo, centro. */
-const NODES = [
-  ['youtube', 'YouTube', 80, 125],
-  ['lives', 'worker-lives', 320, 60],
-  ['inscritos', 'worker-inscritos', 320, 190],
-  ['db', 'Banco', 540, 125],
-  ['api', 'API', 705, 125],
-  ['web', 'Web', 850, 125],
-];
-const NODE_W = 140;
-const NODE_H = 48;
+/** Rótulos dos nós, na ordem do diagrama. */
+const NODE_LABELS = {
+  youtube: 'YouTube',
+  lives: 'worker-lives',
+  inscritos: 'worker-inscritos',
+  db: 'Banco',
+  api: 'API',
+  web: 'Web',
+};
 
-/** Ligações: id, de, para. O traçado sai da borda direita e entra na esquerda. */
+/**
+ * Dois desenhos do mesmo diagrama: horizontal (telas largas; as ligações saem da borda direita e
+ * entram na esquerda) e vertical (≤ 720 px; empilhado de cima para baixo, em tamanho real, sem
+ * miniaturizar). `centers` = centro de cada nó no viewBox.
+ */
+const LAYOUTS = {
+  horizontal: {
+    viewBox: '0 0 920 250',
+    nodeW: 140,
+    nodeH: 48,
+    centers: {
+      youtube: [80, 125], lives: [320, 60], inscritos: [320, 190], db: [540, 125], api: [705, 125], web: [850, 125],
+    },
+  },
+  vertical: {
+    viewBox: '0 0 300 540',
+    nodeW: 136,
+    nodeH: 48,
+    centers: {
+      youtube: [150, 30], lives: [76, 150], inscritos: [224, 150], db: [150, 270], api: [150, 390], web: [150, 510],
+    },
+  },
+};
+const MOBILE_QUERY = '(max-width: 720px)';
+
+/** Ligações: id, de, para. */
 const LINKS = [
   ['youtube-lives', 'youtube', 'lives'],
   ['youtube-inscritos', 'youtube', 'inscritos'],
@@ -59,7 +82,6 @@ const LINKS = [
 let timer = null;
 let generation = 0;
 let apiFailures = 0;
-let built = false;
 /** @type {HealthHooks | null} */
 let lastHooks = null;
 
@@ -263,21 +285,44 @@ function svg(name, attrs) {
   return /** @type {SVGElement} */ (el);
 }
 
-/** Desenha o diagrama (uma vez): linhas finas + pontos (CSS) + nós. */
+/** @returns {'horizontal' | 'vertical'} */
+function wantedLayout() {
+  return window.matchMedia(MOBILE_QUERY).matches ? 'vertical' : 'horizontal';
+}
+
+/** Layout atualmente desenhado. @type {'horizontal' | 'vertical' | null} */
+let drawn = null;
+/** Últimos dados desenhados (para redesenhar ao trocar de layout). @type {{rows: Record<string, Row>, links: Record<string, Level>} | null} */
+let lastDraw = null;
+
+/** Desenha o diagrama: linhas finas + pontos (CSS) + nós, no layout pedido pela largura da tela. */
 function buildDiagram() {
   const root = byId('healthDiagram');
-  /** @type {Record<string, [number, number]>} */
-  const centers = {};
-  for (const [id, , cx, cy] of NODES) centers[String(id)] = [Number(cx), Number(cy)];
+  const kind = wantedLayout();
+  const layout = LAYOUTS[kind];
+  for (const old of root.querySelectorAll('g.links, g.nodes')) old.remove();
+  root.setAttribute('viewBox', layout.viewBox);
+  root.dataset.layout = kind;
+  const { nodeW, nodeH } = layout;
+  /** @type {Record<string, number[]>} */
+  const centers = layout.centers;
 
   const linkLayer = svg('g', { class: 'links' });
   for (const [id, from, to] of LINKS) {
     const [x1, y1] = centers[from];
     const [x2, y2] = centers[to];
-    const sx = x1 + NODE_W / 2;
-    const ex = x2 - NODE_W / 2;
-    const mid = (sx + ex) / 2;
-    const d = `M ${sx} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${ex} ${y2}`;
+    let d;
+    if (kind === 'horizontal') {
+      const sx = x1 + nodeW / 2;
+      const ex = x2 - nodeW / 2;
+      const mid = (sx + ex) / 2;
+      d = `M ${sx} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${ex} ${y2}`;
+    } else {
+      const sy = y1 + nodeH / 2;
+      const ey = y2 - nodeH / 2;
+      const mid = (sy + ey) / 2;
+      d = `M ${x1} ${sy} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${ey}`;
+    }
     const g = svg('g', { class: 'link', 'data-link': id, 'data-state': 'unknown' });
     g.appendChild(svg('path', { class: 'link-line', d }));
     g.appendChild(svg('path', { class: 'link-dots', d }));
@@ -286,20 +331,26 @@ function buildDiagram() {
   root.appendChild(linkLayer);
 
   const nodeLayer = svg('g', { class: 'nodes' });
-  for (const [id, label, cx, cy] of NODES) {
-    const g = svg('g', { class: 'node', 'data-node': String(id), 'data-state': 'unknown' });
+  for (const [id, label] of Object.entries(NODE_LABELS)) {
+    const [cx, cy] = centers[id];
+    const g = svg('g', { class: 'node', 'data-node': id, 'data-state': 'unknown' });
     g.appendChild(svg('rect', {
-      x: String(Number(cx) - NODE_W / 2), y: String(Number(cy) - NODE_H / 2),
-      width: String(NODE_W), height: String(NODE_H), rx: '14',
+      x: String(cx - nodeW / 2), y: String(cy - nodeH / 2),
+      width: String(nodeW), height: String(nodeH), rx: '14',
     }));
-    const text = svg('text', { x: String(cx), y: String(Number(cy) + 5), 'text-anchor': 'middle' });
-    text.textContent = String(label);
+    const text = svg('text', { x: String(cx), y: String(cy + 5), 'text-anchor': 'middle' });
+    text.textContent = label;
     g.appendChild(text);
     nodeLayer.appendChild(g);
   }
   root.appendChild(nodeLayer);
-  built = true;
+  drawn = kind;
 }
+
+// Girou o celular ou mudou a janela: redesenha no layout certo com os últimos dados.
+window.matchMedia(MOBILE_QUERY).addEventListener('change', () => {
+  if (lastDraw) renderDiagram(lastDraw.rows, lastDraw.links);
+});
 
 /** @param {Record<string, Row>} rows */
 function renderCards(rows) {
@@ -338,7 +389,8 @@ function renderCards(rows) {
  * @param {Record<string, Level>} links
  */
 function renderDiagram(rows, links) {
-  if (!built) buildDiagram();
+  lastDraw = { rows, links };
+  if (drawn !== wantedLayout()) buildDiagram();
   const root = byId('healthDiagram');
   /** @type {Record<string, Level>} */
   const nodes = {
@@ -432,6 +484,7 @@ export function resetHealth() {
   stopHealth();
   generation += 1;
   apiFailures = 0;
+  lastDraw = null;
   byId('healthCards').replaceChildren();
   byId('healthDiagram').querySelectorAll('[data-link], [data-node]').forEach((e) => {
     /** @type {SVGElement} */ (e).dataset.state = 'unknown';

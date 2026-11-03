@@ -1,5 +1,6 @@
 // @ts-check
-// Seção "Inscritos": leitura atual, cookies e estado dos workers.
+// Estado dos workers: aba "Inscritos" (leitura atual, cookies, worker de inscritos e autenticação)
+// e aba "Lives" (worker de lives).
 
 import { api } from './api.js';
 import { byId, setVisible, showMessage, clearMessage } from './dom.js';
@@ -14,9 +15,10 @@ const STATE_LABELS = {
   unknown: 'desconhecido',
 };
 
-const WORKER_NAMES = [
-  ['lives', 'Lives'],
-  ['inscritos', 'Inscritos'],
+/** Worker, nome e lista (uma por aba) onde aparece. */
+const WORKER_LISTS = [
+  ['lives', 'Lives', 'workerListLives'],
+  ['inscritos', 'Inscritos', 'workerList'],
 ];
 
 /**
@@ -42,11 +44,11 @@ function workerDetail(worker) {
 function authMessage(authState) {
   switch (authState) {
     case 'login_required':
-      return 'Atenção: cookies expirados. O YouTube Studio pediu login novamente; cole cookies novos na seção abaixo.';
+      return 'Atenção: cookies expirados. O YouTube Studio pediu login novamente; cole cookies novos no cartão Cookies, abaixo.';
     case 'decrypt_failed':
-      return 'Atenção: o worker não conseguiu decifrar os cookies salvos. Cole os cookies novamente na seção abaixo.';
+      return 'Atenção: o worker não conseguiu decifrar os cookies salvos. Cole os cookies novamente no cartão Cookies, abaixo.';
     case 'no_cookies':
-      return 'Atenção: nenhum cookie foi aplicado ainda; o scraper não está autenticado. Cole os cookies na seção abaixo.';
+      return 'Atenção: nenhum cookie foi aplicado ainda; o scraper não está autenticado. Cole os cookies no cartão Cookies, abaixo.';
     default:
       return '';
   }
@@ -69,9 +71,9 @@ export function renderStatus(ws) {
   badge.className = `status-badge ${loaded ? 'ok' : 'bad'}`;
 
   const workers = ws && ws.workers ? ws.workers : {};
-  const list = byId('workerList');
-  list.replaceChildren();
-  for (const [key, nome] of WORKER_NAMES) {
+  for (const [, , listId] of WORKER_LISTS) byId(listId).replaceChildren();
+  for (const [key, nome, listId] of WORKER_LISTS) {
+    const list = byId(listId);
     const w = workers[key];
     if (!w) continue;
     const li = document.createElement('li');
@@ -113,6 +115,7 @@ export function resetStatus() {
   badge.textContent = '❌ Nenhum cookie — scraper não autenticado';
   badge.className = 'status-badge bad';
   byId('workerList').replaceChildren();
+  byId('workerListLives').replaceChildren();
   clearMessage(byId('authAlert'));
   setVisible(byId('authAlert'), false);
 }

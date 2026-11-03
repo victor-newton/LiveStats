@@ -65,9 +65,16 @@ def freeze_clock(page: Page) -> None:
     page.clock.pause_at(CLOCK_START + timedelta(seconds=1))
 
 
-def do_login(page: Page, base_url: str, api: ApiDouble) -> None:
+def open_tab(page: Page, name: str) -> None:
+    """Abre uma aba do painel (D36: inscritos, lives ou saude) clicando nela, como o usuário."""
+    page.locator(f"#tab-{name}").click()
+    page.locator(f"#{name}").wait_for(state="visible")
+
+
+def do_login(page: Page, base_url: str, api: ApiDouble, tab: str | None = None) -> None:
     """Entra pelo formulário, como o usuário, e espera o painel e a 1ª carga
-    de dados (slots e status) ter sido atendida pelo servidor."""
+    de dados (slots e status) ter sido atendida pelo servidor. `tab` abre uma aba
+    do painel (D36) depois da carga; sem ele fica a aba padrão (Inscritos)."""
     page.goto(f"{base_url}/")
     page.get_by_label("Usuário").fill(api.username)
     page.get_by_label("Senha").fill(api.password)
@@ -78,6 +85,8 @@ def do_login(page: Page, base_url: str, api: ApiDouble) -> None:
             lambda p=path: any(r.status for r in api.requests("GET", p)),
             f"primeira resposta de {path}",
         )
+    if tab is not None:
+        open_tab(page, tab)
 
 
 def fetch_status(page: Page, method: str, path: str, body: object | None = None) -> int:
@@ -127,11 +136,11 @@ def wait_until(
 
 
 # D35: o unico svg legitimo e o diagrama estatico da secao Saude. Ele e identificado pela POSICAO no DOM
-# (o elemento exato: filho direto de .diagram-wrap, filho direto de section#saude, ambos do index.html);
+# (o elemento exato: filho direto de .diagram-wrap, dentro do cartao de section#saude, na aba Saude do index.html (D36));
 # a identidade e comparada por referencia, nunca pelo id. Qualquer outro svg (inclusive outro #healthDiagram,
 # dentro ou fora do conteiner) conta como injecao. O conteudo do diagrama e checado em WEB-SAU-08.
 CONTA_INJETADOS = """() => {
-    const permitido = document.querySelector('section#saude > .diagram-wrap > svg#healthDiagram');
+    const permitido = document.querySelector('#panelView > section#saude > .grid > section.card > .diagram-wrap > svg#healthDiagram');
     const alvo = document.body.querySelectorAll('img, svg, iframe, object, embed, script, style, a');
     return [...alvo].filter((e) => e !== permitido).length;
 }"""

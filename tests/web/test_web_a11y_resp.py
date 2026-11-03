@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from playwright.sync_api import Page, expect
-from web_helpers import do_login
+from web_helpers import do_login, open_tab
 
 SEM_NOME = """() => [...document.querySelectorAll('input, textarea, select, button')]
     .filter((e) => e.offsetParent !== null || e.getClientRects().length)
@@ -48,35 +48,44 @@ def test_web_a11y_01_login_com_rotulos_foco_visivel_e_teclado(page: Page, api, b
 def test_web_a11y_01b_painel_com_rotulos_e_operavel_pelo_teclado(page: Page, api, base_url):
     api.set_stats(1, api.live_stats(1))
     do_login(page, base_url, api)
-    assert page.evaluate(SEM_NOME) == []
+    for tab in ("inscritos", "lives", "saude"):  # D36: todos os campos visíveis de cada aba têm nome
+        open_tab(page, tab)
+        assert page.evaluate(SEM_NOME) == [], tab
+    open_tab(page, "lives")
     for n in range(1, 5):
         assert page.locator(f"label[for='inp{n}']").text_content() == f"Slot {n}"
+    open_tab(page, "inscritos")
     expect(page.get_by_label("JSON de cookies do EditThisCookie")).to_be_visible()
-    # há títulos de seção e regiões com nome
+    # há títulos de seção e regiões com nome: 3 painéis de aba + todos os cartões apontam para um título
     assert page.get_by_role("heading", level=2).count() >= 3
-    # D35: Lives, Saúde, Configurações, Inscritos, Cookies e Endpoints (antes eram 3 seções)
-    assert page.locator("#panelView section[aria-labelledby]").count() == 6
+    assert page.locator("#panelView [role=tabpanel][aria-labelledby]").count() == 3
+    sem_titulo = page.evaluate(
+        """() => [...document.querySelectorAll('#panelView .card')]
+            .filter((c) => { const t = document.getElementById(c.getAttribute('aria-labelledby') || ''); return !t || !t.textContent.trim(); })
+            .map((c) => c.className)"""
+    )
+    assert sem_titulo == []
     # mensagens de status são anunciadas
-    for sel, role in (("#saveMsg", "status"), ("#saveErr", "alert"), ("#cookiesMsg", "status"), ("#authAlert", "alert")):
+    for sel, role in (("#saveMsg1", "status"), ("#saveErr1", "alert"), ("#saveMsg4", "status"), ("#cookiesMsg", "status"), ("#authAlert", "alert")):
         assert page.get_attribute(sel, "role") == role
 
     # preencher o slot 1 e salvar usando só o teclado
+    open_tab(page, "lives")
     page.get_by_label("Slot 1", exact=True).focus()
     foco = page.evaluate(FOCO)
     assert foco["style"] == "solid" and foco["width"] != "0px"
     page.keyboard.type("dQw4w9WgXcQ")
     paradas = []
-    for _ in range(12):  # D34: cada slot ganhou meta e cor (3 paradas por slot)
+    for _ in range(12):  # cada cartão: meta, cor da barra, fonte, cor do texto e Salvar
         page.keyboard.press("Tab")
         paradas.append(page.evaluate("document.activeElement.id"))
-        if paradas[-1] == "saveBtn":
+        if paradas[-1] == "saveBtn1":
             break
-    assert paradas[-1] == "saveBtn", paradas
-    assert paradas[:3] == ["goal1", "color1", "inp2"], paradas  # meta e cor são alcançáveis pelo teclado
+    assert paradas == ["goal1", "color1", "font-1", "textcolor-1", "saveBtn1"], paradas  # tudo alcançável pelo teclado
     foco = page.evaluate(FOCO)
     assert foco["style"] == "solid" and foco["width"] != "0px"
     page.keyboard.press("Enter")
-    expect(page.locator("#saveMsg")).to_be_visible()
+    expect(page.locator("#saveMsg1")).to_be_visible()
     assert api.requests("PUT", "/api/admin/slots")[0].body["slots"][0]["url"] == "dQw4w9WgXcQ"
 
 
@@ -99,22 +108,24 @@ def test_web_resp_01_largura_375_sem_rolagem_horizontal(page: Page, api, base_ur
 
     do_login(page, base_url, api)
     expect(page.locator(".slot-card")).to_have_count(4)
-    assert page.evaluate(sem_rolagem), "painel com rolagem horizontal"
+    for tab in ("inscritos", "lives", "saude"):  # D36: a regra vale para cada aba
+        open_tab(page, tab)
+        assert page.evaluate(sem_rolagem), f"aba {tab} com rolagem horizontal"
+        fora = page.evaluate(
+            """() => [...document.querySelectorAll('#panelView *')]
+                .filter((e) => e.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
+                .map((e) => e.className || e.tagName)"""
+        )
+        assert fora == [], (tab, fora)  # nada ultrapassa a janela
+    open_tab(page, "lives")
     colunas = page.evaluate("getComputedStyle(document.getElementById('slotsGrid')).gridTemplateColumns")
-    assert len(colunas.split()) == 1, colunas  # 1 coluna abaixo de 600 px
+    assert len(colunas.split()) == 1, colunas  # 1 coluna no celular
     cards = page.locator(".slot-card")
     larguras = [cards.nth(i).bounding_box()["width"] for i in range(4)]
     assert all(w <= 375 for w in larguras), larguras
-    # nada ultrapassa a janela
-    fora = page.evaluate(
-        """() => [...document.querySelectorAll('#panelView *')]
-            .filter((e) => e.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
-            .map((e) => e.className || e.tagName)"""
-    )
-    assert fora == []
 
 
 def test_web_resp_01b_largura_larga_usa_duas_colunas(page: Page, api, base_url):
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     colunas = page.evaluate("getComputedStyle(document.getElementById('slotsGrid')).gridTemplateColumns")
     assert len(colunas.split()) == 2, colunas

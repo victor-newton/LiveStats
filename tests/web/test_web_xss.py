@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from api_double import error, json_reply
 from playwright.sync_api import Page, expect
-from web_helpers import Watch, do_login, no_html_injected, wait_until
+from web_helpers import Watch, do_login, no_html_injected, open_tab, wait_until
 
 IMG_PAYLOAD = "<img src=x onerror=alert(1)>"
 
@@ -44,8 +44,8 @@ def test_web_xss_02_outros_payloads_viram_texto(page: Page, api, base_url, watch
     expect(page.locator(".slot-title").nth(1)).to_have_text(svg)
     expect(page.locator("#inp4")).to_have_value(js_url)  # só valor de campo; nunca vira link
     expect(page.locator("#userName")).to_have_text(html_user)
-    expect(page.locator("#epList .ep-url").first).to_have_text(api.public_base_url.rstrip("/") + "/live1.json")
-    expect(page.locator("#workerList")).to_contain_text(svg)
+    expect(page.locator("#lives .slot-card .ep-url").first).to_have_text(api.public_base_url.rstrip("/") + "/live1.json")
+    expect(page.locator("#workerListLives")).to_contain_text(svg)
     assert page.locator("a[href^='javascript']").count() == 0
     no_html_injected(page)
 
@@ -57,8 +57,9 @@ def test_web_xss_02_outros_payloads_viram_texto(page: Page, api, base_url, watch
     no_html_injected(page)
 
     api.override("PUT", "/api/admin/slots", error(400, svg))
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveErr")).to_have_text(svg)
+    open_tab(page, "lives")
+    page.get_by_role("button", name="Salvar slot 1", exact=True).click()
+    expect(page.locator("#saveErr1")).to_have_text(svg)
     no_html_injected(page)
 
     page.wait_for_timeout(300)

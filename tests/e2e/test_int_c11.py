@@ -77,12 +77,16 @@ def test_int_c11_02_fonte_e_cor_do_painel_chegam_aos_overlays_e_ao_json_novo_nao
             ui_login(admin, ADMIN, USERNAME, stack.password)
             admin.locator("#font-subs option").first.wait_for(state="attached", timeout=15000)
             assert admin.locator("#font-subs option").all_inner_texts() == json.loads(stack.api("GET", "/api/admin/fonts")["body"])["fonts"]
+            # D36: a aparencia do contador fica na aba Inscritos; a de cada live, no cartao da live (aba Lives)
             admin.get_by_label("Fonte do contador", exact=True).select_option("Impact")
             admin.get_by_label("Cor do texto do contador", exact=True).fill("#ff8800")
-            admin.get_by_label("Fonte da live 1", exact=True).select_option("Georgia")
-            admin.get_by_label("Cor do texto da live 1", exact=True).fill("#12ab34")
             admin.get_by_role("button", name="Salvar aparência").click()
             admin.locator("#lookOk").wait_for(state="visible", timeout=15000)
+            admin.locator("#tab-lives").click()
+            admin.get_by_label("Fonte da live 1", exact=True).select_option("Georgia")
+            admin.get_by_label("Cor do texto da live 1", exact=True).fill("#12ab34")
+            admin.get_by_role("button", name="Salvar slot 1", exact=True).click()
+            admin.locator("#saveMsg1").wait_for(state="visible", timeout=15000)
 
             subs = wait_until(lambda: (lambda j: j if j.get("font") == "Impact" else None)(stack.public_json("/api/public/subscribers")), timeout=15, interval=0.5)
             assert subs["text_color"] == "#FF8800"
@@ -113,6 +117,7 @@ def test_int_c11_02_fonte_e_cor_do_painel_chegam_aos_overlays_e_ao_json_novo_nao
             )
 
             # mudar no painel muda o overlay aberto, sem recarregar a pagina
+            admin.locator("#tab-inscritos").click()
             admin.get_by_label("Cor do texto do contador", exact=True).fill("#0000ff")
             admin.get_by_role("button", name="Salvar aparência").click()
             admin.locator("#lookOk").wait_for(state="visible", timeout=15000)

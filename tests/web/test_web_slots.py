@@ -1,4 +1,4 @@
-"""WEB-SLOT-01..06: painel de lives (4 slots, estatísticas, salvar, endpoints)."""
+"""WEB-SLOT-01..06: aba Lives (4 cartões autocontidos: estatísticas, salvar por cartão, endpoints do slot)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def n_get_slots(api) -> int:
 
 def test_web_slot_01_quatro_cartoes_com_valores_do_servidor(page: Page, api, base_url):
     api.slots = list(URLS)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
 
     cards = page.locator(".slot-card")
     expect(cards).to_have_count(4)
@@ -28,7 +28,9 @@ def test_web_slot_01_quatro_cartoes_com_valores_do_servidor(page: Page, api, bas
         expect(campo).to_have_attribute("placeholder", "https://youtube.com/watch?v=...")
         expect(campo).to_have_value(URLS[n - 1])
         expect(cards.nth(n - 1).locator(".slot-label")).to_have_text(f"Slot {n}")
-    expect(page.get_by_role("button", name="Salvar slots")).to_be_visible()
+    for n in range(1, 5):  # D36: um botão Salvar por cartão
+        expect(page.get_by_role("button", name=f"Salvar slot {n}", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Salvar slots")).to_have_count(0)
     assert n_get_slots(api) >= 1
 
 
@@ -41,7 +43,7 @@ def test_web_slot_03_estados_do_cartao(page: Page, api, base_url):
         4,
         api.live_stats(4, status="sem_url", ativo="false", video_id="", titulo="", views=0, likes=0),
     )
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     cards = page.locator(".slot-card")
 
     dot = lambda i: cards.nth(i).locator(".slot-status")  # noqa: E731
@@ -70,7 +72,7 @@ def test_web_slot_03_estados_do_cartao(page: Page, api, base_url):
 
 def test_web_slot_03b_sem_estatisticas_ainda(page: Page, api, base_url):
     api.slots = [URLS[0], "", "", ""]  # stats = null em todos (antes do 1º ciclo)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     cards = page.locator(".slot-card")
     expect(cards.nth(0).locator(".slot-stats")).to_have_text("Aguardando dados...")
     for i in (1, 2, 3):
@@ -80,23 +82,31 @@ def test_web_slot_03b_sem_estatisticas_ainda(page: Page, api, base_url):
 
 def test_web_slot_02_salvar_envia_put_mostra_aviso_e_recarrega(page: Page, api, base_url):
     freeze_clock(page)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     for n, url in enumerate(URLS, start=1):
         page.get_by_label(f"Slot {n}", exact=True).fill(f"  {url}  ")
     antes = n_get_slots(api)
 
-    page.get_by_role("button", name="Salvar slots").click()
-    msg = page.locator("#saveMsg")
+    # D36: o Salvar do cartão 1 grava SÓ o cartão 1; os rascunhos dos outros ficam no navegador
+    page.get_by_role("button", name="Salvar slot 1", exact=True).click()
+    msg = page.locator("#saveMsg1")
     expect(msg).to_have_text("✓ Salvo com sucesso")
     expect(msg).to_be_visible()
+    for n in (2, 3, 4):
+        expect(page.locator(f"#saveMsg{n}")).to_be_hidden()
 
     puts = api.requests("PUT", "/api/admin/slots")
     assert len(puts) == 1
-    # D34: cada slot vai como {url, goal, color}; sem mexer em meta e cor: meta nula e cor padrão
-    assert puts[0].body == {"slots": [{"url": f"  {u}  ", "goal": None, "color": "#ff0033"} for u in URLS]}
+    # cada slot vai como {url, goal, color, font, text_color}; o cartão 1 com o que está na tela,
+    # os outros três com o que já estava gravado
+    padrao = {"url": "", "goal": None, "color": "#FF0033", "font": "Roboto", "text_color": "#FFFFFF"}
+    assert puts[0].body == {
+        "slots": [{"url": f"  {URLS[0]}  ", "goal": None, "color": "#ff0033", "font": "Roboto", "text_color": "#ffffff"}, padrao, padrao, padrao]
+    }
     assert puts[0].status == 200
-    assert api.slots == URLS  # o servidor aparou os espaços
+    assert api.slots == [URLS[0], "", "", ""]  # o servidor aparou os espaços; os outros não foram gravados
     expect(page.get_by_label("Slot 1", exact=True)).to_have_value(URLS[0])  # campo reflete o salvo
+    expect(page.get_by_label("Slot 2", exact=True)).to_have_value(f"  {URLS[1]}  ")  # rascunho intacto
 
     # some em 2,5 s (relógio do Playwright)
     page.clock.run_for(2499)
@@ -115,12 +125,18 @@ def test_web_slot_02_salvar_envia_put_mostra_aviso_e_recarrega(page: Page, api, 
     expect(page.locator(".slot-title").first).to_have_text("Recarregado após salvar")
     expect(page.locator(".stat-val").first).to_have_text("4.3K")
 
+    # salvando os outros três, um a um, o servidor termina com as quatro URLs
+    for n in (2, 3, 4):
+        page.get_by_role("button", name=f"Salvar slot {n}", exact=True).click()
+        expect(page.locator(f"#saveMsg{n}")).to_be_visible()
+    assert api.slots == URLS
+
 
 def test_web_slot_04_polling_de_15s_preserva_o_que_o_usuario_digita(page: Page, api, base_url):
     api.slots = [URLS[0], "", "", ""]
     api.set_stats(1, api.live_stats(1, titulo="Antes"))
     freeze_clock(page)
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     base = n_get_slots(api)
     status_base = len(api.requests("GET", "/api/admin/workers/status"))
 
@@ -147,43 +163,47 @@ def test_web_slot_04_polling_de_15s_preserva_o_que_o_usuario_digita(page: Page, 
 
 
 def test_web_slot_05_erro_422_ao_salvar_mostra_mensagem_e_nao_diz_salvo(page: Page, api, base_url):
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     page.get_by_label("Slot 3", exact=True).fill("https://example.com/isto-nao-e-youtube")
-    page.get_by_role("button", name="Salvar slots").click()
+    page.get_by_role("button", name="Salvar slot 3", exact=True).click()
 
-    erro = page.locator("#saveErr")
+    erro = page.locator("#saveErr3")
     expect(erro).to_be_visible()
     expect(erro).to_contain_text("Slot 3")
     expect(erro).to_contain_text("inválido")
-    expect(page.locator("#saveMsg")).to_be_hidden()
-    assert "Salvo" not in page.locator(".actions").inner_text()
+    expect(page.locator("#saveMsg3")).to_be_hidden()
+    assert "Salvo" not in page.locator(".slot-card").nth(2).locator(".form-actions").inner_text()
     assert api.requests("PUT", "/api/admin/slots")[0].status == 422
     assert api.slots == ["", "", "", ""]  # nada gravado
 
     # corrigindo e salvando de novo: o erro some e o aviso de sucesso aparece
     page.get_by_label("Slot 3", exact=True).fill(URLS[2])
-    page.get_by_role("button", name="Salvar slots").click()
-    expect(page.locator("#saveMsg")).to_be_visible()
+    page.get_by_role("button", name="Salvar slot 3", exact=True).click()
+    expect(page.locator("#saveMsg3")).to_be_visible()
     expect(erro).to_be_hidden()
 
 
 def test_web_slot_06_lista_endpoints_com_base_publica(page: Page, api, base_url):
     api.public_base_url = "https://live.exemplo.com.br/"
-    do_login(page, base_url, api)
-    # a lista completa (17 endereços, agrupados e com "Copiar") é verificada em WEB-LIKE-05
-    rows = page.locator("#epList .ep")
-    expect(rows).to_have_count(17)
+    do_login(page, base_url, api, tab="lives")
+    # D36: cada cartão lista os 3 endereços DO PRÓPRIO slot (a lista completa por aba é verificada em WEB-LIKE-05/WEB-TAB-04)
     for n in range(1, 5):
-        expect(rows.nth(n - 1).locator(".ep-badge")).to_have_text("GET")
-        expect(rows.nth(n - 1).locator(".ep-url")).to_have_text(f"https://live.exemplo.com.br/live{n}.json")
-    expect(page.get_by_role("heading", name="Endpoints", exact=True)).to_be_visible()
+        rows = page.locator(".slot-card").nth(n - 1).locator(".ep")
+        expect(rows).to_have_count(3)
+        for i in range(3):
+            expect(rows.nth(i).locator(".ep-badge")).to_have_text("GET")
+        expect(rows.nth(0).locator(".ep-url")).to_have_text(f"https://live.exemplo.com.br/live{n}.json")
+        expect(rows.nth(1).locator(".ep-url")).to_have_text(f"https://live.exemplo.com.br/api/public/lives/{n}")
+        expect(rows.nth(2).locator(".ep-url")).to_have_text(f"https://live.exemplo.com.br/overlay/live.html?slot={n}")
+    expect(page.locator("#epList")).to_have_count(0)  # a seção global "Endpoints" deixou de existir
+    expect(page.get_by_role("heading", name="Endpoints", exact=True)).to_have_count(0)
 
 
 def test_web_slot_06b_sem_base_publica_usa_a_origem_da_pagina(page: Page, api, base_url):
     api.public_base_url = None
-    do_login(page, base_url, api)
+    do_login(page, base_url, api, tab="lives")
     origem = page.evaluate("window.location.origin")
-    rows = page.locator("#epList .ep")
-    expect(rows).to_have_count(17)
     for n in range(1, 5):
-        expect(rows.nth(n - 1).locator(".ep-url")).to_have_text(f"{origem}/live{n}.json")
+        rows = page.locator(".slot-card").nth(n - 1).locator(".ep")
+        expect(rows).to_have_count(3)
+        expect(rows.nth(0).locator(".ep-url")).to_have_text(f"{origem}/live{n}.json")
