@@ -103,7 +103,7 @@ def test_api_set_01_migracao_v2_para_v3_preserva_dados_e_e_idempotente(tmp_path)
         (3, "https://youtu.be/9bZkp7q19f0", "2026-11-02T10:00:00Z", None, "#123456", "Roboto", "#FFFFFF"),
         (4, "", None, None, "#FF0033", "Roboto", "#FFFFFF"),
     ]
-    assert version == [("3",)]
+    assert version == [("4",)]
     assert cols == ["slot", "url", "updated_at", "goal", "color", "font", "text_color"]
     assert settings_cols == ["key", "value"] and n_settings == 0
     assert snapshots[1] == snapshots[0] and snapshots[2] == snapshots[0]

@@ -76,7 +76,7 @@ def test_infra_cfg_04_secrets(compose):
     assert owners == {
         "youtube_api_key": {"worker-lives"},
         "cookie_private_key": {"worker-inscritos"},
-        "cookie_public_key": {"api"},
+        "cookie_public_key": {"api", "worker-inscritos"},  # D37 (C14): o worker cifra a sessao renovada
         "admin_password_hash": {"api"},
         "admin_tls_cert": {"web"},  # D33: TLS proprio da 8081, so no web
         "admin_tls_key": {"web"},
@@ -198,3 +198,19 @@ def test_infra_cfg_14_segredos_tls_do_admin_so_no_web(compose, compose_text):
         assert (svc == "web") == ({"admin_tls_cert", "admin_tls_key"} <= mounted), svc
         assert svc == "web" or not {s for s in mounted if s.startswith("admin_tls")}
     assert not re.search(r"BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)", compose_text)
+
+
+def test_infra_cfg_15_chaves_dos_cookies_d37(compose):
+    """D37 (C14): a publica vai a api e ao worker-inscritos (que so cifra a renovacao); a privada continua so no worker."""
+    svcs = compose["services"]
+    mounted = {s: set(d.get("secrets") or []) for s, d in svcs.items()}
+    assert mounted["worker-inscritos"] >= {"cookie_private_key", "cookie_public_key"}
+    assert "cookie_private_key" not in mounted["api"] | mounted["web"] | mounted["worker-lives"]
+    assert "cookie_public_key" in mounted["api"]
+    assert not {"cookie_private_key", "cookie_public_key"} & mounted["worker-lives"]
+    assert not {"cookie_private_key", "cookie_public_key"} & mounted["web"]
+    env = env_of(svcs["worker-inscritos"])
+    assert env["COOKIE_PUBLIC_KEY_FILE"] == "/run/secrets/cookie_public_key"
+    assert env["COOKIE_PRIVATE_KEY_FILE"] == "/run/secrets/cookie_private_key"
+    assert "COOKIE_PUBLIC_KEY_FILE" not in env_of(svcs["worker-lives"])
+    assert "COOKIE_PRIVATE_KEY_FILE" not in env_of(svcs["api"])

@@ -49,6 +49,7 @@ SHARED_COLUMNS = {
     "cookie_sets": [
         ("id", "INTEGER", 0, 1), ("ciphertext", "BLOB", 1, 0), ("key_id", "TEXT", 1, 0), ("cookie_count", "INTEGER", 1, 0),
         ("uploaded_by", "TEXT", 1, 0), ("created_at", "TEXT", 1, 0),
+        ("source", "TEXT", 1, 0), ("renewed_from", "INTEGER", 0, 0),  # v4 (D37)
     ],
     "worker_status": [
         ("worker", "TEXT", 0, 1), ("state", "TEXT", 1, 0), ("last_heartbeat_at", "INTEGER", 1, 0),

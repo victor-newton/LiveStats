@@ -120,7 +120,7 @@ def test_api_like_02_migracao_v1_para_v2_preserva_dados_e_e_idempotente(tmp_path
         (3, "https://youtu.be/9bZkp7q19f0", "2026-11-02T10:00:00Z", None, DEFAULT_COLOR),
         (4, "", None, None, DEFAULT_COLOR),
     ]
-    assert version == [("3",)]
+    assert version == [("4",)]
     assert [c[0] for c in cols] == ["slot", "url", "updated_at", "goal", "color", "font", "text_color"]
     assert snapshots[1] == snapshots[0] and snapshots[2] == snapshots[0]
 

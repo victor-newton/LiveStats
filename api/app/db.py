@@ -115,7 +115,7 @@ _SLOTS_ADDED_COLUMNS = (
 )
 _COOKIE_SETS_ADDED_COLUMNS = (  # versao 4 (D37)
     ("source", "TEXT NOT NULL DEFAULT 'admin' CHECK (source IN ('admin', 'worker'))"),
-    ("renewed_from", "INTEGER"),
+    ("renewed_from", "INTEGER CHECK (renewed_from IS NULL OR renewed_from >= 1)"),
 )
 SCHEMA_VERSION = "4"
 

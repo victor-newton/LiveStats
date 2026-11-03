@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS cookie_sets (
     created_at   TEXT    NOT NULL
         CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z'),
     source       TEXT    NOT NULL DEFAULT 'admin' CHECK (source IN ('admin', 'worker')),
-    renewed_from INTEGER
+    renewed_from INTEGER CHECK (renewed_from IS NULL OR renewed_from >= 1)
 ) STRICT;
 
 ------------------------------------------------------------------------
