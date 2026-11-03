@@ -998,13 +998,16 @@ components:
             inscritos: { $ref: "#/components/schemas/WorkerStateInscritos" }
         cookies:
           type: object
-          required: [configured, count, uploaded_at, applied]
+          required: [configured, count, uploaded_at, applied, source, created_at, renewed_from]
           additionalProperties: false
           properties:
             configured: { type: boolean, description: Há conjunto de cookies cifrado (equivale ao antigo cookies_file_exists) }
             count: { type: integer, minimum: 0, description: Quantidade (equivale a "N cookies carregados") }
             uploaded_at: { type: [string, "null"], format: date-time }
             applied: { type: boolean, description: O worker-inscritos já aplicou este conjunto }
+            source: { type: [string, "null"], enum: [admin, worker, null], description: "Origem do conjunto atual (D37): admin = colado no painel; worker = renovado automaticamente. Nunca traz valor de cookie." }
+            created_at: { type: [string, "null"], format: date-time, description: Quando o conjunto atual foi gravado (igual a uploaded_at) }
+            renewed_from: { type: [integer, "null"], description: "Id do conjunto que o worker renovou (só source=worker)" }
         subscribers:
           oneOf:
             - { $ref: "#/components/schemas/Subscribers" }

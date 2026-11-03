@@ -247,7 +247,14 @@ class E2EStack:
     def fake_write(self) -> None:
         tmp = self.state_dir / "state.json.tmp"
         tmp.write_text(json.dumps(self.fake_state), encoding="utf-8")
-        os.replace(tmp, self.state_dir / "state.json")
+        for attempt in range(20):  # no Windows o rename falha se o YouTube falso estiver lendo o arquivo naquele instante
+            try:
+                os.replace(tmp, self.state_dir / "state.json")
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.1)
 
     def fake_set(self, **changes) -> None:
         self.fake_state.update(changes)

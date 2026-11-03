@@ -29,6 +29,7 @@ STATE = "/state/state.json"
 RECORDED = "/fake/videos_recorded.json"
 NAME = sys.argv[1] if len(sys.argv) > 1 else "fake"
 LOG = f"/state/{NAME}-requests.jsonl"
+ROTATED_FLAG = f"/state/{NAME}-rotated"  # D37: a rotacao do cookie de sessao sobrevive a reinicio do falso
 TEMPLATE_INDEX = {"live": 0, "upcoming": 1, "none": 2}
 
 
@@ -124,6 +125,30 @@ class Handler(BaseHTTPRequestHandler):
         ok = wanted["name"] in jar and jar[wanted["name"]].value == wanted["value"]
         return ok, names
 
+    def _rotation_ok(self, state: dict) -> bool:
+        """Chamada da propria pagina: o valor novo vale; o antigo vale ate ser gasto na abertura do Studio."""
+        rot = state["rotate"]
+        jar = SimpleCookie()
+        jar.load(self.headers.get("Cookie", ""))
+        value = jar[rot["name"]].value if rot["name"] in jar else None
+        return value == rot["new"] or (value == rot["old"] and not os.path.exists(ROTATED_FLAG))
+
+    def _rotation(self, state: dict) -> tuple[bool, list[str], dict]:
+        """D37: como o Google, rotaciona o cookie de sessao. O valor `old` vale UMA vez (a resposta traz `Set-Cookie`
+        com o `new`); depois so o `new` vale. Devolve (valido, nomes, cabecalhos extras da resposta)."""
+        rot = state["rotate"]
+        jar = SimpleCookie()
+        jar.load(self.headers.get("Cookie", ""))
+        names = sorted(jar.keys())
+        value = jar[rot["name"]].value if rot["name"] in jar else None
+        if value == rot["new"]:
+            return True, names, {}
+        if value == rot["old"] and not os.path.exists(ROTATED_FLAG):
+            with open(ROTATED_FLAG, "w", encoding="utf-8") as handle:
+                handle.write("1")
+            return True, names, {"Set-Cookie": f"{rot['name']}={rot['new']}; Path=/"}
+        return False, names, {}
+
     # ------------------------------------------------------------------ rotas
     def do_GET(self) -> None:  # noqa: N802
         parts = urlsplit(self.path)
@@ -131,15 +156,19 @@ class Handler(BaseHTTPRequestHandler):
         if parts.path == "/youtube/v3/videos":
             return self._videos(parts, state)
         if parts.path.startswith("/channel/"):
-            ok, names = self._cookie_valid(state)
+            extra: dict = {}
+            if state.get("rotate"):
+                ok, names, extra = self._rotation(state)
+            else:
+                ok, names = self._cookie_valid(state)
             # o cabecalho Cookie cru fica so no log do teste (diretorio do host), para provar o que o Chromium enviou
             self._record(kind="studio", cookie_ok=ok, cookie_names=names, cookie_header=self.headers.get("Cookie", ""))
             if ok and state.get("login_ok", True):
                 page = PAGE.replace("__COUNTER__", digits_html(state["subscribers"]))
-                return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+                return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8", extra)
             return self._send(302, b"", "text/plain", {"Location": "/signin?continue=studio"})
         if parts.path == "/__counter":
-            ok, _ = self._cookie_valid(state)
+            ok = self._rotation_ok(state) if state.get("rotate") else self._cookie_valid(state)[0]
             return self._json(200, {"ok": bool(ok and state.get("login_ok", True)), "value": state["subscribers"]})
         if parts.path == "/signin":
             self._record(kind="signin")

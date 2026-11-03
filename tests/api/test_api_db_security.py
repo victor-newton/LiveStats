@@ -49,6 +49,7 @@ SHARED_COLUMNS = {
     "cookie_sets": [
         ("id", "INTEGER", 0, 1), ("ciphertext", "BLOB", 1, 0), ("key_id", "TEXT", 1, 0), ("cookie_count", "INTEGER", 1, 0),
         ("uploaded_by", "TEXT", 1, 0), ("created_at", "TEXT", 1, 0),
+        ("source", "TEXT", 1, 0), ("renewed_from", "INTEGER", 0, 0),  # v4 (D37)
     ],
     "worker_status": [
         ("worker", "TEXT", 0, 1), ("state", "TEXT", 1, 0), ("last_heartbeat_at", "INTEGER", 1, 0),
@@ -503,7 +504,10 @@ def test_api_adm_01_workers_status_sem_dados(stack: Stack):
         assert worker["consecutive_failures"] == 0
     assert body["workers"]["inscritos"]["auth_state"] == "unknown"
     assert "auth_state" not in body["workers"]["lives"]
-    assert body["cookies"] == {"configured": False, "count": 0, "uploaded_at": None, "applied": False}
+    assert body["cookies"] == {
+        "configured": False, "count": 0, "uploaded_at": None, "applied": False,
+        "source": None, "created_at": None, "renewed_from": None,
+    }
     assert body["subscribers"] is None
     assert body["server_time"] == "2027-01-15T08:00:00Z"
 

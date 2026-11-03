@@ -9,7 +9,7 @@ import sys
 import threading
 
 from . import __version__
-from .config import ConfigError, load_config, ler_chave_privada
+from .config import ConfigError, ler_chave_privada, ler_chave_publica, load_config
 from .store import wait_for_schema
 from .worker import criar_worker
 
@@ -26,6 +26,7 @@ def main() -> int:
     try:
         config = load_config()
         private_key = ler_chave_privada(config.private_key_file)
+        public_key = ler_chave_publica(config.public_key_file, private_key)
     except ConfigError as exc:
         log.error("Erro de configuracao: %s", exc)
         return 2
@@ -38,7 +39,7 @@ def main() -> int:
     if not wait_for_schema(config.db_path, stop):
         return 0
 
-    worker = criar_worker(config, private_key, stop=stop)
+    worker = criar_worker(config, private_key, public_key, stop=stop)
     try:
         worker.run()
     finally:

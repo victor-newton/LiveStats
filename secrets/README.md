@@ -9,8 +9,8 @@ Os segredos são arquivos de texto nesta pasta. Eles são montados pelo Docker C
 | Arquivo | Container | Conteúdo |
 |---|---|---|
 | `youtube_api_key.txt` | `worker-lives` | Chave da YouTube Data API v3, criada no Google Cloud e restrita à API |
-| `cookie_private_key.txt` | `worker-inscritos` | Chave privada do par de cookies (Curve25519, 32 bytes em base64) |
-| `cookie_public_key.txt` | `api` | Chave pública do mesmo par (32 bytes em base64). A `api` só cifra, nunca decifra |
+| `cookie_private_key.txt` | `worker-inscritos` (somente) | Chave privada do par de cookies (Curve25519, 32 bytes em base64) |
+| `cookie_public_key.txt` | `api` e `worker-inscritos` | Chave pública do mesmo par (32 bytes em base64). A `api` só cifra, nunca decifra; o `worker-inscritos` (D37) a usa só para cifrar a sessão renovada do Studio (já tem a privada, então não ganha nenhum poder novo) |
 | `admin_password_hash.txt` | `api` | Hash argon2id (formato PHC) da senha do admin. A senha em si não é guardada |
 | `admin_tls_cert.pem` | `web` | Certificado TLS autoassinado da porta 8081 (admin, D33), com o IP no SAN |
 | `admin_tls_key.pem` | `web` | Chave privada do certificado acima |

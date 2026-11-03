@@ -13,20 +13,31 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
-from nacl.public import PrivateKey
+from nacl.public import PrivateKey, PublicKey
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import __version__
 from .browser import BrowserSession, Timings, is_login_url
 from .config import CHANNEL_ID_RE, Config
-from .cookies import CookieDecryptError, decifrar_cookies, key_id
+from .cookies import (
+    CookieDecryptError,
+    cifrar_cookies,
+    decifrar_cookies,
+    filtrar_sessao,
+    impressao,
+    key_id,
+)
 from .numero import filtrar_numero, valor_aceito
 from .store import StatusRow, Store, connect, iso_utc
 
 log = logging.getLogger("worker_inscritos")
 
+RENEW_MIN_INTERVAL = 600  # D37: no minimo 10 min entre renovacoes gravadas
+MAX_COOKIES = 200  # cookie_sets.cookie_count BETWEEN 1 AND 200
 MAX_FALHAS = 30  # leituras ruins seguidas ate recarregar a pagina (igual ao original)
 
 # Mensagens constantes (<= 200 caracteres, sem dados variaveis).
@@ -49,6 +60,7 @@ class Worker:
         self,
         config: Config,
         private_key: PrivateKey,
+        public_key: PublicKey,
         store: Store,
         session: BrowserSession,
         clock: Callable[[], float] = time.time,
@@ -56,6 +68,7 @@ class Worker:
     ):
         self.config = config
         self.private_key = private_key
+        self.public_key = public_key
         self.store = store
         self.session = session
         self.clock = clock
@@ -64,6 +77,13 @@ class Worker:
         self.channel_id = config.channel_id  # canal em uso (D35: o do banco vence o do ambiente)
         self.applied_id: int | None = None  # cookie_sets.id aplicado no navegador
         self.failed_id: int | None = None  # cookie_sets.id que nao pode ser decifrado
+        self.applied_hash: str | None = None  # D37: hash (so em memoria) do conjunto aplicado/renovado
+        self.last_renewal_at: float | None = None  # D37: instante da ultima renovacao gravada
+        self.studio_stale = False  # D37: canal trocado; reabrir o Studio sem mexer nos cookies
+        # Hosts-base configurados (D19) tambem contam como dominio da sessao; em producao ja sao do youtube.com.
+        self.hosts_sessao = tuple(
+            h for h in (urlsplit(config.www_base_url).hostname, urlsplit(config.studio_base_url).hostname) if h
+        )
         self.falhas = 0  # leituras ruins desde o ultimo sucesso/recarga (dispara a recarga)
         self.consecutive_failures = 0  # idem, mas so zera no sucesso (vai ao worker_status)
         self.last_value: str | None = None
@@ -146,6 +166,9 @@ class Worker:
             self.publish()
             return False
         self.applied_id = set_id
+        self.applied_hash = impressao(filtrar_sessao(cookies, self.hosts_sessao))
+        self.last_renewal_at = _epoch(row.created_at) if row.source == "worker" else None
+        self.studio_stale = False
         self.falhas = 0
         return True
 
@@ -158,8 +181,29 @@ class Worker:
     def _reload(self) -> None:
         log.info("[RELOAD] %d falhas - recarregando...", self.falhas)
         if self.applied_id is not None:
-            self._apply_cookie_set(self.applied_id)
+            self._reopen_studio(self.applied_id)
         self.falhas = 0  # como no original, zera mesmo se a recarga falhar
+
+    def _reopen_studio(self, set_id: int) -> None:
+        """D37: reabre o Studio mantendo os cookies VIVOS do contexto (nunca reinjeta o conjunto colado).
+
+        So se o navegador caiu (contexto vazio) o conjunto mais recente do banco, que ja inclui as renovacoes,
+        e injetado de novo.
+        """
+        self.publish()  # heartbeat antes da carga, que pode levar dezenas de segundos
+        try:
+            if self.session.reload_studio():
+                self.studio_stale = False
+                return
+        except PlaywrightError as exc:
+            log.error("[AUTH] erro ao recarregar a pagina (%s)", type(exc).__name__)
+            self.consecutive_failures += 1
+            self._set("degraded", *(("network_error", MSG_NETWORK) if _is_network_error(exc) else ("browser_error", MSG_BROWSER)))
+            self.publish()
+            return
+        log.warning("[BROWSER] contexto recriado - reinjetando os cookies do banco")
+        latest = self.store.latest_cookie_set_id()
+        self._apply_cookie_set(latest if latest is not None else set_id)
 
     # ------------------------------------------------------------------ um ciclo
     def step(self) -> None:
@@ -180,7 +224,7 @@ class Worker:
             log.info("[CANAL] canal alterado no painel - recarregando o Studio...")
             self.channel_id = canal
             self.session.studio_url = self.config.studio_url_for(canal)
-            self.applied_id = None  # forca a recarga (cookies reinjetados e Studio do canal novo)
+            self.studio_stale = True  # D37: reabre o Studio do canal novo SEM limpar/reinjetar cookies
 
     def _step(self) -> None:
         self._sync_channel()
@@ -199,6 +243,11 @@ class Worker:
         if set_id != self.applied_id:
             log.info("[COOKIES] conjunto novo - recarregando pagina...")
             if not self._apply_cookie_set(set_id):
+                return
+
+        if self.studio_stale and self.applied_id is not None:
+            self._reopen_studio(self.applied_id)
+            if self.studio_stale or self.applied_id != set_id:  # falhou ou reinjetou outro conjunto: proximo ciclo
                 return
 
         self._read_and_store()
@@ -258,6 +307,45 @@ class Worker:
         if valor != self.last_value:
             log.info("[MUDANCA] %s -> %s", self.last_value, valor)
             self.last_value = valor
+        self._maybe_renew()
+
+    # ------------------------------------------------------------------ renovacao da sessao (D37)
+    def _maybe_renew(self) -> None:
+        """Depois de uma leitura VALIDA: se a sessao do Chromium mudou, grava a versao renovada (cifrada).
+
+        Nunca chamada de pagina de login ou "sem permissao" (so `_read_and_store` apos valor aceito chega aqui).
+        Falhas aqui nao invalidam a leitura ja gravada.
+        """
+        if self.applied_id is None or self.applied_hash is None:
+            return
+        agora = self.clock()
+        if self.last_renewal_at is not None and agora - self.last_renewal_at < RENEW_MIN_INTERVAL:
+            return
+        try:
+            atuais = self.session.export_cookies(self.hosts_sessao)
+        except PlaywrightError as exc:
+            log.warning("[COOKIES] nao foi possivel exportar a sessao (%s)", type(exc).__name__)
+            return
+        if not atuais or len(atuais) > MAX_COOKIES:
+            return
+        novo_hash = impressao(atuais)
+        if novo_hash == self.applied_hash:
+            return
+        try:
+            novo_id = self.store.renew_cookie_set(
+                cifrar_cookies(atuais, self.public_key), key_id(self.private_key), len(atuais), self.applied_id, iso_utc(agora)
+            )
+        except sqlite3.Error as exc:
+            log.error("[DB] nao foi possivel gravar a sessao renovada (%s)", type(exc).__name__)
+            return
+        if novo_id is None:
+            log.info("[COOKIES] renovacao descartada: ha um conjunto mais novo")
+            return
+        self.applied_id = novo_id
+        self.applied_hash = novo_hash
+        self.last_renewal_at = agora
+        log.info("[COOKIES] sessao renovada: %d cookies", len(atuais))
+        self.publish()
 
     # ------------------------------------------------------------------ laco
     def run(self) -> None:
@@ -272,6 +360,14 @@ class Worker:
             self.session.close()
 
 
+def _epoch(iso: str) -> float | None:
+    """Instante de `created_at` ('...Z', UTC); None se nao for legivel."""
+    try:
+        return datetime.fromisoformat(iso.removesuffix("Z")).replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
 def _is_network_error(exc: PlaywrightError) -> bool:
     return isinstance(exc, PlaywrightTimeoutError) or "net::" in str(exc)
 
@@ -279,6 +375,7 @@ def _is_network_error(exc: PlaywrightError) -> bool:
 def criar_worker(
     config: Config,
     private_key: PrivateKey,
+    public_key: PublicKey,
     *,
     stop: threading.Event | None = None,
     timings: Timings | None = None,
@@ -297,4 +394,4 @@ def criar_worker(
         stop=stop,
         debug_dir=config.debug_dir if config.debug_screenshot else None,
     )
-    return Worker(config, private_key, store, session, clock=clock, stop=stop)
+    return Worker(config, private_key, public_key, store, session, clock=clock, stop=stop)

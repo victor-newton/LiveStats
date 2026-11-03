@@ -229,6 +229,18 @@ def test_sec_09_a_api_nao_consegue_decifrar_os_cookies(stack):
     assert {c["name"] for c in plain} == {stack.auth_cookie["name"], stack.extra_cookie["name"]}
 
 
+def test_sec_09b_mapa_de_secrets_por_container_d37(stack):
+    """D37 (C14): a publica tambem vai ao worker-inscritos; a privada continua SO nele; o worker-lives nao recebe nenhuma."""
+    def secrets_of(name: str) -> set[str]:
+        out = stack.exec(name, "sh", "-c", "ls -d /run/secrets/* 2>/dev/null; true").stdout.split()
+        return {p.rsplit("/", 1)[1] for p in out}
+
+    assert secrets_of("worker-inscritos") == {"cookie_private_key", "cookie_public_key"}
+    assert secrets_of("api") == {"cookie_public_key", "admin_password_hash"}
+    assert secrets_of("worker-lives") == {"youtube_api_key"}
+    assert secrets_of("web") == {"admin_tls_cert", "admin_tls_key"}
+
+
 FILE_SCAN_NAMES = r"""
 import json, os, sys
 needles = [n.encode() for n in json.load(sys.stdin)]

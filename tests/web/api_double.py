@@ -161,7 +161,10 @@ class ApiDouble:
             self.subscribers_status: int = 200
             self.lives_worker = self.worker_state("ok")
             self.inscritos_worker = {**self.worker_state("ok"), "auth_state": "ok"}
-            self.cookies = {"configured": False, "count": 0, "uploaded_at": None, "applied": False}
+            self.cookies = {
+                "configured": False, "count": 0, "uploaded_at": None, "applied": False,
+                "source": None, "created_at": None, "renewed_from": None,
+            }
             self.login_failures: list[tuple[float, str]] = []
             self.overrides: dict[tuple[str, str], list[Reply]] = {}
             self.violations.clear()
@@ -490,7 +493,11 @@ class ApiDouble:
         if errs:
             return validation_error(errs)
         n = len(data)
-        self.cookies = {"configured": True, "count": n, "uploaded_at": utc_iso(), "applied": False}
+        agora = utc_iso()
+        self.cookies = {
+            "configured": True, "count": n, "uploaded_at": agora, "applied": False,
+            "source": "admin", "created_at": agora, "renewed_from": None,
+        }
         return json_reply(
             200,
             {

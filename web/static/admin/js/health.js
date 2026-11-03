@@ -418,12 +418,36 @@ function renderDiagram(rows, links) {
 }
 
 /**
+ * Origem do conjunto de cookies atual (D37), na aba Inscritos. Só texto (textContent); nunca valores de cookie.
+ * @param {any} ws corpo de workers/status (ou null)
+ */
+function renderCookieOrigin(ws) {
+  const el = document.getElementById('cookiesOrigin');
+  if (!el) return;
+  const c = ws && ws.cookies ? ws.cookies : null;
+  const created = c && typeof c.created_at === 'string' ? c.created_at : null;
+  if (!c || !c.configured || !created) {
+    el.textContent = '';
+    el.hidden = true;
+    return;
+  }
+  if (c.source === 'worker') {
+    el.textContent = `Renovado automaticamente ${ago(created, ws.server_time)}`;
+  } else {
+    const d = new Date(created);
+    el.textContent = `Colado no painel em ${Number.isNaN(d.getTime()) ? created : d.toLocaleString('pt-BR')}`;
+  }
+  el.hidden = false;
+}
+
+/**
  * Desenha tudo a partir dos dois corpos (exportado para teste de unidade do dublê, se preciso).
  * @param {any} ws
  * @param {any} health
  * @param {string | null} problem
  */
 export function renderHealth(ws, health, problem) {
+  renderCookieOrigin(ws);
   const rows = buildRows(ws, health, problem);
   renderCards(rows);
   renderDiagram(rows, linkLevels(ws, rows));

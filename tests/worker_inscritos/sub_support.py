@@ -38,6 +38,9 @@ class FixtureServer:
         self.require_cookie: tuple[str, str] | None = None
         self.login_path = "/signin/v2/identifier?service=youtube"
         self.requests: list[dict[str, str]] = []
+        # D37: o Studio falso renova a sessao como o Google faz: `Set-Cookie` em toda resposta de /channel/ (inclusive 302).
+        self.set_cookie_headers: list[str] = []
+        self.on_studio_request = None  # callable() chamado a cada GET de /channel/, antes da resposta
         self._lock = threading.Lock()
         server = self
 
@@ -45,13 +48,18 @@ class FixtureServer:
             def log_message(self, *args):  # silencia o stderr do pytest
                 pass
 
-            def _send(self, status: int, body: str, headers: dict[str, str] | None = None) -> None:
+            def _send(self, status: int, body: str, headers: dict[str, str] | None = None, studio: bool = False) -> None:
                 dados = body.encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(dados)))
                 for k, v in (headers or {}).items():
                     self.send_header(k, v)
+                if studio:
+                    with server._lock:
+                        renovacoes = list(server.set_cookie_headers)
+                    for valor in renovacoes:
+                        self.send_header("Set-Cookie", valor)
                 self.end_headers()
                 self.wfile.write(dados)
 
@@ -69,13 +77,15 @@ class FixtureServer:
                 if self.path.startswith("/www"):
                     self._send(200, "<!DOCTYPE html><html><body>www</body></html>")
                 elif self.path.startswith("/channel/"):
+                    if server.on_studio_request is not None:
+                        server.on_studio_request()
                     if required is not None and f"{required[0]}={required[1]}" not in parse_cookie_header(
                         self.headers.get("Cookie", "")
                     ):
-                        self._send(302, "", {"Location": login_path})
+                        self._send(302, "", {"Location": login_path}, studio=True)
                         return
                     html = override if override is not None else (FIXTURES / page_name).read_text("utf-8")
-                    self._send(200, html)
+                    self._send(200, html, studio=True)
                 elif self.path.startswith(("/signin", "/gate")):
                     self._send(200, (FIXTURES / "login.html").read_text("utf-8"))
                 else:
@@ -136,6 +146,11 @@ def query(db_path: Path, sql: str, params: tuple = ()) -> list[tuple]:
 
 def write_key_file(path: Path, private_key: PrivateKey) -> Path:
     path.write_text(base64.b64encode(bytes(private_key)).decode("ascii") + "\n", encoding="ascii")
+    return path
+
+
+def write_pub_file(path: Path, private_key: PrivateKey) -> Path:
+    path.write_text(base64.b64encode(bytes(private_key.public_key)).decode("ascii") + "\n", encoding="ascii")
     return path
 
 

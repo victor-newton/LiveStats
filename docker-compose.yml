@@ -191,12 +191,14 @@ services:
     environment:
       DB_PATH: /data/livestats.db
       COOKIE_PRIVATE_KEY_FILE: /run/secrets/cookie_private_key
+      COOKIE_PUBLIC_KEY_FILE: /run/secrets/cookie_public_key   # D37: so cifra a sessao renovada
       YOUTUBE_CHANNEL_ID: "${YOUTUBE_CHANNEL_ID:?defina YOUTUBE_CHANNEL_ID no .env}"   # formato UCxxxxxxxxxxxxxxxxxxxxxx
       SCRAPE_INTERVAL: ${SCRAPE_INTERVAL:-10}
       DEBUG_SCREENSHOT: ${DEBUG_SCREENSHOT:-0}   # 1 grava print em /tmp/debug (tmpfs); nunca em /data
       HOME: /home/app
     secrets:
       - cookie_private_key              # a chave privada existe SOMENTE neste container
+      - cookie_public_key               # D37: a publica tambem (so cifra a renovacao da sessao)
     volumes:
       - livestats-data:/data
     networks:
@@ -251,7 +253,7 @@ secrets:
     file: ./secrets/youtube_api_key.txt
   cookie_private_key:                   # -> worker-inscritos
     file: ./secrets/cookie_private_key.txt
-  cookie_public_key:                    # -> api
+  cookie_public_key:                    # -> api e worker-inscritos (D37)
     file: ./secrets/cookie_public_key.txt
   admin_password_hash:                  # -> api (hash argon2, nao a senha)
     file: ./secrets/admin_password_hash.txt
