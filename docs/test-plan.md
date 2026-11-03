@@ -251,7 +251,7 @@ Testes marcados `static` rodam sem Docker (parse de YAML, Dockerfile e `nginx.co
 | INFRA-CFG-01 | `docker-compose.yml` | YAML válido; `name: livestats`; exatamente os serviços `web`, `api`, `worker-lives`, `worker-inscritos`; `docker compose config` ok (marcador `docker`) | renomear/remover serviço |
 | INFRA-CFG-02 | Endurecimento de **cada** serviço | `user` numérico ≠ 0; `read_only: true`; `cap_drop` contém `ALL` e não há `cap_add`; `security_opt` contém `no-new-privileges:true`; sem `privileged`, `network_mode: host`, `pid: host`, `devices`; sem montagem de `docker.sock` | tirar qualquer item |
 | INFRA-CFG-03 | Redes | `internal`: `internal: true`, membros exatos `{web, api}`; `api` só em `internal`; `egress` = `{worker-lives, worker-inscritos}`; `web` ∉ `egress`; workers ∉ `internal`/`edge` | api em rede com saída |
-| INFRA-CFG-04 | Secrets | `youtube_api_key`→apenas `worker-lives`; `cookie_private_key`→apenas `worker-inscritos`; `cookie_public_key` e `admin_password_hash`→apenas `api`; `web` sem secrets; arquivos em `./secrets/*.txt` | segredo em outro serviço |
+| INFRA-CFG-04 | Secrets | `youtube_api_key`→apenas `worker-lives`; `cookie_private_key`→apenas `worker-inscritos`; `cookie_public_key`→`api` e `worker-inscritos` (D37/C14) e `admin_password_hash`→apenas `api`; `web` sem secrets; arquivos em `./secrets/*.txt` | segredo em outro serviço |
 | INFRA-CFG-05 | Sem segredo em `environment` | nenhuma variável de ambiente com nome contendo `KEY`, `PASSWORD`, `TOKEN`, `COOKIE`, `SECRET`, `HASH` com **valor** literal (só `*_FILE` com caminho `/run/secrets/...`); nenhum valor com padrão `AIza…` | `YOUTUBE_API_KEY=…` |
 | INFRA-CFG-06 | Portas | `web` publica exatamente 8080 e 8081; a 8081 usa `${ADMIN_BIND:-127.0.0.1}` (**padrão `127.0.0.1`**, nunca `0.0.0.0`); nenhum outro serviço tem `ports`; nada em 9222/8000/8001; `.env.example` traz `ADMIN_BIND=127.0.0.1` | padrão `0.0.0.0` |
 | INFRA-CFG-07 | Volumes | `livestats-data` montado em `/data` (rw) apenas por `api`, `worker-lives`, `worker-inscritos`; `web` sem volumes; nenhum bind-mount de código-fonte | web com /data |
@@ -513,6 +513,53 @@ Rota removida: `/overlay/inscritos` (404 nas duas portas). IDs antigos afetados 
 | INFRA-NG-15 | Estático: não existe `location = /overlay/inscritos` | nenhuma `location` com `inscritos` além de `= /inscritos.json`; `= /contador` segue mapeada; nenhum arquivo de `web/nginx/**` cita `overlay/inscritos` | rota recolocada |
 | INFRA-NG-16 | Container real (docker): rota removida | `/overlay/inscritos` (também com `?x=1`, `/` final, `INSCRITOS` e `.html`) → 404 nas portas 8080 e 8081, sem o HTML do contador; `/contador` → 200 com o conteúdo de `contador.html` | rota servida; `/contador` quebrado |
 
+
+## C14 — Renovação automática da sessão do Studio (D37)
+
+Contratos que mudaram e os testes antigos tocados (cada verificação foi mantida): esquema **v4** (asserts de `schema_version` de `API-LIKE-02`, `API-SET-01`, `SUB-DB-*`, `LIV-*` passaram de "3" para "4", só o valor; a lista de colunas de `cookie_sets` em `API-DB-01` ganhou `source` e `renewed_from`); o autorizador do worker agora permite `INSERT` e `DELETE` em `cookie_sets`, então os dois casos "negado" de `SUB-DB-01` (`INSERT`/`DELETE FROM cookie_sets`) saíram da lista de negados e foram para `SUB-REN-09` (o `UPDATE` em `cookie_sets` continua negado em `SUB-DB-01` e `SUB-REN-09b`); `COOKIE_PUBLIC_KEY_FILE` é obrigatório no worker (`SUB-CFG-01` ganhou a variável); `INFRA-CFG-04` ficou `cookie_public_key` → `api` e `worker-inscritos` (a privada segue só no worker); `workers/status` ganhou `source`, `created_at` e `renewed_from` em `cookies` (dublê e openapi acompanham).
+
+### worker-inscritos (`tests/worker_inscritos/test_sub_renov.py`, Chromium real; servidor local que emite `Set-Cookie`; relógio injetável)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| SUB-REN-01 | Recarga por 30 falhas não apaga a sessão viva | o servidor renova `SID` na 1ª abertura; após 30 leituras ruins e a recarga, a abertura seguinte envia o cookie **renovado** (não o colado) e o outro cookie segue presente; leituras ruins não gravam renovação | recarga limpa e reinjeta o conjunto colado |
+| SUB-REN-02 | Renovação gravada | nova linha `source='worker'`, `renewed_from=<id aplicado>`, `uploaded_by='worker'`, `key_id` da pública, a antiga apagada; decifrável com a privada, 5 campos exatos, valor renovado; `cookies_applied_id` passa a ser a nova | gravar texto puro; manter a linha velha |
+| SUB-REN-03 | Intervalo mínimo de 10 min (relógio injetável) | com mudança mas 599 s depois da última gravação, nada grava; com 600 s grava e `renewed_from` aponta a anterior | ignorar o intervalo |
+| SUB-REN-04 | Sem mudança, sem gravação | conjunto igual ao aplicado (hash em memória) nunca grava, mesmo passado o intervalo | gravar a cada ciclo |
+| SUB-REN-05 | Corrida com o admin | o admin cola outro conjunto durante a carga: a renovação do conjunto 1 é **descartada** (só log "renovacao descartada", sem conteúdo), o conjunto do admin é o aplicado no ciclo seguinte (o servidor recebe só o dele) | sobrescrever o conjunto do admin |
+| SUB-REN-06 | Login, "sem permissão" (pt-BR e inglês), contador ausente | o Chromium é de fato renovado pelo servidor, mas nenhuma renovação é gravada | gravar a partir de página inválida |
+| SUB-REN-07 | Reinício do processo | worker novo injeta o conjunto renovado (o servidor recebe o valor renovado, não o colado), lê o contador e não grava de novo antes de 10 min (instante vindo do banco) | reiniciar com o conjunto velho |
+| SUB-REN-08 | Sem vazamento | logs (DEBUG) e `worker_status` e todo o banco (menos `ciphertext`) sem nome/valor de cookie; log é exatamente "sessão renovada: N cookies"; `ciphertext` sem texto puro | nome ou valor em log |
+| SUB-REN-09 | Autorizador | `INSERT` e `DELETE` em `cookie_sets` funcionam | permissão de menos |
+| SUB-REN-09b | Autorizador nega o resto | `UPDATE cookie_sets` (3 colunas), escrita em `slots`, `settings`, `schema_meta`, `live_stats`, DDL, `DROP`, `ALTER`, `CREATE TRIGGER` negados | permissão a mais |
+| SUB-REN-09c | Papel do healthcheck | continua sem escrita em `cookie_sets` | healthcheck escreve |
+| SUB-REN-10 | Troca de canal não troca a sessão | o Studio do canal novo é aberto com o cookie renovado, sem limpar nem reinjetar | reinjetar o conjunto antigo |
+| SUB-REN-11 | Conjunto novo do admin | limpa e injeta só os cookies dele (o servidor recebe exatamente o dele) e o aplicado passa a ser o novo id | misturar com cookies velhos |
+| SUB-REN-12 | `COOKIE_PUBLIC_KEY_FILE` | obrigatório e sem padrão; arquivo ausente, inválido ou de outro par → erro de configuração sem expor valores | padrão ou par errado aceito |
+
+### api (`tests/api/test_api_sessao.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| API-SES-01 | Banco novo na v4 | `schema_version` = 4; `cookie_sets.source` NOT NULL padrão `admin` com CHECK (`admin`\|`worker`); `renewed_from` inteiro nulo | coluna ausente; valor livre |
+| API-SES-02 | Migração v3 → v4 | adiciona as 2 colunas só se faltarem, linha existente vira `source='admin'`, `renewed_from` nulo, versão 4; três subidas seguidas dão o mesmo resultado; `slots` intocada; CHECKs valem depois de migrar | migração não idempotente; perder a linha |
+| API-SES-03 | Upload do admin | `POST /api/admin/cookies` grava `source='admin'` | origem errada |
+| API-SES-04 | `workers/status` | `cookies` traz `source`, `created_at` (= `uploaded_at`) e `renewed_from` (nulos sem cookies); depois de uma renovação do worker mostra `worker` e o id; corpo sem nenhum valor de cookie nem `ciphertext`; conforme o openapi | vazar valor; campo fora do contrato |
+
+### front (`tests/web/test_web_sessao_origem.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| WEB-SES-01 | Colado no painel | a aba Inscritos mostra "Colado no painel em …" com a data | origem omitida |
+| WEB-SES-02 | Renovado | `source='worker'` mostra "Renovado automaticamente há 5 min" (relógio do servidor) | texto do painel quando é do worker |
+| WEB-SES-03 | Sem cookies | a linha de origem fica oculta | texto fantasma |
+
+### infra e integração
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| INFRA-CFG-15 | Chaves dos cookies no compose (estático) | `worker-inscritos` monta privada e pública e tem `COOKIE_PUBLIC_KEY_FILE=/run/secrets/cookie_public_key`; a privada não está em nenhum outro serviço; `worker-lives` e `web` não montam nenhuma das duas | privada fora do worker; pública em `worker-lives`/`web` |
+| INT-SES-01 | Pilha real (`tests/e2e/test_int_sessao.py`, `E2E_PUBLIC_PORT=18080 E2E_ADMIN_PORT=18081`) | o Studio falso rotaciona o cookie de sessão (valor colado vale uma vez); o worker grava a renovação (`source='worker'` no status e no banco, decifrada dentro do worker); logs sem cookie; depois de reiniciar o `worker-inscritos` a leitura continua e o Studio recebe só o cookie renovado, sem colar nada | reinício volta ao cookie colado e cai em login |
 
 ## Cobertura cruzada (PLANO §4 → testes)
 

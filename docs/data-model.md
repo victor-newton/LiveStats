@@ -1,6 +1,6 @@
 # Modelo de dados — LiveStats
 
-Contrato T1 (esquema na **versão 3**: ver §1.1). Fontes da verdade dos esquemas: [`db/schema.sql`](../db/schema.sql) (dados compartilhados) e [`db/admin_schema.sql`](../db/admin_schema.sql) (estado de admin, volume exclusivo da api); ambos somente leitura para T2–T7.
+Contrato T1 (esquema na **versão 4**: ver §1.1). Fontes da verdade dos esquemas: [`db/schema.sql`](../db/schema.sql) (dados compartilhados) e [`db/admin_schema.sql`](../db/admin_schema.sql) (estado de admin, volume exclusivo da api); ambos somente leitura para T2–T7.
 
 ## 1. Bancos
 
@@ -27,8 +27,9 @@ Ambos em modo **WAL** (`-wal` e `-shm` ao lado). O `web` não monta volume algum
 | 1 | T1 | esquema original |
 | 2 | D34 (C10) | `slots` ganha `goal` (meta de likes, `NULL` = sem meta, 1 a 1.000.000.000) e `color` (`#RRGGBB` em maiúsculas, padrão `#FF0033`) |
 | 3 | D35 (C11) | tabela nova `settings` e `slots` ganha `font` (família da lista fechada de `api/app/fonts.py`, padrão `Roboto`) e `text_color` (`#RRGGBB` em maiúsculas, padrão `#FFFFFF`) |
+| 4 | D37 (C14) | `cookie_sets` ganha `source` (`admin`\|`worker`, padrão `admin`) e `renewed_from` (inteiro nulo >= 1): renovação automática da sessão do Studio |
 
-**Migração idempotente (feita só pela api, na subida):** `CREATE TABLE IF NOT EXISTS settings` (no próprio `schema.sql`), `ALTER TABLE slots ADD COLUMN` apenas para a coluna que faltar (as definições repetem as de `schema.sql`) e `schema_version` 1 ou 2 → 3, tudo numa transação. Repetir a migração não muda nada; dados existentes (URLs, metas, cores, `updated_at`) são preservados. Bancos novos já nascem na v3.
+**Migração idempotente (feita só pela api, na subida):** `CREATE TABLE IF NOT EXISTS settings` (no próprio `schema.sql`), `ALTER TABLE slots ADD COLUMN` apenas para a coluna que faltar (as definições repetem as de `schema.sql`) e `ALTER TABLE cookie_sets ADD COLUMN` para `source`/`renewed_from` (se faltarem) e `schema_version` 1, 2 ou 3 → 4, tudo numa transação. Repetir a migração não muda nada; dados existentes (URLs, metas, cores, `updated_at`) são preservados. Bancos novos já nascem na v4.
 
 **`settings` (v3):** `key TEXT PRIMARY KEY CHECK (key IN ('channel_id', 'subs_font', 'subs_text_color'))`, `value TEXT NOT NULL CHECK (length(value) BETWEEN 1 AND 40)`, `STRICT`. O CHECK só garante o conjunto de chaves e o tamanho; **o formato** (canal `^UC[0-9A-Za-z_-]{22}$`, fonte da lista fechada, cor `#RRGGBB`) é validado pela api antes de gravar. Ausência de linha = padrão: sem `channel_id` o `worker-inscritos` usa `YOUTUBE_CHANNEL_ID` do ambiente; fonte `Roboto`; cor `#FFFFFF`. O `worker-inscritos` lê `channel_id` a cada ciclo (autorizador: leitura de `settings`, nenhuma escrita), ignora valor que não case o formato (usa o do ambiente) e recarrega o Studio quando o canal muda.
 
@@ -45,7 +46,7 @@ Legenda: **R** = lê, **W** = escreve (INSERT/UPDATE/DELETE), **—** = não toc
 | `settings` (v3) | **R/W** (INSERT/UPDATE; sem DELETE) | — | **R** (só `channel_id`) | chave/valor com chaves de lista fechada: `channel_id`, `subs_font`, `subs_text_color` |
 | `live_stats` | R | **W** | — | estatísticas de cada slot, já no formato dos JSON legados |
 | `subscriber_reading` | R | — | **W** | última leitura de inscritos (linha única) |
-| `cookie_sets` | **W** (INSERT + DELETE das antigas); R só de metadados (`id`, `key_id`, `cookie_count`, `uploaded_by`, `created_at`) | — | **R** (inclui `ciphertext`) | cookies cifrados |
+| `cookie_sets` | **W** (INSERT + DELETE das antigas); R só de metadados (`id`, `key_id`, `cookie_count`, `uploaded_by`, `created_at`, `source`, `renewed_from`) | — | **R** (inclui `ciphertext`); **W** só INSERT da sessão renovada e DELETE das antigas (v4/D37; nunca UPDATE) | cookies cifrados |
 | `worker_status` | R | **W** (linha `lives`) | **W** (linha `inscritos`) | heartbeat e estado dos workers |
 
 **`/admin-state/admin.db`** (somente api):
@@ -69,7 +70,7 @@ Um processo comprometido executa código próprio e pode abrir `/data/livestats.
 
 - `api` (em `livestats.db`): **negada** a leitura da coluna `cookie_sets.ciphertext` (a api só grava; não precisa ler de volta); negada escrita em `live_stats`, `subscriber_reading`, `worker_status`. Em `admin.db`: acesso total às duas tabelas.
 - `worker-lives`: leitura de `slots`, `schema_meta`; escrita em `live_stats` e `worker_status`. Nada mais (nem leitura de `cookie_sets`).
-- `worker-inscritos`: leitura de `cookie_sets` e `schema_meta`; escrita em `subscriber_reading` e `worker_status`. Nada mais.
+- `worker-inscritos`: leitura de `cookie_sets` e `schema_meta`; escrita em `subscriber_reading` e `worker_status`; em `cookie_sets` somente `INSERT` (sessão renovada, D37) e `DELETE` (linhas antigas, na mesma transação). Nenhum `UPDATE` e nenhuma outra tabela.
 
 Testes: `API-DB-02`, `LIV-DB-01`, `SUB-DB-01` (autorizador) e `API-DB-03`, `INFRA-CFG-11`, `SEC-20` (isolamento).
 
@@ -107,6 +108,8 @@ Linha única `id=1` (UPSERT). `value` = string que o legado chama de `inscritos`
 - `key_id`: primeiros 16 hex do SHA-256 dos 32 bytes da chave pública; permite ao worker avisar "cookie cifrado com outra chave" (`decrypt_failed`) sem tentar decifrar à toa.
 - `cookie_count`, `uploaded_by`, `created_at`: metadados sem valor sensível. **Nomes e valores de cookies nunca aparecem em coluna alguma, log ou resposta.**
 - A cada upload: `INSERT` da nova linha e `DELETE` das demais na mesma transação. O worker detecta mudança comparando `id` com `worker_status.cookies_applied_id` (substitui a checagem de `mtime`).
+- `source` (v4, D37): `'admin'` (padrão; colado no painel, gravado pela api) ou `'worker'` (sessão renovada pelo `worker-inscritos`). `renewed_from` (v4): `id` do conjunto aplicado que o worker renovou (`NULL` quando `admin`; inteiro >= 1).
+- Renovação (D37): depois de uma leitura **válida**, o worker exporta os cookies do Chromium (só `youtube.com`/`google.com` e subdomínios, mesmos 5 campos), compara com o conjunto aplicado por um hash **só em memória** e, se mudou e passaram >= 10 min da última renovação gravada, cifra com a **chave pública** (secret `cookie_public_key`, também montado no worker) e grava, em uma transação `BEGIN IMMEDIATE`: se `MAX(id)` ainda é o `id` aplicado, `INSERT` da linha (`source='worker'`, `renewed_from=<id aplicado>`, `uploaded_by='worker'`) + `DELETE` das demais; senão descarta (o admin colou outro conjunto). A linha nova passa a ser a aplicada.
 - O `ciphertext` nunca é devolvido por endpoint algum.
 
 ### `admin_sessions` (em `admin.db`)
