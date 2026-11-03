@@ -27,6 +27,7 @@ SEGREDOS = {
     "cookie_public_key.txt": "FAKEPUBKEY-cccccccccccccccccccccccccccccccccccc\n",
     "admin_password_hash.txt": "FAKEHASH-dddddddddddddddddddddddddddddddddddddd\n",
     "admin_tls_cert.pem": "-----BEGIN CERTIFICATE-----\nFAKECERTLINE-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n-----END CERTIFICATE-----\n",
+    # cabecalho PEM montado em partes: e uma chave FALSA, e assim o gitleaks nao a confunde com uma de verdade
     "admin_tls_key.pem": "-----BEGIN " + "PRIVATE KEY-----\nFAKEKEYLINE-ffffffffffffffffffffffffffffffff\n-----END " + "PRIVATE KEY-----\n",
 }
 # uma linha caracteristica de cada arquivo (a que sera plantada no .env nos testes de vazamento)

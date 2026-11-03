@@ -7,7 +7,7 @@ Aplicação única que reúne duas funções que antes eram dois apps separados:
 
 Tudo roda em Docker Compose, com segredos isolados e só a parte pública exposta.
 
-> **Status:** em desenvolvimento. Os documentos em `docs/` são o contrato que a implementação segue. Leia `docs/PLANO.md` e `docs/ARCHITECTURE.md` antes de mexer no código.
+> **Status:** **v1.0.0**, em produção no ZimaOS desde 2026-11-03 (veja [`CHANGELOG.md`](CHANGELOG.md)). Os documentos em `docs/` são o contrato que a implementação segue. Leia `docs/PLANO.md` e `docs/ARCHITECTURE.md` antes de mexer no código. Deploy no servidor: [`docs/DEPLOY.md`](docs/DEPLOY.md) (scripts em `deploy/`, a partir do seu PC).
 
 ## Arquitetura (resumo)
 

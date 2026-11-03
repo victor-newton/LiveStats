@@ -82,7 +82,7 @@ Pode rodar de novo à vontade: o `.env` e os secrets existentes são mantidos (o
 
 Nada muda no Cloudflare: o túnel continua entregando `*.vitex.xyz.br` ao NPM em `http://192.168.15.62:80`.
 
-Duas formas de o NPM alcançar o LiveStats. **Recomendação: opção B.**
+Duas formas de o NPM alcançar o LiveStats. A opção B é a mais simples. **Em produção (v1.0.0) está a opção A**, porque os overlays são consumidos de fora da rede (vMix/OBS remotos pelo `lives.vitex.xyz.br`) e cada visitante precisa do próprio balde no limite de requisições.
 
 ### Opção B (recomendada) — NPM aponta para `192.168.15.62:8080`
 
@@ -104,6 +104,8 @@ bash deploy/enviar.sh conectar-npm           # 1 senha; ou use  instalar --conec
 ```
 
 O `connect_npm.sh` acha o container do NPM, faz `docker network connect --ip 172.29.80.11 livestats-edge <npm>`, grava `TRUSTED_PROXY_CIDR=172.29.80.11/32` no `.env` e recria só o `web`. Depois, no NPM, edite `lives.vitex.xyz.br` para Forward Hostname `livestats-web`, porta `8080`, e desative `canaldobenja.vitex.xyz.br`.
+
+**Reinicie o NPM uma vez depois de conectá-lo** (`docker restart nginxproxymanager`, alguns segundos fora do ar para todos os sites dele). O Nginx do NPM monta a lista de servidores DNS quando o container sobe; se ele subiu só na rede `bridge`, continua sem o DNS interno do Docker e o host dá **502** com `livestats-web could not be resolved` no log, mesmo com `getent hosts livestats-web` funcionando dentro do container. Depois do restart a ligação com a rede e o DNS ficam valendo, inclusive após reboot do servidor.
 
 **Atenção:** o `docker network connect` feito à mão **some se o ZimaOS recriar o container do NPM** (atualização do app, reinstalação). Se isso acontecer, `livestats-web` deixa de resolver e o NPM pode falhar ao recarregar; rode `connect_npm.sh` de novo (ou volte o host para a opção B). Antes de qualquer rollback, volte o host `lives.vitex.xyz.br` ao destino antigo no NPM (o `rollback.sh` já solta o NPM da rede).
 
@@ -164,6 +166,22 @@ bash deploy/enviar.sh registrar-zimaos --remover  # desfaz: volta a rodar pelo c
 - **Depois de registrado**, as reinstalações respeitam o registro: `instalar` atualiza código, imagens, `.env` e segredos, mas **para antes de recriar os containers** (saída 2) e manda rodar `bash deploy/enviar.sh registrar-zimaos` (com `--recriar-web` se o certificado TLS foi renovado). `conectar-npm` e `rollback` passam a usar `ssh -t` e pedir a senha do sudo (o rollback derruba pelo arquivo registrado e deixa o cartão como app parado).
 - **Alerta:** editar o app pela tela do ZimaOS (configurações do app, "salvar") pode reescrever esse YAML e tirar as proteções (usuário não-root, `read_only`, `cap_drop`, rede interna). Faça qualquer mudança pelos scripts (`instalar`, `registrar-zimaos`) e não pelo editor do ZimaOS. Em caso de dúvida, rode `registrar-zimaos` de novo: ele regrava o arquivo correto.
 
+## Registro do deploy da v1.0.0 (2026-11-03)
+
+O que foi feito no servidor, na ordem, e o resultado de cada passo:
+
+| Passo | Comando | Resultado |
+|---|---|---|
+| Acesso ao Docker | `ssh -t Vitex@192.168.15.62 "sudo usermod -aG docker Vitex"` (feito por você) | `Vitex` no grupo `docker` (gid 104) |
+| Preflight | `bash deploy/enviar.sh preflight` | 0 bloqueios depois da correção do `DOCKER_CONFIG` (Docker 27.5.1, Compose 2.32.4, 215 GB livres, 8080/8081 livres) |
+| Instalação | `bash deploy/enviar.sh instalar --channel-id UC... --chave-youtube-arquivo secrets/youtube_api_key.txt --admin-allow "192.168.15.0/24 100.64.0.0/10" --public-base-url https://lives.vitex.xyz.br --conectar-npm` | 4 serviços `healthy`; NPM em `livestats-edge` com IP `172.29.80.11`; `TRUSTED_PROXY_CIDR=172.29.80.11/32` |
+| NPM | `lives.vitex.xyz.br` → `http://livestats-web:8080`; `canaldobenja.vitex.xyz.br` desativado; `docker restart nginxproxymanager` | público `/health`, `/live1.json`, `/contador`, `/overlay/live.html` com 200; `/api/admin/*` com 404 |
+| Cookies do Studio | colados pelo painel (aba Inscritos) | primeira leitura 753.890; sessão renovada pelo worker (`source='worker'`); quedas do contador aparecem |
+| IP real | log da 8080 | aparecem o IP da LAN e o IP público do visitante; o IP do NPM não aparece |
+| Tela inicial | `bash deploy/enviar.sh instalar ... --sem-segredos --skip-build` e `bash deploy/enviar.sh registrar-zimaos` | cartão LiveStats na tela inicial; containers vindos de `/var/lib/casaos/apps/livestats/docker-compose.yml` |
+
+Os apps antigos (Live Stats e YT Inscritos) continuam instalados e **parados**, para rollback.
+
 ## Rollback
 
 ```sh
@@ -190,7 +208,10 @@ Para reinstalar o LiveStats depois: `bash deploy/enviar.sh instalar --channel-id
 
 | Sintoma | Causa provável |
 |---|---|
-| Preflight: "não consegue falar com o Docker" | `Vitex` fora do grupo `docker` e sem `sudo` sem senha (veja "Antes de começar", item 6) |
+| Preflight: "não consegue falar com o Docker" | `Vitex` fora do grupo `docker` e sem `sudo` sem senha (veja "Antes de começar", item 6). Correção usada em produção, uma vez: `ssh -t Vitex@192.168.15.62 "sudo usermod -aG docker Vitex"` |
+| Preflight: "Plugin 'docker compose' (v2) não encontrado", com `WARNING: Error loading config file: /DATA/.docker/config.json: permission denied` | no ZimaOS a home do `Vitex` é `/DATA`, e `/DATA/.docker` é do root (`710`); o CLI não lê a configuração e não acha o plugin do sistema. Os scripts já tratam isso desde a v1.0.0 (`deploy/lib.sh` usa um `DOCKER_CONFIG` próprio). Para comandos manuais: `export DOCKER_CONFIG=$(mktemp -d)` antes do `docker compose` |
+| `lives.vitex.xyz.br` dá 502 logo após `conectar-npm` (opção A), log do NPM com `could not be resolved` | o NPM guardou o DNS de antes de entrar na rede `livestats-edge`; `docker restart nginxproxymanager` (veja o passo 3) |
+| O LiveStats roda mas não aparece na tela inicial do ZimaOS | ele não está registrado em `/var/lib/casaos/apps`; rode `bash deploy/enviar.sh registrar-zimaos` |
 | `web` não sobe, log "certificado/chave" | falta ou permissão errada em `secrets/admin_tls_*.pem` (devem ser `644`); rode `instalar --renew-tls --sem-segredos` |
 | worker-inscritos reiniciando, "permission denied" na chave | `secrets/cookie_private_key.txt` com modo `600` (precisa `644`; o instalador já faz isso) |
 | 8081 devolve 403 | seu IP não está em `ADMIN_ALLOW_CIDRS` (edite o `.env` e `docker compose up -d web`) |
