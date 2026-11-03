@@ -22,6 +22,11 @@ while [ $# -gt 0 ]; do
 done
 
 escolher_docker || die "Sem acesso ao Docker."
+# Registrado no painel do ZimaOS: o down usa o arquivo registrado (root, sudo com senha). Confere o terminal ANTES de
+# mexer em qualquer coisa.
+if zimaos_registrado && ! zimaos_sudo_ok; then
+  die "LiveStats registrado no painel do ZimaOS: preciso de terminal para o sudo. Rode com ssh -t (enviar.sh rollback). Nada foi alterado."
+fi
 cd "$DIR" || die "Pasta $DIR nao existe."
 
 if [ "$SIM" = 0 ]; then
@@ -44,7 +49,13 @@ else
 fi
 
 titulo "docker compose down (sem -v: volumes preservados)"
-docker_ compose down
+if zimaos_registrado; then
+  compose_registrado down
+  info "O registro do painel do ZimaOS continua ($ZIMAOS_ARQ): o cartao fica como app parado. Para tirar o cartao sem religar nada: sudo rm -rf $ZIMAOS_PASTA"
+  info "Para religar depois: bash deploy/enviar.sh registrar-zimaos (recria pelo arquivo registrado)."
+else
+  docker_ compose down
+fi
 docker_ volume ls --format '{{.Name}}' | grep '^livestats-' | sed 's/^/[ok]    volume preservado: /' || true
 env_set "$DIR/.env" TRUSTED_PROXY_CIDR ""
 ok "TRUSTED_PROXY_CIDR zerado no .env."

@@ -245,6 +245,18 @@ ok "Os 6 arquivos de secrets existem e sao legiveis pelos containers (modo 644 e
 
 # ---- 7. subir ----------------------------------------------------------------------------------------
 titulo "Subindo os servicos"
+# Registrado no painel do ZimaOS (deploy/registrar_zimaos.sh): os containers so podem ser recriados a partir do arquivo
+# registrado (que e do root; precisa de sudo com senha, e este script nao tem terminal). Para NAO deixar o projeto metade
+# de um jeito e metade do outro, para aqui: codigo, imagens, .env e segredos ja estao atualizados; os containers seguem
+# rodando como antes, ate voce rodar o registrar-zimaos (que regera o arquivo e recria o que mudou).
+if zimaos_registrado; then
+  _web=""
+  if [ "$RECRIAR_WEB" = 1 ]; then _web=" --recriar-web"; fi
+  aviso "O LiveStats esta registrado no painel do ZimaOS ($ZIMAOS_ARQ)."
+  aviso "Codigo, imagens, .env e segredos foram atualizados, mas os containers NAO foram recriados (precisam de sudo)."
+  aviso "Termine com:  bash deploy/enviar.sh registrar-zimaos$_web   (pede a senha do SSH e a do sudo)"
+  exit 2
+fi
 docker_ compose up -d
 if [ "$RECRIAR_WEB" = 1 ]; then docker_ compose up -d --force-recreate web; fi
 info "Esperando os 4 servicos ficarem 'healthy' (ate 6 minutos) ..."

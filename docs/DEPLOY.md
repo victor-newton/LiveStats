@@ -149,6 +149,21 @@ Marque cada item. Comandos do servidor: `bash deploy/enviar.sh status` (1 senha)
 - [ ] Chave antiga do YouTube revogada; apps antigos parados; `canaldobenja` desativado no NPM.
 - [ ] `git ls-files secrets` (no repositório) mostra só `secrets/README.md`.
 
+## Aparecer na tela inicial do ZimaOS (opcional)
+
+**Por quê.** O ZimaOS só lista na tela inicial os apps cujo compose está em `/var/lib/casaos/apps/<projeto>/docker-compose.yml` (pasta do root). O LiveStats roda de `/DATA/AppData/livestats` e funciona normalmente, mas não aparece como cartão. Este passo grava uma cópia "resolvida" do compose (caminhos absolutos, `.env` já aplicado, metadados `x-casaos` mantidos) naquela pasta e recria os containers a partir dela.
+
+```sh
+bash deploy/enviar.sh registrar-zimaos            # registra (ou atualiza) o cartão
+bash deploy/enviar.sh registrar-zimaos --remover  # desfaz: volta a rodar pelo compose de /DATA/AppData/livestats
+```
+
+- **Senhas: 2.** A do SSH e a do `sudo` (o usuário `Vitex` tem sudo com senha; o modo usa `ssh -t`, então o sudo pergunta no seu terminal). O instalar (passo 2) deve ter sido feito antes: este modo roda o código que ele deixou no servidor.
+- O arquivo registrado fica com dono root e modo 600. Antes de gravar, o script confere que o conteúdo de nenhum arquivo de `secrets/` aparece nele e aborta se aparecer. Os volumes nunca são apagados (nem no `--remover`).
+- Na primeira vez os containers são recriados (alguns segundos fora do ar), porque o Docker não recria sozinho só porque o compose mudou de pasta. Rodar de novo sem mudanças não reescreve nada.
+- **Depois de registrado**, as reinstalações respeitam o registro: `instalar` atualiza código, imagens, `.env` e segredos, mas **para antes de recriar os containers** (saída 2) e manda rodar `bash deploy/enviar.sh registrar-zimaos` (com `--recriar-web` se o certificado TLS foi renovado). `conectar-npm` e `rollback` passam a usar `ssh -t` e pedir a senha do sudo (o rollback derruba pelo arquivo registrado e deixa o cartão como app parado).
+- **Alerta:** editar o app pela tela do ZimaOS (configurações do app, "salvar") pode reescrever esse YAML e tirar as proteções (usuário não-root, `read_only`, `cap_drop`, rede interna). Faça qualquer mudança pelos scripts (`instalar`, `registrar-zimaos`) e não pelo editor do ZimaOS. Em caso de dúvida, rode `registrar-zimaos` de novo: ele regrava o arquivo correto.
+
 ## Rollback
 
 ```sh
@@ -165,7 +180,7 @@ Para reinstalar o LiveStats depois: `bash deploy/enviar.sh instalar --channel-id
 
 ## Manutenção
 
-- **Atualizar o código**: commite, rode `bash deploy/enviar.sh instalar --channel-id UC... --sem-segredos` (1 senha). Reconstrói as imagens e recria o que mudou.
+- **Atualizar o código**: commite, rode `bash deploy/enviar.sh instalar --channel-id UC... --sem-segredos` (1 senha). Reconstrói as imagens e recria o que mudou. Se o app estiver registrado no painel do ZimaOS, termine com `bash deploy/enviar.sh registrar-zimaos` (veja a seção acima).
 - **Trocar a senha do admin**: no servidor, `sh /DATA/AppData/livestats/deploy/install.sh --lan-ip 192.168.15.62 --reset-admin-password --skip-build` (pergunta no terminal; precisa de `ssh -t`) e depois `docker compose up -d --force-recreate api`.
 - **Renovar o certificado** (825 dias): `instalar --renew-tls --sem-segredos`.
 - **Trocar a chave do YouTube**: apague `secrets/youtube_api_key.txt` no servidor e rode `instalar` de novo (ele pergunta a chave), ou substitua o arquivo e `docker compose up -d --force-recreate worker-lives`.

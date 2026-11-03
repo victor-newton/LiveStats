@@ -27,6 +27,11 @@ while [ $# -gt 0 ]; do
 done
 
 escolher_docker || die "Sem acesso ao Docker."
+# Registrado no painel do ZimaOS: recriar o web exige o arquivo registrado (root, sudo com senha). Sem terminal para a
+# senha, aborta ANTES de mudar qualquer coisa (rede, .env), para nao deixar o projeto pela metade.
+if zimaos_registrado && ! zimaos_sudo_ok; then
+  die "LiveStats registrado no painel do ZimaOS: preciso de terminal para o sudo. Rode com ssh -t (enviar.sh conectar-npm). Nada foi alterado."
+fi
 cd "$DIR" || die "Pasta $DIR nao existe."
 [ -f .env ] || die "$DIR/.env nao existe: instale primeiro (deploy/install.sh)."
 docker_ network inspect "$REDE_EDGE" >/dev/null 2>&1 || die "Rede $REDE_EDGE nao existe: o LiveStats esta de pe? (docker compose up -d)"
@@ -64,8 +69,13 @@ fi
 env_set "$DIR/.env" TRUSTED_PROXY_CIDR "$IP/32"
 ok "TRUSTED_PROXY_CIDR=$IP/32 gravado no .env."
 
-info "Recriando so o servico web para ler o novo valor ..."
-docker_ compose up -d web
+if zimaos_registrado; then
+  info "Registrado no painel do ZimaOS: regerando o arquivo registrado e recriando o web a partir dele ..."
+  sh "$AQUI/registrar_zimaos.sh" --dir "$DIR" --recriar-web
+else
+  info "Recriando so o servico web para ler o novo valor ..."
+  docker_ compose up -d web
+fi
 _t=0
 while [ "$_t" -lt 90 ] && [ "$(saude livestats-web)" != healthy ]; do sleep 3; _t=$((_t + 3)); done
 [ "$(saude livestats-web)" = healthy ] || die "livestats-web nao ficou healthy (veja: docker logs livestats-web)."
