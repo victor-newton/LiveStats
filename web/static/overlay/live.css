@@ -11,24 +11,31 @@ body {
 /* A cor da barra chega por JS (style.setProperty('--cor-barra', '#RRGGBB')). */
 #overlay-likes {
   --cor-barra: #FF0033;
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
 }
 
+/* Número + barra formam UM bloco compacto (shrink-to-fit), centralizado na página.
+   O tamanho da fonte mora aqui: a barra usa em (espessura e folga proporcionais). */
+#bloco-likes {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  font-size: 80px;
+}
+
 /* Mesmo visual do contador de inscritos (contador.css), aplicado aos likes. */
 #contagem {
   font-family: 'YouTube Sans', 'Roboto', sans-serif;
-  font-size: 80px;
+  font-size: inherit;
   font-weight: 700;
   color: #FFFFFF;
   letter-spacing: -2px;
   display: flex;
   gap: 0;
   align-items: center;
-  padding-bottom: 14px;
   filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
 }
 .digito-wrap {
@@ -54,15 +61,12 @@ body {
   padding: 0 1px;
 }
 
-/* Barra fina embaixo: trilho translúcido + preenchimento na cor do slot. */
+/* Barra logo abaixo do número, com a largura dele: trilho translúcido + preenchimento na cor do slot. */
 #barra {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 8px;
+  margin-top: 0.12em;
+  height: max(6px, 0.14em);
   background: rgba(255, 255, 255, 0.22);
-  border-radius: 4px;
+  border-radius: 999px;
   overflow: hidden;
   filter: drop-shadow(0 1px 4px rgba(0,0,0,0.5));
 }
@@ -70,6 +74,6 @@ body {
   height: 100%;
   width: 0%;
   background: var(--cor-barra);
-  border-radius: 4px;
+  border-radius: 999px;
   transition: width 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }

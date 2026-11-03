@@ -124,10 +124,10 @@ def test_web_like_07_barra_tem_largura_likes_sobre_meta_e_a_cor_do_slot(page: Pa
     # cor: variável CSS aplicada por CSSOM e usada como fundo da barra
     assert page.evaluate("document.getElementById('overlay-likes').style.getPropertyValue('--cor-barra')") == "#00AA11"
     assert page.evaluate("getComputedStyle(document.getElementById('barra-preenchimento')).backgroundColor") == "rgb(0, 170, 17)"
-    # fina e embaixo
+    # fina e logo abaixo do número (C15; antes ficava colada na base da página)
     assert trilho["height"] <= 12
-    viewport = page.viewport_size
-    assert viewport and abs((trilho["y"] + trilho["height"]) - viewport["height"]) < 1.5
+    contagem = page.locator("#contagem").bounding_box()
+    assert contagem and 0 <= trilho["y"] - (contagem["y"] + contagem["height"]) <= 20
 
 
 def test_web_like_07b_largura_fracionaria(page: Page, api, base_url):

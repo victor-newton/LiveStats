@@ -514,6 +514,21 @@ Rota removida: `/overlay/inscritos` (404 nas duas portas). IDs antigos afetados 
 | INFRA-NG-16 | Container real (docker): rota removida | `/overlay/inscritos` (também com `?x=1`, `/` final, `INSCRITOS` e `.html`) → 404 nas portas 8080 e 8081, sem o HTML do contador; `/contador` → 200 com o conteúdo de `contador.html` | rota servida; `/contador` quebrado |
 
 
+---
+
+## C15 — Barra de likes colada embaixo do número
+
+Acréscimo da C15; nenhuma linha anterior foi apagada. Onde a **WEB-LIKE-07** diz "colada embaixo (da página)", vale esta seção: a barra fica logo abaixo do número `likes/meta`, num bloco único (`#bloco-likes`), para quem recorta só o número no vMix. Cada ID roda em 1280×720 e 1920×1080, com meta, medido por `getBoundingClientRect`/`getComputedStyle` (`tests/web/test_web_overlay_barra.py`).
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| WEB-LIKE-15 | Posição da barra | distância entre a base do número e o topo do trilho entre 0 e 0,25 × fonte (80 px); barra abaixo do número, sem sobrepor | barra na base da página |
+| WEB-LIKE-16 | Largura | trilho com a mesma largura (e mesmo x) do bloco do número (±1 px) | trilho com a largura da página |
+| WEB-LIKE-17 | Cantos | `border-radius` do trilho e do preenchimento (a 25 %) ≥ metade da altura e ≥ 100 px (999px); trilho com `overflow: hidden` | cantos de 4 px ou quadrados |
+| WEB-LIKE-18 | Espessura | 10 a 14 px na fonte padrão; ao dobrar a fonte (CSSOM) a altura dobra (±1 px) e a folga/largura seguem | espessura fixa em px |
+| WEB-LIKE-19 | Bloco compacto | o retângulo de `#bloco-likes` envolve exatamente número e barra (±2 px) e fica centralizado na janela | padding/margem sobrando em volta |
+| WEB-LIKE-20 | Sem meta | sem barra visível nem caixa; o bloco tem o tamanho do número (±2 px) | barra ou espaço reservado sem meta |
+
 ## Cobertura cruzada (PLANO §4 → testes)
 
 | Item do PLANO §4 | Testes |
