@@ -68,16 +68,13 @@ services:
       # ignorado. NUNCA usar a sub-rede inteira nem o IP do gateway da bridge (ex.: 172.29.80.1): conexoes
       # que chegam pela porta publicada aparecem com o IP do gateway. Nao e segredo.
       TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-}
-      # IP fixo (/32) do Nginx Proxy Manager na rede edge (ex.: 172.29.80.11/32), de onde a porta 8081 aceita o
-      # ultimo salto de X-Forwarded-For. VAZIO (padrao) = ignorar X-Forwarded-For. Mesma regra: nunca a sub-rede
-      # nem o gateway.
-      ADMIN_TRUSTED_PROXY_IP: ${ADMIN_TRUSTED_PROXY_IP:-}
+      # Lista de permissao da 8081 (D33): IPv4 ou IPv4/N (N de 8 a 32) separados por espaco; o resto recebe 403.
+      # Padrao 127.0.0.1/32. A 8081 nao confia em nenhum cabecalho de IP. 0.0.0.0/0, texto e IPv6 abortam a subida.
+      ADMIN_ALLOW_CIDRS: ${ADMIN_ALLOW_CIDRS:-127.0.0.1/32}
     ports:
       - "8080:8080"                     # publica (Cloudflare Tunnel aponta aqui). Sem rota de admin.
-      # admin: por padrao SO ouve em 127.0.0.1. O acesso normal e pelo Nginx Proxy Manager (HTTPS), que entra na rede
-      # edge com IP fixo e fala com livestats-web:8081 (nao precisa de porta no host). Alternativa: Tailscale Serve
-      # -> 127.0.0.1:8081.
-      # O cookie de sessao e Secure: nao ha TLS proprio nem opcao de desligar (ver ARCHITECTURE P1).
+      # admin (D33): HTTPS proprio na 8081 (certificado autoassinado nos secrets admin_tls_cert/admin_tls_key) e
+      # lista ADMIN_ALLOW_CIDRS. Por padrao SO ouve em 127.0.0.1; no deploy ADMIN_BIND=0.0.0.0 e a lista filtra.
       - "${ADMIN_BIND:-127.0.0.1}:8081:8081"
     x-casaos:
       envs:
@@ -85,10 +82,10 @@ services:
           description:
             en_us: Fixed /32 IP of cloudflared on the edge network (empty = trust nobody).
             pt_br: IP fixo /32 do cloudflared na rede edge (vazio = nao confiar em ninguem).
-        - container: ADMIN_TRUSTED_PROXY_IP
+        - container: ADMIN_ALLOW_CIDRS
           description:
-            en_us: Fixed /32 IP of Nginx Proxy Manager on the edge network (empty = ignore X-Forwarded-For).
-            pt_br: IP fixo /32 do Nginx Proxy Manager na rede edge (vazio = ignorar X-Forwarded-For).
+            en_us: Space-separated IPv4/CIDR allow list for the HTTPS admin port 8081 (default 127.0.0.1/32).
+            pt_br: Lista de IPv4/CIDR (separados por espaco) permitidos na porta HTTPS do admin 8081 (padrao 127.0.0.1/32).
       ports:
         - container: "8080"
           description:
@@ -98,6 +95,9 @@ services:
           description:
             en_us: Admin panel port (127.0.0.1 only by default).
             pt_br: Porta do painel admin (somente 127.0.0.1 por padrao).
+    secrets:
+      - admin_tls_cert                  # certificado autoassinado da 8081 (so o web; sem ele o web nao sobe)
+      - admin_tls_key
     networks:
       - edge                            # onde as portas sao publicadas
       - internal                        # fala com a api
@@ -223,8 +223,7 @@ networks:
   # Onde o web publica 8080/8081 (rede interna nao publica portas). Sem NAT de saida:
   # o web nao precisa de internet. O cloudflared (se estiver neste host) entra nesta rede com IP FIXO
   # (ex.: 172.29.80.10, fora do .1 do gateway), e so esse IP/32 vai em TRUSTED_PROXY_CIDR. O Nginx Proxy Manager
-  # entra do mesmo jeito (rede externa livestats-edge, ipv4_address fixo, ex.: 172.29.80.11) e seu /32 vai em
-  # ADMIN_TRUSTED_PROXY_IP.
+  # entra do mesmo jeito (rede externa livestats-edge, ipv4_address fixo, ex.: 172.29.80.11), se houver.
   edge:
     name: livestats-edge
     driver: bridge
@@ -256,3 +255,7 @@ secrets:
     file: ./secrets/cookie_public_key.txt
   admin_password_hash:                  # -> api (hash argon2, nao a senha)
     file: ./secrets/admin_password_hash.txt
+  admin_tls_cert:                       # -> web (certificado TLS autoassinado da 8081, com o IP no SAN)
+    file: ./secrets/admin_tls_cert.pem
+  admin_tls_key:                        # -> web (chave privada do certificado acima)
+    file: ./secrets/admin_tls_key.pem
