@@ -94,3 +94,33 @@ ocultar() {
 achar_container() {
   docker_ ps --format '{{.Names}} {{.Image}}' | grep -Ei "$1" | head -n 1 | cut -d' ' -f1 || true
 }
+
+# ---- Registro no painel do ZimaOS (C17) -----------------------------------------------------------------
+# O ZimaOS so lista na tela inicial os apps cujo compose fica em /var/lib/casaos/apps/<projeto>/docker-compose.yml
+# (pasta do root). deploy/registrar_zimaos.sh grava la uma copia "resolvida" do compose. Quando esse registro existe,
+# os containers PRECISAM ser (re)criados a partir dele, senao o cartao some. As funcoes abaixo servem a isso.
+# Em producao os padroes sao /var/lib/casaos/apps e `sudo`; as variaveis LIVESTATS_ZIMAOS_APPS e LIVESTATS_SUDO
+# existem so para os testes (LIVESTATS_SUDO vazio = sem sudo).
+ZIMAOS_APPS=${LIVESTATS_ZIMAOS_APPS:-/var/lib/casaos/apps}
+ZIMAOS_SUDO=${LIVESTATS_SUDO-sudo}
+if [ "$(id -u)" = 0 ]; then ZIMAOS_SUDO=; fi
+ZIMAOS_PASTA="$ZIMAOS_APPS/livestats"
+ZIMAOS_ARQ="$ZIMAOS_PASTA/docker-compose.yml"
+export ZIMAOS_APPS ZIMAOS_SUDO ZIMAOS_PASTA ZIMAOS_ARQ
+
+# 0 se o LiveStats ja esta registrado no painel do ZimaOS (basta existir; ler o arquivo exige root).
+zimaos_registrado() { [ -e "$ZIMAOS_ARQ" ]; }
+
+# 0 se da para usar sudo agora: sem sudo configurado, ja root, ou com terminal para a senha (ssh -t).
+zimaos_sudo_ok() { [ -z "$ZIMAOS_SUDO" ] || [ "$(id -u)" = 0 ] || [ -t 0 ]; }
+
+# docker compose sobre o arquivo REGISTRADO (que e do root, modo 600, por isso o sudo).
+compose_registrado() {
+  # shellcheck disable=SC2086  # ZIMAOS_SUDO vazio ou "sudo": a expansao sem aspas e intencional
+  $ZIMAOS_SUDO docker compose -f "$ZIMAOS_ARQ" "$@"
+}
+
+# Valor do label com.docker.compose.project.config_files do container $1 (vazio se nao existir).
+config_do_container() {
+  docker_ inspect -f '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$1" 2>/dev/null || true
+}

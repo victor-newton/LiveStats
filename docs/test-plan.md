@@ -577,6 +577,32 @@ Contratos que mudaram e os testes antigos tocados (cada verificação foi mantid
 | SEC-09b | Mapa de secrets nos containers reais (`tests/security/test_sec_container.py`) | `/run/secrets`: `worker-inscritos` = privada + pública; `api` = pública + hash da senha; `worker-lives` = só a chave da API; `web` = só TLS do admin | privada fora do worker; pública no `worker-lives`/`web` |
 | INT-SES-01 | Pilha real (`tests/e2e/test_int_sessao.py`, `E2E_PUBLIC_PORT=18080 E2E_ADMIN_PORT=18081`) | o Studio falso rotaciona o cookie de sessão (valor colado vale uma vez); o worker grava a renovação (`source='worker'` no status e no banco, decifrada dentro do worker); logs sem cookie; depois de reiniciar o `worker-inscritos` a leitura continua e o Studio recebe só o cookie renovado, sem colar nada | reinício volta ao cookie colado e cai em login |
 
+## C17 — Registro no painel (tela inicial) do ZimaOS
+
+### infra (`tests/infra/test_zimaos_registro.py`, scripts reais num container `docker:27-cli`; `docker` do PATH repassa tudo ao real, simulando só `info`/`inspect`/`up`/`down`; sem sudo, destino `/apps`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| INFRA-ZIM-01 | Arquivo resolvido do `docker-compose.yml` real + `.env` de teste | `name: livestats`, bloco `x-casaos`, `context` e `source:` dos secrets absolutos (`/work/...`), `.env` interpolado, nenhum `${` | caminho relativo; metadado perdido; sem interpolar |
+| INFRA-ZIM-02 | Proteções sobrevivem (semântico: `compose config --format json` do gerado × original) | `services`, `networks`, `secrets`, `volumes` idênticos; `read_only`, `cap_drop ALL`, `no-new-privileges`, usuário não-root, secrets do worker, rede `internal: true`, só 8080/8081 publicadas | proteção perdida na geração |
+| INFRA-ZIM-03 | Instalação | `/apps/livestats/docker-compose.yml` com dono root e modo 600; primeiro `up -d --force-recreate` pelo arquivo registrado; nada de `down`/`-v` | modo 644; sobe pelo compose de `DIR` |
+| INFRA-ZIM-04 (×6) | Segredo no YAML | com o conteúdo de cada um dos 6 arquivos de `secrets/` plantado no `.env`, o script aborta citando o arquivo, não imprime o conteúdo, não instala e não sobe nada | checagem removida ou parcial |
+| INFRA-ZIM-05 | Compose sem `x-casaos` / sem `name: livestats` | aborta, nada instalado | instalar mesmo assim |
+| INFRA-ZIM-06 | Idempotência | segunda execução com o mesmo conteúdo não reescreve (mesmo inode e mtime, "ja esta igual"); mudar o `.env` reescreve; `up` seguinte sem `--force-recreate`; nenhum temporário sobra | reescrever sempre; recriar sempre |
+| INFRA-ZIM-07 | `--recriar-web` | último `up` é `up -d --force-recreate web` | flag ignorada |
+| INFRA-ZIM-08 | `--remover` | apaga só `livestats/` (outros apps ficam), sobe por `-f /work/docker-compose.yml` com `--force-recreate`, nunca `down`/`-v`/`volume rm`, label volta ao compose de `DIR`; segunda vez diz "Nao estava registrado" | apagar mais; remover volumes |
+| INFRA-ZIM-09 | `lib.sh` e `rollback.sh` | `zimaos_registrado` falso → verdadeiro após registrar; rollback registrado faz `compose -f <registrado> down`, sem registro faz `compose down` | down pelo caminho errado |
+| INFRA-ZIM-10/11/12 | Sem terminal para o sudo (execução, usuário `nobody`, stdin `/dev/null`, `sudo` falso que registra) | `connect_npm`, `rollback` e `registrar_zimaos` abortam antes de mexer: sem `network connect`, sem `down`, sem gerar, `.env` e registro byte a byte iguais, sudo nunca chamado | `zimaos_sudo_ok` sempre verdadeiro |
+| INFRA-ZIM-13 | Controle: mesmo cenário com `LIVESTATS_SUDO` vazio | passa da guarda (`network connect`, `down` pelo registrado, `config`) | teste que passa só porque tudo aborta |
+| INFRA-ZIM-S01 | `enviar.sh registrar-zimaos` (estático) | usa `SSH_OPTS_TTY` (`-t`), roda `registrar_zimaos.sh`, não toca segredos/tar; repassa `--remover`/`--recriar-web` | sem terminal para o sudo |
+| INFRA-ZIM-S02 | `enviar.sh instalar` intacto | segue com `-T`, segredos por stdin; `rollback`/`conectar-npm` usam `-t`; `status`/`preflight` não | quebrar o caminho dos segredos |
+| INFRA-ZIM-S03 | `install.sh` registrado | checagem do registro antes do `up -d`, `exit 2`, manda rodar `registrar-zimaos` (`--recriar-web` no TLS novo), não sobe nada | recriar pelo `DIR` |
+| INFRA-ZIM-S04 | `connect_npm.sh` | aborta antes de mexer em rede/`.env` sem terminal; com registro recria o web via `registrar_zimaos.sh --recriar-web` | up fora do registro |
+| INFRA-ZIM-S05 | `rollback.sh` | valida o terminal antes de soltar redes; `down` pelo arquivo registrado, sem `-v` | `down -v`; meio rollback |
+| INFRA-ZIM-S06 | `lib.sh` | padrões de produção (`/var/lib/casaos/apps`, `sudo`), `compose_registrado` usa `sudo docker compose -f` | padrão trocado |
+| INFRA-ZIM-S07 | `registrar_zimaos.sh` | `install -m 600 -o root`, sudo em cada escrita, `mktemp`+`trap`, `grep -Fq -f` antes de instalar, sem `down`/`volume rm`/`-v` | modo/dono errado; sem checagem |
+| INFRA-ZIM-S08/S09 | `status.sh` só lê; scripts `sh` sem CRLF nem `[[` | — | bashismo |
+
 ## Cobertura cruzada (PLANO §4 → testes)
 
 | Item do PLANO §4 | Testes |

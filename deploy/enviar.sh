@@ -9,6 +9,11 @@
 #   status        1 vez
 #   conectar-npm  1 vez  - so se voce escolher a opcao A do docs/DEPLOY.md (ou use: instalar --conectar-npm, 0 extras).
 #   rollback      1 vez
+#   registrar-zimaos  1 senha do SSH + a senha do sudo (ssh -t): grava o compose em /var/lib/casaos/apps (pasta do
+#                     root) para o LiveStats aparecer na tela inicial do ZimaOS. Roda o codigo que o "instalar" ja
+#                     deixou no servidor. Com --remover desfaz. Depois do registro, conectar-npm e rollback tambem
+#                     usam ssh -t (pedem a senha do sudo) e o "instalar" para antes de recriar os containers,
+#                     mandando rodar o registrar-zimaos de novo. Nenhum segredo passa por este modo.
 #   Caminho recomendado (opcao B, sem mexer no container do NPM): UMA senha no total ("instalar").
 #   Cada comando e uma conexao ssh separada; nao ha como reaproveitar a senha (o ssh do Windows nao tem multiplexacao).
 #
@@ -21,6 +26,7 @@
 #        [--admin-user Vitex] [--admin-allow "192.168.15.0/24 100.64.0.0/10"] [--public-base-url https://lives.vitex.xyz.br] [--extra-san IP-do-Tailscale]
 #        [--chave-youtube-arquivo ARQ] [--sem-segredos] [--conectar-npm [NOME]] [--renew-tls] [--skip-build]
 #   deploy/enviar.sh preflight|status|conectar-npm|rollback [--host H] [--user U]
+#   deploy/enviar.sh registrar-zimaos [--remover] [--recriar-web] [--host H] [--user U]
 set -euo pipefail
 
 HOST=192.168.15.62
@@ -29,10 +35,10 @@ DEST=/DATA/AppData/livestats
 SSH=${ENVIAR_SSH:-ssh}   # sobrescrevivel para ensaios locais; em producao e o ssh de verdade
 
 MODO=${1:-}
-[ -n "$MODO" ] || { sed -n '2,24p' "$0"; exit 1; }
+[ -n "$MODO" ] || { sed -n '2,29p' "$0"; exit 1; }
 shift
 
-CANAL=""; ADMIN_ALLOW=""; ADMIN_USER=""; PUBLIC_URL=""; EXTRA=(); YT_ARQ=""; SEM_SEGREDOS=0; EXTRAS_INSTALL=()
+CANAL=""; ADMIN_ALLOW=""; ADMIN_USER=""; PUBLIC_URL=""; EXTRA=(); YT_ARQ=""; SEM_SEGREDOS=0; EXTRAS_INSTALL=(); EXTRAS_REGISTRO=()
 while [ $# -gt 0 ]; do
   case $1 in
     --host) HOST=$2; shift 2 ;;
@@ -46,6 +52,8 @@ while [ $# -gt 0 ]; do
     --sem-segredos) SEM_SEGREDOS=1; shift ;;
     --renew-tls) EXTRAS_INSTALL+=(--renew-tls); shift ;;
     --skip-build) EXTRAS_INSTALL+=(--skip-build); shift ;;
+    --remover) EXTRAS_REGISTRO+=(--remover); shift ;;
+    --recriar-web) EXTRAS_REGISTRO+=(--recriar-web); shift ;;
     --conectar-npm)
       EXTRAS_INSTALL+=(--connect-npm); shift
       if [ $# -gt 0 ] && [[ $1 != --* ]]; then EXTRAS_INSTALL+=("$1"); shift; fi ;;
@@ -60,6 +68,8 @@ valida '^[A-Za-z0-9._-]{1,32}$' "$USUARIO"
 RAIZ=$(git rev-parse --show-toplevel)
 cd "$RAIZ"
 SSH_OPTS=(-T -o ServerAliveInterval=30 -o ServerAliveCountMax=40)
+# Com terminal (ssh -t): para o que pode precisar da senha do sudo (registro no painel do ZimaOS). Nunca leva segredos.
+SSH_OPTS_TTY=(-t -o ServerAliveInterval=30 -o ServerAliveCountMax=40)
 ALVO="$USUARIO@$HOST"
 
 lerpar() { # $1 prompt, $2 variavel de saida; sem eco quando ha terminal
@@ -82,14 +92,19 @@ case $MODO in
     ;;
   conectar-npm)
     echo ">> Conectando o NPM em $ALVO (1 senha)."
-    "$SSH" "${SSH_OPTS[@]}" "$ALVO" "sh $DEST/deploy/connect_npm.sh --dir $DEST"
+    "$SSH" "${SSH_OPTS_TTY[@]}" "$ALVO" "sh $DEST/deploy/connect_npm.sh --dir $DEST"
     ;;
   rollback)
     printf 'Desligar o LiveStats em %s (volumes ficam)? Digite "sim": ' "$HOST" >&2
     read -r R
     [ "$R" = sim ] || { echo "Cancelado." >&2; exit 1; }
     echo ">> Rollback em $ALVO (1 senha)."
-    "$SSH" "${SSH_OPTS[@]}" "$ALVO" "sh $DEST/deploy/rollback.sh --dir $DEST --yes"
+    "$SSH" "${SSH_OPTS_TTY[@]}" "$ALVO" "sh $DEST/deploy/rollback.sh --dir $DEST --yes"
+    ;;
+  registrar-zimaos)
+    for a in ${EXTRAS_REGISTRO[@]+"${EXTRAS_REGISTRO[@]}"}; do valida '^--[a-z-]+$' "$a"; done
+    echo ">> Registrando o LiveStats no painel do ZimaOS em $ALVO (senha do SSH + senha do sudo)."
+    "$SSH" "${SSH_OPTS_TTY[@]}" "$ALVO" "sh $DEST/deploy/registrar_zimaos.sh --dir $DEST ${EXTRAS_REGISTRO[*]-}"
     ;;
   instalar)
     [ -n "$CANAL" ] || { echo "Informe --channel-id UC... (ID do canal do YouTube)." >&2; exit 1; }
@@ -140,5 +155,5 @@ case $MODO in
     } | "$SSH" "${SSH_OPTS[@]}" "$ALVO" "$REMOTO"
     ;;
   *)
-    sed -n '2,24p' "$0"; exit 1 ;;
+    sed -n '2,29p' "$0"; exit 1 ;;
 esac
