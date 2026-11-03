@@ -58,7 +58,11 @@ def health(state: AppState = Depends(get_state)) -> Response:
 
 @router.get("/api/public/lives/{slot}")
 def public_live(slot: int, state: AppState = Depends(get_state)) -> Response:
-    return _json(dumps(_live_object_or_error(state, slot)))
+    """Formato novo (objeto): o legado acrescido de ``goal`` e ``color`` do slot (D34). Os ``/live{n}.json`` nao mudam."""
+    obj = _live_object_or_error(state, slot)
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        row = conn.execute("SELECT goal, color FROM slots WHERE slot = ?", (slot,)).fetchone()
+    return _json(dumps({**obj, "goal": row["goal"], "color": row["color"]}))
 
 
 @router.get("/api/public/subscribers")

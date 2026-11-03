@@ -104,11 +104,41 @@ def connection(opener, path: str) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+# Colunas acrescentadas ao esquema compartilhado na versao 2 (D34). Devem ser identicas as de db/schema.sql.
+_SLOTS_V2_COLUMNS = (
+    ("goal", "INTEGER CHECK (goal IS NULL OR goal BETWEEN 1 AND 1000000000)"),
+    (
+        "color",
+        "TEXT NOT NULL DEFAULT '#FF0033' "
+        "CHECK (length(color) = 7 AND color GLOB '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]')",
+    ),
+)
+SCHEMA_VERSION = "2"
+
+
+def _migrate_shared(conn: sqlite3.Connection) -> None:
+    """Migra um banco compartilhado v1 para v2 (idempotente; nada se perde). Roda so se ``slots`` existe."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'slots'").fetchone() is None:
+        return  # banco que nao e o compartilhado (admin.db)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        present = {row[1] for row in conn.execute("PRAGMA table_info(slots)")}
+        for name, definition in _SLOTS_V2_COLUMNS:
+            if name not in present:
+                conn.execute(f"ALTER TABLE slots ADD COLUMN {name} {definition}")  # noqa: S608 (constantes)
+        conn.execute("UPDATE schema_meta SET value = ? WHERE key = 'schema_version' AND value = '1'", (SCHEMA_VERSION,))
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
+
 def bootstrap_schema(db_path: str, schema_file: str) -> None:
-    """Aplica o esquema (idempotente). Quem cria os bancos e SOMENTE a api, na subida."""
+    """Aplica o esquema (idempotente) e migra bancos antigos. Quem cria os bancos e SOMENTE a api, na subida."""
     sql = Path(schema_file).read_text(encoding="utf-8")
-    conn = sqlite3.connect(db_path, timeout=5.0)
+    conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=None)
     try:
         conn.executescript(sql)
+        _migrate_shared(conn)
     finally:
         conn.close()

@@ -270,3 +270,20 @@ def walk_keys(node):
     elif isinstance(node, list):
         for item in node:
             yield from walk_keys(item)
+
+
+# ------------------------------------------------------------------------------- slots (D34: url + meta + cor)
+DEFAULT_COLOR = "#FF0033"
+
+
+def slot_item(url: str = "", goal: int | None = None, color: str = DEFAULT_COLOR) -> dict:
+    """Um item do corpo de ``PUT /api/admin/slots`` no formato da D34."""
+    return {"url": url, "goal": goal, "color": color}
+
+
+def slot_items(*urls: str) -> list[dict]:
+    """Itens com so a URL preenchida (meta nula, cor padrao)."""
+    return [slot_item(url) for url in urls]
+
+
+BLANK_SLOTS = slot_items("", "", "", "")

@@ -106,14 +106,23 @@ def get_session(session: SessionData = Depends(require_session), state: AppState
 @router.get("/slots")
 def get_slots(state: AppState = Depends(get_state)) -> dict[str, Any]:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        slot_rows = conn.execute("SELECT slot, url, updated_at FROM slots ORDER BY slot").fetchall()
+        slot_rows = conn.execute("SELECT slot, url, goal, color, updated_at FROM slots ORDER BY slot").fetchall()
         stats = {
             row["slot"]: live_object(row)
             for row in conn.execute(f"SELECT {_LIVE_COLUMNS} FROM live_stats").fetchall()  # noqa: S608
         }
     saved = [row["updated_at"] for row in slot_rows if row["updated_at"]]
     return {
-        "slots": [{"slot": row["slot"], "url": row["url"], "stats": stats.get(row["slot"])} for row in slot_rows],
+        "slots": [
+            {
+                "slot": row["slot"],
+                "url": row["url"],
+                "goal": row["goal"],
+                "color": row["color"],
+                "stats": stats.get(row["slot"]),
+            }
+            for row in slot_rows
+        ],
         "saved_at": max(saved) if saved else None,
     }
 
@@ -128,9 +137,12 @@ def put_slots(
     saved_at = legacy_timestamp(state.clock.now())
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         with db.transaction(conn, immediate=True):
-            for number, url in enumerate(body.slots, start=1):
-                conn.execute("UPDATE slots SET url = ?, updated_at = ? WHERE slot = ?", (url, saved_at, number))
-    return {"ok": True, "slots": body.slots, "saved_at": saved_at}
+            for number, item in enumerate(body.slots, start=1):
+                conn.execute(
+                    "UPDATE slots SET url = ?, goal = ?, color = ?, updated_at = ? WHERE slot = ?",
+                    (item.url, item.goal, item.color, saved_at, number),
+                )
+    return {"ok": True, "slots": [item.model_dump() for item in body.slots], "saved_at": saved_at}
 
 
 # ---------------------------------------------------------------------------- cookies
