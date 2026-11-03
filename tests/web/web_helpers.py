@@ -126,11 +126,24 @@ def wait_until(
     raise AssertionError(f"Tempo esgotado esperando: {what}")
 
 
+# D35: o unico svg legitimo e o diagrama estatico da secao Saude. Ele e identificado pela POSICAO no DOM
+# (o elemento exato: filho direto de .diagram-wrap, filho direto de section#saude, ambos do index.html);
+# a identidade e comparada por referencia, nunca pelo id. Qualquer outro svg (inclusive outro #healthDiagram,
+# dentro ou fora do conteiner) conta como injecao. O conteudo do diagrama e checado em WEB-SAU-08.
+CONTA_INJETADOS = """() => {
+    const permitido = document.querySelector('section#saude > .diagram-wrap > svg#healthDiagram');
+    const alvo = document.body.querySelectorAll('img, svg, iframe, object, embed, script, style, a');
+    return [...alvo].filter((e) => e !== permitido).length;
+}"""
+
+
+def injected_count(page: Page) -> int:
+    return page.evaluate(CONTA_INJETADOS)
+
+
 def no_html_injected(page: Page) -> None:
     """Nenhum elemento "perigoso" nasceu dentro do corpo da página: o que veio
     do servidor foi tratado como texto."""
-    n = page.evaluate(
-        "document.body.querySelectorAll('img, svg:not(#healthDiagram), iframe, object, embed, script, style, a').length"
-    )  # D35: o diagrama de saude (#healthDiagram) e o unico svg legitimo; seu conteudo e checado em WEB-HEALTH-05
+    n = injected_count(page)
     assert n == 0, f"{n} elementos injetados no corpo"
     assert page.evaluate("window.__xss") is None

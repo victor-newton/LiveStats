@@ -479,3 +479,29 @@ def test_web_end_01_secao_endpoints_lista_tudo_que_e_publico_com_url_completa_e_
     expect(page.locator("#endpoints .ep-copy")).to_have_count(len(urls))
     assert not any("/api/admin" in u for u in urls)  # nada de admin entre as saídas públicas
     assert page.get_by_role("heading", name="Endpoints", level=2).count() == 1
+
+
+# --------------------------------------------------------------------------------------------- autoteste do detector
+@pytest.mark.parametrize(
+    "onde, html",
+    [
+        (".slot-title", '<svg id="healthDiagram"></svg>'),  # titulo de slot com o id do diagrama
+        ("body", '<svg id="healthDiagram"></svg>'),  # outro #healthDiagram fora do conteiner
+        (".diagram-wrap", '<svg id="healthDiagram"></svg>'),  # segundo dentro do proprio conteiner
+        ("#healthCards", '<svg></svg>'),
+        ("#healthCards", '<img src="data:,">'),
+    ],
+    ids=["titulo-de-slot", "fora-do-conteiner", "segundo-no-conteiner", "svg-comum", "img"],
+)
+def test_web_sau_11_o_detector_anti_xss_pega_svg_injetado_mesmo_com_o_id_do_diagrama(page: Page, api, base_url, onde, html):
+    from web_helpers import injected_count
+
+    api.set_stats(1, api.live_stats(1))
+    entra(page, base_url, api)
+    assert injected_count(page) == 0  # so o diagrama estatico da secao Saude e aceito
+    no_html_injected(page)
+    page.evaluate("([sel, html]) => document.querySelector(sel).insertAdjacentHTML('beforeend', html)", [onde, html])
+    assert injected_count(page) >= 1, html
+    with pytest.raises(AssertionError, match="elementos injetados"):
+        no_html_injected(page)
+    page.evaluate("window.__xss = undefined")
