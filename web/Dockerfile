@@ -5,7 +5,7 @@
 # O front (web/static, T6) e assado na imagem: nenhum volume, nenhum bind-mount.
 
 # ---------------------------------------------------------------- estagio 1: estaticos
-FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03 AS assets
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e AS assets
 USER root
 # Somente as duas pastas do contrato de URLs (repo-layout.md, T6): overlay/ e admin/. O painel e servido
 # em /admin-assets/ (e index.html em / e /admin); o diretorio da imagem tem o mesmo nome da URL.
@@ -18,7 +18,7 @@ RUN find /assets -type d -exec chmod 0755 {} + \
 # ---------------------------------------------------------------- estagio 2: valida a configuracao
 # Renderiza os templates (com IPs de exemplo validos) e roda `nginx -t`: configuracao invalida quebra o
 # BUILD, nao a subida em producao. Somente os ARQUIVOS DE ORIGEM seguem para a imagem final.
-FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03 AS confcheck
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e AS confcheck
 USER root
 COPY web/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY web/nginx/snippets/ /etc/nginx/snippets/
@@ -40,7 +40,7 @@ RUN sed -i 's/\r$//' /docker-entrypoint.d/15-livestats-realip.envsh /etc/nginx/n
  && rm -f /etc/nginx/conf.d/*.conf /run/secrets/admin_tls_key /run/secrets/admin_tls_cert
 
 # ---------------------------------------------------------------- estagio final
-FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03 AS runtime
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e AS runtime
 USER root
 # O default.conf da imagem (listen 8080) conflitaria com o nosso; em producao o compose monta um tmpfs
 # em /etc/nginx/conf.d, onde o envsubst escreve a configuracao renderizada.
