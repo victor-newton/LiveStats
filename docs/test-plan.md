@@ -340,6 +340,50 @@ Pilha completa via `docker compose` (arquivo de teste em `tests/e2e/`) com: segr
 
 ---
 
+## C10 — Overlay de likes com meta e barra por live (D34)
+
+Acréscimo da C10; nenhuma linha anterior foi alterada. Onde a D34 muda o que uma linha anterior descreve, vale esta seção e a linha anterior é lida assim: **API-DB-01** e **API-SLOT-01..05** passam a usar itens `{url, goal, color}` (a verificação de cada ID é a mesma, só o formato do corpo/da coluna mudou; `slots` ganha as colunas `goal` e `color` e `schema_version` é `2`); **API-PUB-01/06** e **API-LEG-02/06** passam a esperar `goal` e `color` no fim do objeto **novo** (`/api/public/lives/{n}`), enquanto os `/live{n}.json` continuam byte a byte iguais; **WEB-SLOT-02** envia itens `{url, goal, color}`; **WEB-SLOT-06** passa a listar 17 endereços (ver WEB-LIKE-05); **WEB-A11Y-01b** percorre 12 paradas de `Tab` até o botão (meta e cor de cada slot); o botão de salvar chama-se "Salvar slots".
+
+Decisão de compatibilidade do `PUT /api/admin/slots`: **só o formato novo** (`{slots: [{url, goal, color} × 4]}`, os três campos obrigatórios). A lista de textos antiga devolve 422 (`API-LIKE-04`, `INT-C10-03`); o painel é servido pelo mesmo `web` e foi atualizado junto.
+
+### api (`tests/api/test_api_likes.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| API-LIKE-01 | Banco novo + CHECKs do próprio SQLite | `schema_version` `2`; `slots` com `goal` (nulo) e `color` (`#FF0033`); o banco recusa cor minúscula/nome/`;x`/nula e meta 0, > 1.000.000.000 ou texto | esquema v1; CHECK ausente |
+| API-LIKE-02 | Migração v1 → v2 | banco v1 com URLs e `updated_at` ganha as colunas sem perder dado; versão `2`; repetir a subida 3× não muda nada; meta/cor já gravadas não são sobrescritas; a app sobe sobre banco v1; a consulta `SELECT slot, url FROM slots` do worker segue igual | migração destrutiva ou não idempotente; reaplicar zera meta/cor |
+| API-LIKE-03 | `GET`/`PUT` no formato novo | `GET` traz `goal`/`color` (padrão `null`/`#FF0033`); `PUT` grava URL aparada, meta e cor em **maiúsculas** (limites 1 e 1.000.000.000); resposta e leitura iguais ao gravado; meta pode voltar a `null`; conforme o openapi | cor sem normalizar; campo ignorado |
+| API-LIKE-04 | Validação estrita | cor `red`, `#FFF`, `#GGGGGG`, `url(x)`, `expression()`, `#FF0033;x`, com espaço/quebra de linha/NUL, tipos errados; meta 0, negativa, > 1e9, decimal, `5.0`, texto, booleano, lista/objeto; item sem campo, com campo extra, lista antiga de textos, ≠ 4 itens → 422 sem `input`, sem ecoar o valor, com `loc` apontando `slots.N.campo`, e **nada gravado** (nem `updated_at`; um item ruim não grava os outros) | `$` no regex aceitando `\n`; `bool` aceito como inteiro; gravação parcial |
+| API-LIKE-05 | `/api/public/lives/{n}` | objeto legado + `goal` e `color` no fim (nessa ordem), conforme `PublicLive` do openapi; slot sem meta: `null` e `#FF0033`; sem dados do worker continua 503 | campos fora do contrato; ordem trocada |
+| API-LIKE-06 | Legados intactos | com meta/cor gravadas, `/live{1..4}.json` continuam **byte a byte** iguais aos golden files e sem `goal`/`color`; o `stats` do painel também não ganha os campos | vazar `goal`/`color` no legado |
+
+### front (`tests/web/test_web_likes.py`, `tests/web/test_web_overlay_likes.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| WEB-LIKE-01 | Campos do cartão | cada slot tem `<input type="number">` (min 1, max 1.000.000.000, "Sem meta") e `<input type="color">` com rótulos "Meta de likes"/"Cor da barra" (nome único por slot para leitor de tela); valores do servidor aparecem nos campos | campo ausente; valor ignorado |
+| WEB-LIKE-02 | Salvar | o `PUT` leva `{url, goal, color}` dos 4 slots (meta vazia = `null`); o painel mostra o valor gravado (cor normalizada); apagar a meta envia `null` | meta/cor fora do corpo |
+| WEB-LIKE-03 | Meta inválida | 0, 1.5, > 1e9, negativa não vão ao servidor e o erro cita "Slot N" e "meta de likes"; 422 do servidor em cor/meta mostra "Slot N (cor)"/"(meta de likes)" | enviar valor ruim; erro genérico |
+| WEB-LIKE-04 | Polling do painel | campos de meta/cor em edição não são sobrescritos; os demais seguem o servidor | sobrescrever o que o usuário digita |
+| WEB-LIKE-05 | Endpoints | a lista tem **exatamente** 17 endereços públicos, gerados de `PUBLIC_BASE_URL` (sem barra final) ou da origem atual: `/live{1..4}.json`, `/api/public/lives/{1..4}`, `/inscritos.json`, `/api/public/subscribers`, `/contador`, `/overlay/inscritos`, `/overlay/live.html?slot={1..4}`, `/health`, agrupados (JSON por live, JSON de inscritos, Overlays, Saúde); nenhum `/api/admin` nem `:8081`; cada linha tem rótulo e botão "Copiar" que põe o endereço completo na área de transferência (`navigator.clipboard.writeText`) | endereço faltando/sobrando; endereço de admin; botão copiando outro endereço |
+| WEB-LIKE-06 | Texto do overlay | `1.000/10.000` (milhar com `.`; mesma estrutura de dígitos do contador); vários tamanhos; cada slot lê a própria live; sem meta só os likes e **sem barra** | formato/separador errado; barra sem meta |
+| WEB-LIKE-07 | Barra | largura `min(likes/meta,1)` (25 %, 0.56 %, 100 % ao passar da meta e na meta), medida no layout; cor do slot por CSSOM (`--cor-barra`) aplicada ao fundo; fina e colada embaixo | largura sem limite; cor ignorada |
+| WEB-LIKE-08 | Animação e polling | mesmos atrasos/curva do contador (50+60 ms por dígito na carga inicial; 0,45 s só nos dígitos que mudam, sem recriar; 40 ms por dígito ao mudar a estrutura); consulta `/api/public/lives/N` a cada 5 s; meta/cor alteradas no painel chegam ao overlay | tempos/curva diferentes do contador |
+| WEB-LIKE-09 | `slot` inválido ou ausente | 16 variantes (vazio, 0, 5, `abc`, `1abc`, `01`, `1.0`, repetido, `SLOT`, HTML…): nada exibido, nenhuma requisição à api, nenhum HTML injetado | exibir algo ou consultar com slot inválido |
+| WEB-LIKE-10 | Erros | falha de rede, HTTP 503 e JSON estranho mantêm o último valor e se recuperam quando a rede volta; antes do primeiro dado nada aparece | zerar/sumir ao errar |
+| WEB-LIKE-11 | Aparência | `html`, `body` e raiz transparentes; texto branco 80 px/700 como o contador; sem rolagem; cabe em 1920×1080 e 1280×720 | fundo opaco |
+| WEB-LIKE-12 | CSP e terceiros | cabeçalho CSP do overlay (`frame-ancestors *`), sem `X-Frame-Options`; só os 5 recursos próprios; sem violação de CSP nem requisição externa; cor maliciosa vinda da rede (`red;background:url(http://evil…)`) é descartada (cor padrão) e nada é pedido ao host externo | `innerHTML`/estilo inline; cor sem validação |
+
+### integração (`tests/e2e/test_int_likes.py`, pilha real)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| INT-C10-01 | Painel (8081) → overlay (8080) | meta e cor salvas no painel aparecem em `/api/public/lives/1` (cor em maiúsculas; o legado não os tem) e no overlay (`1.200/10.000`, barra 12 %, cor certa, fundo transparente); likes novos no YouTube (falso) animam o overlay sem recarregar; passar da meta = 100 %; apagar a meta some a barra; sem CSP violada, sem terceiros | meta/cor não chegando ao overlay |
+| INT-C10-02 | `slot` inválido na pilha real | `""`, `0`, `5`, `abc`, repetido: nada exibido | exibir algo |
+| INT-C10-03 | Validação na api real | cor/meta inválidas e a lista antiga de textos → 422 sem `input`; nada muda (`saved_at` igual) | aceitar o formato antigo/valores ruins |
+
+---
+
 ## Cobertura cruzada (PLANO §4 → testes)
 
 | Item do PLANO §4 | Testes |

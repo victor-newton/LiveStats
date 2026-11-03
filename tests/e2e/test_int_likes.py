@@ -126,5 +126,6 @@ def test_int_c10_03_a_api_real_recusa_cor_e_meta_invalidas_e_o_formato_antigo(st
     assert old_format["status"] == 422 and '"input"' not in old_format["body"]
     # nada mudou
     after = stack.api("GET", "/api/admin/slots")
-    assert json.loads(after["body"])["slots"] == json.loads(before["body"])["slots"]
+    config = lambda r: [{k: item[k] for k in ("slot", "url", "goal", "color")} for item in json.loads(r["body"])["slots"]]  # noqa: E731
+    assert config(after) == config(before)  # as estatisticas mudam sozinhas; a configuracao nao
     assert json.loads(after["body"])["saved_at"] == json.loads(before["body"])["saved_at"]
