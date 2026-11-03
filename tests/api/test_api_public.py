@@ -61,6 +61,8 @@ def test_api_pub_01_live_por_slot_e_objeto_conforme_o_contrato(seeded: Stack, sl
         "atualizado_em": row["updated_at"],
         "goal": None,  # D34: meta e cor do slot (banco novo: sem meta, cor padrao)
         "color": "#FF0033",
+        "font": "Roboto",  # D35: aparencia do texto (padrao)
+        "text_color": "#FFFFFF",
     }
     assert isinstance(body["ativo"], str)  # nao e booleano
     assert_schema(body, "PublicLive")
@@ -109,7 +111,10 @@ def test_api_pub_03_subscribers_com_e_sem_leitura(stack: Stack):
         seed_subscribers(conn)
     resp = stack.client.get("/api/public/subscribers")
     assert resp.status_code == 200
-    assert resp.json() == {"inscritos": "460600", "raw": "460600", "atualizado_em": GOLDEN_SUBSCRIBERS["read_at"]}
+    assert resp.json() == {
+        "inscritos": "460600", "raw": "460600", "atualizado_em": GOLDEN_SUBSCRIBERS["read_at"],
+        "font": "Roboto", "text_color": "#FFFFFF",  # D35
+    }
     assert isinstance(resp.json()["inscritos"], str)
     assert_matches_openapi(resp, "/api/public/subscribers", "get")
 
@@ -177,7 +182,9 @@ def test_api_pub_06_dados_publicos_nao_vazam_admin(seeded: Stack):
             body = resp.json()
             body = body[0] if isinstance(body, list) else body
             # D34: so o formato novo carrega goal e color (configuracao publica do overlay); os legados nao
-            assert set(body) == allowed_live_keys | ({"goal", "color"} if path.startswith("/api/public") else set())
+            assert set(body) == allowed_live_keys | (
+                {"goal", "color", "font", "text_color"} if path.startswith("/api/public") else set()
+            )
 
 
 # ------------------------------------------------------------------------------------- API-PUB-07
@@ -219,7 +226,7 @@ def test_api_leg_02_ordem_das_chaves(seeded: Stack):
     # o mesmo vale para o objeto de /api/public/lives/{n}, que ganha goal e color no fim (D34)
     for slot, order in ((1, ACTIVE_ORDER), (4, NO_URL_ORDER)):
         pairs = json.loads(seeded.client.get(f"/api/public/lives/{slot}").content, object_pairs_hook=lambda p: p)
-        assert [k for k, _ in pairs] == order + ["goal", "color"]
+        assert [k for k, _ in pairs] == order + ["goal", "color", "font", "text_color"]
 
 
 # ------------------------------------------------------------------------------------- API-LEG-03
@@ -308,14 +315,18 @@ def test_api_leg_06_caminhos_novo_e_legado_concordam(seeded: Stack, slot):
     legacy = seeded.client.get(f"/live{slot}.json").content
     new = seeded.client.get(f"/api/public/lives/{slot}").content
     # o objeto novo e o legado + goal/color no fim (D34, banco sem meta: null e a cor padrao)
-    extra = b',"goal":null,"color":"#FF0033"}'
+    extra = b',"goal":null,"color":"#FF0033","font":"Roboto","text_color":"#FFFFFF"}'
     assert new.endswith(extra)
     assert legacy == b"[" + new[: -len(extra)] + b"}]"
-    assert {k: v for k, v in json.loads(new).items() if k not in ("goal", "color")} == json.loads(legacy)[0]
+    assert {k: v for k, v in json.loads(new).items() if k not in ("goal", "color", "font", "text_color")} == json.loads(legacy)[0]
 
 
 def test_api_leg_06_subscribers_e_inscritos_json_sao_identicos(seeded: Stack):
-    assert seeded.client.get("/api/public/subscribers").content == seeded.client.get("/inscritos.json").content
+    # D35: o formato novo e o legado + font/text_color no fim; o legado continua byte a byte igual
+    legacy = seeded.client.get("/inscritos.json").content
+    new = seeded.client.get("/api/public/subscribers").content
+    extra = b',"font":"Roboto","text_color":"#FFFFFF"}'
+    assert new.endswith(extra) and new[: -len(extra)] + b"}" == legacy
 
 
 # ------------------------------------------------------------------------------------- API-LEG-07

@@ -75,8 +75,9 @@ class SlotWrite(BaseModel):
     goal: SlotGoal
     color: SlotColor
     # D35: opcionais; ausente = mantem o valor atual do slot.
-    font: Font | None = None
-    text_color: TextColor | None = None
+    # (default None nao e validado; um null explicito no JSON e 422)
+    font: Font = None  # type: ignore[assignment]
+    text_color: TextColor = None  # type: ignore[assignment]
 
 
 class SettingsWrite(BaseModel):
@@ -84,9 +85,9 @@ class SettingsWrite(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    channel_id: ChannelId | None = None
-    subs_font: Font | None = None
-    subs_text_color: TextColor | None = None
+    channel_id: ChannelId = None  # type: ignore[assignment]
+    subs_font: Font = None  # type: ignore[assignment]
+    subs_text_color: TextColor = None  # type: ignore[assignment]
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "SettingsWrite":

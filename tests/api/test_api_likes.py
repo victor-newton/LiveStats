@@ -39,6 +39,9 @@ INSERT INTO slots (slot, url, updated_at) VALUES
 """
 
 
+FONT_DEFAULTS = {"font": "Roboto", "text_color": "#FFFFFF"}
+
+
 def columns(conn: sqlite3.Connection, table: str = "slots") -> list[tuple]:
     return [(r[1], r[2], r[3]) for r in conn.execute(f"PRAGMA table_info({table})")]
 
@@ -63,9 +66,10 @@ def test_api_like_01_banco_novo_nasce_na_v2_com_goal_e_color(tmp_path):
     path = tmp_path / "livestats.db"
     db.bootstrap_schema(str(path), str(DB_DIR / "schema.sql"))
     conn = sqlite3.connect(path)
-    assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone() == ("2",)
+    assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone() == ("3",)
     assert columns(conn) == [
         ("slot", "INTEGER", 0), ("url", "TEXT", 1), ("updated_at", "TEXT", 0), ("goal", "INTEGER", 0), ("color", "TEXT", 1),
+        ("font", "TEXT", 1), ("text_color", "TEXT", 1),
     ]
     assert conn.execute("SELECT slot, goal, color FROM slots ORDER BY slot").fetchall() == [
         (n, None, DEFAULT_COLOR) for n in (1, 2, 3, 4)
@@ -116,8 +120,8 @@ def test_api_like_02_migracao_v1_para_v2_preserva_dados_e_e_idempotente(tmp_path
         (3, "https://youtu.be/9bZkp7q19f0", "2026-11-02T10:00:00Z", None, DEFAULT_COLOR),
         (4, "", None, None, DEFAULT_COLOR),
     ]
-    assert version == [("2",)]
-    assert [c[0] for c in cols] == ["slot", "url", "updated_at", "goal", "color"]
+    assert version == [("3",)]
+    assert [c[0] for c in cols] == ["slot", "url", "updated_at", "goal", "color", "font", "text_color"]
     assert snapshots[1] == snapshots[0] and snapshots[2] == snapshots[0]
 
 
@@ -147,7 +151,7 @@ def test_api_like_02_a_app_sobe_sobre_banco_v1_e_atende_o_painel(tmp_path, creds
         ]
         assert put(stack, csrf, [slot_item("dQw4w9WgXcQ", 10000, "#12ab34"), *BLANK_SLOTS[1:]]).status_code == 200
         with stack.shared() as conn:
-            assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == "2"
+            assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == "3"
 
 
 def test_api_like_02_workers_continuam_lendo_slots_como_antes(stack: Stack):
@@ -165,7 +169,10 @@ def test_api_like_03_get_em_banco_novo_traz_goal_e_color_padrao(stack: Stack):
     resp = stack.client.get("/api/admin/slots")
     assert resp.status_code == 200
     assert resp.json() == {
-        "slots": [{"slot": n, "url": "", "goal": None, "color": DEFAULT_COLOR, "stats": None} for n in (1, 2, 3, 4)],
+        "slots": [
+            {"slot": n, "url": "", "goal": None, "color": DEFAULT_COLOR, "font": "Roboto", "text_color": "#FFFFFF", "stats": None}
+            for n in (1, 2, 3, 4)
+        ],
         "saved_at": None,
     }
     assert_matches_openapi(resp, "/api/admin/slots", "get")
@@ -182,10 +189,10 @@ def test_api_like_03_put_grava_url_meta_e_cor_normalizada_em_maiusculas(stack: S
     resp = put(stack, csrf, items)
     assert resp.status_code == 200, resp.text
     expected = [
-        {"url": "dQw4w9WgXcQ", "goal": 10000, "color": "#FF00AA"},
-        {"url": "", "goal": None, "color": "#0A0B0C"},
-        {"url": "https://youtu.be/9bZkp7q19f0", "goal": 1, "color": "#ABCDEF"},
-        {"url": "jNQXAC9IVRw", "goal": 1_000_000_000, "color": "#000000"},
+        {"url": "dQw4w9WgXcQ", "goal": 10000, "color": "#FF00AA", **FONT_DEFAULTS},
+        {"url": "", "goal": None, "color": "#0A0B0C", **FONT_DEFAULTS},
+        {"url": "https://youtu.be/9bZkp7q19f0", "goal": 1, "color": "#ABCDEF", **FONT_DEFAULTS},
+        {"url": "jNQXAC9IVRw", "goal": 1_000_000_000, "color": "#000000", **FONT_DEFAULTS},
     ]
     body = resp.json()
     assert body["ok"] is True and body["slots"] == expected and body["saved_at"]
@@ -194,7 +201,7 @@ def test_api_like_03_put_grava_url_meta_e_cor_normalizada_em_maiusculas(stack: S
     assert all(r[4] == body["saved_at"] for r in db_rows(stack))
 
     got = stack.client.get("/api/admin/slots").json()
-    assert [{k: s[k] for k in ("url", "goal", "color")} for s in got["slots"]] == expected
+    assert [{k: s[k] for k in ("url", "goal", "color", "font", "text_color")} for s in got["slots"]] == expected
     assert_schema(got, "SlotsRead")
 
 
@@ -291,7 +298,7 @@ def test_api_like_05_publico_ganha_goal_e_color_no_fim_do_objeto(stack: Stack):
     assert resp.status_code == 200
     body = resp.json()
     assert body["goal"] == 10000 and body["color"] == "#1A2B3C" and body["likes"] == 56
-    assert list(body)[-2:] == ["goal", "color"]
+    assert list(body)[-4:] == ["goal", "color", "font", "text_color"]
     assert_schema(body, "PublicLive")
     assert_matches_openapi(resp, "/api/public/lives/{slot}", "get")
 

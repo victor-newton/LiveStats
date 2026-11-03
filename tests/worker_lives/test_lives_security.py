@@ -244,7 +244,7 @@ def test_liv_db_01_autorizador_permite_o_que_o_worker_precisa(db_path):
     conn = db.connect(str(db_path))
     try:
         assert [row[0] for row in conn.execute("SELECT slot FROM slots ORDER BY slot")] == [1, 2, 3, 4]
-        assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone() == ("2",)
+        assert conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone() == ("3",)
         conn.execute(
             "INSERT OR REPLACE INTO live_stats (slot, active, video_id, title, status, views, likes,"
             " views_formatted, likes_formatted, updated_at) VALUES"

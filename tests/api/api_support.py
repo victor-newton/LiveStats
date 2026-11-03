@@ -274,11 +274,16 @@ def walk_keys(node):
 
 # ------------------------------------------------------------------------------- slots (D34: url + meta + cor)
 DEFAULT_COLOR = "#FF0033"
+DEFAULT_FONT = "Roboto"  # D35
+DEFAULT_TEXT_COLOR = "#FFFFFF"  # D35
 
 
-def slot_item(url: str = "", goal: int | None = None, color: str = DEFAULT_COLOR) -> dict:
-    """Um item do corpo de ``PUT /api/admin/slots`` no formato da D34."""
-    return {"url": url, "goal": goal, "color": color}
+def slot_item(
+    url: str = "", goal: int | None = None, color: str = DEFAULT_COLOR,
+    font: str = DEFAULT_FONT, text_color: str = DEFAULT_TEXT_COLOR,
+) -> dict:
+    """Um item do corpo de ``PUT /api/admin/slots`` (D34 + D35: font e text_color)."""
+    return {"url": url, "goal": goal, "color": color, "font": font, "text_color": text_color}
 
 
 def slot_items(*urls: str) -> list[dict]:

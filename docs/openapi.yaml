@@ -493,7 +493,7 @@ paths:
       operationId: adminPutSettings
       summary: Salva canal e/ou aparência do contador
       description: |
-        Aceita qualquer subconjunto NÃO vazio de `channel_id`, `subs_font` e `subs_text_color` (os ausentes ficam como estão; `null` não limpa nada e conta como ausente). Validação estrita (D35):
+        Aceita qualquer subconjunto NÃO vazio de `channel_id`, `subs_font` e `subs_text_color` (os ausentes ficam como estão; `null` explícito -> 422). Validação estrita (D35):
         - `channel_id`: exatamente `^UC[0-9A-Za-z_-]{22}$`;
         - `subs_font`: um nome de `GET /api/admin/fonts` (comparação exata);
         - `subs_text_color`: `^#[0-9A-Fa-f]{6}$` (gravado em maiúsculas).
