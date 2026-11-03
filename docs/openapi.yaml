@@ -8,7 +8,7 @@ info:
 
     **Portas.** O Nginx expõe duas portas. Cada operação declara em `servers` (e em `x-ports`) onde existe:
     - `8080` pública (Cloudflare Tunnel): overlays, `/api/public/*`, aliases legados, `/health`. **Não existe rota de admin**: `/admin`, `/api/admin/*` e `/api/admin/login` respondem 404.
-    - `8081` admin (somente LAN/Tailscale, via Nginx Proxy Manager com HTTPS; ver ARCHITECTURE.md P1/D32): tudo da pública mais painel e `/api/admin/*`.
+    - `8081` admin (HTTPS próprio com certificado autoassinado; somente LAN/Tailscale pela lista `ADMIN_ALLOW_CIDRS`, o resto recebe 403; ver ARCHITECTURE.md D33): tudo da pública mais painel e `/api/admin/*`.
 
     **Autenticação (admin).** Cookie de sessão `__Host-livestats_session` (`HttpOnly; Secure; SameSite=Strict; Path=/`, sem `Domain`) + cabeçalho `X-CSRF-Token` em todo método que altera estado (POST/PUT/PATCH/DELETE, inclusive logout). O token CSRF vem na resposta do login e de `GET /api/admin/session`; o front o guarda só em memória.
     Ordem das checagens em `/api/admin/*` (exceto login): sem sessão válida -> 401; sessão válida, método que altera estado e CSRF ausente/errado -> 403.
@@ -26,7 +26,7 @@ servers:
   - url: http://localhost:8080
     description: Porta pública
   - url: http://localhost:8081
-    description: Porta admin (ouve em 127.0.0.1; acessada pelo NPM com HTTPS, pois o cookie é Secure; ver ARCHITECTURE.md P1)
+    description: Porta admin (em produção é HTTPS: https://<IP-da-LAN>:8081, pois o cookie é Secure; por padrão ouve só em 127.0.0.1; ver ARCHITECTURE.md D33)
 tags:
   - name: public
     description: Dados públicos de leitura (portas 8080 e 8081)

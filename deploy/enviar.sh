@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# LiveStats - envio e execucao do deploy a partir do SEU PC (Git Bash no Windows). Roda LOCALMENTE.
+#
+# QUANTAS VEZES A SENHA DO SSH E PEDIDA (o servidor usa senha, sem chave SSH):
+#   instalar      1 vez  - um unico ssh recebe, pela entrada padrao, o codigo (git archive do commit atual)
+#                          e os dois segredos (chave da YouTube e senha do admin), extrai, instala e sobe tudo.
+#                          Preflight, build, geracao de chaves/certificado e checagens rodam dentro dessa sessao.
+#   preflight     1 vez  - so leitura; opcional (o "instalar" ja roda o preflight antes de alterar qualquer coisa).
+#   status        1 vez
+#   conectar-npm  1 vez  - so se voce escolher a opcao A do docs/DEPLOY.md (ou use: instalar --conectar-npm, 0 extras).
+#   rollback      1 vez
+#   Caminho recomendado (opcao B, sem mexer no container do NPM): UMA senha no total ("instalar").
+#   Cada comando e uma conexao ssh separada; nao ha como reaproveitar a senha (o ssh do Windows nao tem multiplexacao).
+#
+# SEGREDOS: a chave da YouTube e a senha do admin sao digitadas AQUI (sem eco), nunca vao em argumento de
+# linha de comando (nem local nem remoto) e nunca sao gravadas em disco no servidor: chegam pela entrada padrao do
+# instalador, que grava so a chave (secrets/youtube_api_key.txt) e o HASH da senha.
+#
+# Uso:
+#   deploy/enviar.sh instalar --channel-id UCxxxxxxxxxxxxxxxxxxxxxx [--host 192.168.15.62] [--user Vitex]
+#        [--admin-user Vitex] [--admin-allow "192.168.15.0/24 100.64.0.0/10"] [--public-base-url https://lives.vitex.xyz.br] [--extra-san IP-do-Tailscale]
+#        [--chave-youtube-arquivo ARQ] [--sem-segredos] [--conectar-npm [NOME]] [--renew-tls] [--skip-build]
+#   deploy/enviar.sh preflight|status|conectar-npm|rollback [--host H] [--user U]
+set -euo pipefail
+
+HOST=192.168.15.62
+USUARIO=Vitex
+DEST=/DATA/AppData/livestats
+SSH=${ENVIAR_SSH:-ssh}   # sobrescrevivel para ensaios locais; em producao e o ssh de verdade
+
+MODO=${1:-}
+[ -n "$MODO" ] || { sed -n '2,24p' "$0"; exit 1; }
+shift
+
+CANAL=""; ADMIN_ALLOW=""; ADMIN_USER=""; PUBLIC_URL=""; EXTRA=(); YT_ARQ=""; SEM_SEGREDOS=0; EXTRAS_INSTALL=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --host) HOST=$2; shift 2 ;;
+    --user) USUARIO=$2; shift 2 ;;
+    --channel-id) CANAL=$2; shift 2 ;;
+    --admin-user) ADMIN_USER=$2; shift 2 ;;
+    --admin-allow) ADMIN_ALLOW=$2; shift 2 ;;
+    --public-base-url) PUBLIC_URL=$2; shift 2 ;;
+    --extra-san) EXTRA+=(--extra-san "$2"); shift 2 ;;
+    --chave-youtube-arquivo) YT_ARQ=$2; shift 2 ;;
+    --sem-segredos) SEM_SEGREDOS=1; shift ;;
+    --renew-tls) EXTRAS_INSTALL+=(--renew-tls); shift ;;
+    --skip-build) EXTRAS_INSTALL+=(--skip-build); shift ;;
+    --conectar-npm)
+      EXTRAS_INSTALL+=(--connect-npm); shift
+      if [ $# -gt 0 ] && [[ $1 != --* ]]; then EXTRAS_INSTALL+=("$1"); shift; fi ;;
+    *) echo "Argumento desconhecido: $1" >&2; exit 1 ;;
+  esac
+done
+
+valida() { [[ $2 =~ $1 ]] || { echo "Valor invalido: $2" >&2; exit 1; }; }
+valida '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' "$HOST"
+valida '^[A-Za-z0-9._-]{1,32}$' "$USUARIO"
+
+RAIZ=$(git rev-parse --show-toplevel)
+cd "$RAIZ"
+SSH_OPTS=(-T -o ServerAliveInterval=30 -o ServerAliveCountMax=40)
+ALVO="$USUARIO@$HOST"
+
+lerpar() { # $1 prompt, $2 variavel de saida; sem eco quando ha terminal
+  local _v
+  printf '%s' "$1" >&2
+  if [ -t 0 ]; then read -rs _v; printf '\n' >&2; else read -r _v; fi
+  printf -v "$2" '%s' "$_v"
+}
+
+case $MODO in
+  preflight)
+    echo ">> Preflight em $ALVO (1 senha). Somente leitura."
+    # shellcheck disable=SC2016  # o script remoto vai entre aspas simples de proposito
+    git archive --format=tar HEAD deploy | "$SSH" "${SSH_OPTS[@]}" "$ALVO" \
+      'set -eu; d=$(mktemp -d); tar -xm -C "$d"; r=0; sh "$d/deploy/preflight.sh" || r=$?; rm -rf "$d"; exit $r'
+    ;;
+  status)
+    echo ">> Status em $ALVO (1 senha)."
+    "$SSH" "${SSH_OPTS[@]}" "$ALVO" "sh $DEST/deploy/status.sh --dir $DEST"
+    ;;
+  conectar-npm)
+    echo ">> Conectando o NPM em $ALVO (1 senha)."
+    "$SSH" "${SSH_OPTS[@]}" "$ALVO" "sh $DEST/deploy/connect_npm.sh --dir $DEST"
+    ;;
+  rollback)
+    printf 'Desligar o LiveStats em %s (volumes ficam)? Digite "sim": ' "$HOST" >&2
+    read -r R
+    [ "$R" = sim ] || { echo "Cancelado." >&2; exit 1; }
+    echo ">> Rollback em $ALVO (1 senha)."
+    "$SSH" "${SSH_OPTS[@]}" "$ALVO" "sh $DEST/deploy/rollback.sh --dir $DEST --yes"
+    ;;
+  instalar)
+    [ -n "$CANAL" ] || { echo "Informe --channel-id UC... (ID do canal do YouTube)." >&2; exit 1; }
+    valida '^UC[0-9A-Za-z_-]{22}$' "$CANAL"
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+      echo "AVISO: ha alteracoes nao commitadas; o envio usa SOMENTE o commit atual ($(git rev-parse --short HEAD))." >&2
+    fi
+    YT_KEY=""; ADMIN_PW=""
+    if [ "$SEM_SEGREDOS" = 0 ]; then
+      if [ -n "$YT_ARQ" ]; then
+        YT_KEY=$(head -n 1 "$YT_ARQ")
+      else
+        lerpar "Chave da YouTube Data API (nova): " YT_KEY
+      fi
+      [ "${#YT_KEY}" -ge 20 ] || { echo "Chave da YouTube vazia ou curta demais." >&2; exit 1; }
+      lerpar "Senha do admin do painel (minimo 12 caracteres): " ADMIN_PW
+      lerpar "Repita a senha do admin: " REPETE
+      [ "$ADMIN_PW" = "$REPETE" ] || { echo "As senhas nao conferem." >&2; exit 1; }
+      [ "${#ADMIN_PW}" -ge 12 ] || { echo "A senha do admin precisa de pelo menos 12 caracteres." >&2; exit 1; }
+    fi
+
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    git archive --format=tar HEAD > "$TMP/codigo.tar"
+    TAM=$(wc -c < "$TMP/codigo.tar" | tr -d ' ')
+
+    ARGS="--dir \"\$d\" --secrets-stdin --lan-ip $HOST"
+    ARGS="$ARGS --channel-id $CANAL"
+    if [ -n "$ADMIN_USER" ]; then valida '^[A-Za-z0-9._@-]{1,64}$' "$ADMIN_USER"; ARGS="$ARGS --admin-user $ADMIN_USER"; fi
+    if [ -n "$ADMIN_ALLOW" ]; then valida '^[0-9./ ]+$' "$ADMIN_ALLOW"; ARGS="$ARGS --admin-allow \"$ADMIN_ALLOW\""; fi
+    if [ -n "$PUBLIC_URL" ]; then valida '^https?://[A-Za-z0-9.:/_-]+$' "$PUBLIC_URL"; ARGS="$ARGS --public-base-url $PUBLIC_URL"; fi
+    if [ "${#EXTRA[@]}" -gt 0 ]; then
+      for ((i = 1; i < ${#EXTRA[@]}; i += 2)); do
+        valida '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' "${EXTRA[$i]}"; ARGS="$ARGS --extra-san ${EXTRA[$i]}"
+      done
+    fi
+    if [ "${#EXTRAS_INSTALL[@]}" -gt 0 ]; then
+      for a in "${EXTRAS_INSTALL[@]}"; do valida '^[A-Za-z0-9._-]+$' "$a"; ARGS="$ARGS $a"; done
+    fi
+    REMOTO="sh -c 'set -eu; umask 022; d=$DEST; read -r n; mkdir -p \"\$d\"; head -c \"\$n\" | tar -xm -C \"\$d\"; exec sh \"\$d/deploy/install.sh\" $ARGS'"
+
+    echo ">> Instalando em $ALVO (commit $(git rev-parse --short HEAD), pacote de $TAM bytes). A senha do SSH sera pedida 1 vez."
+    {
+      printf '%s\n' "$TAM"
+      cat "$TMP/codigo.tar"
+      printf '%s\n' "$YT_KEY"
+      printf '%s\n' "$ADMIN_PW"
+    } | "$SSH" "${SSH_OPTS[@]}" "$ALVO" "$REMOTO"
+    ;;
+  *)
+    sed -n '2,24p' "$0"; exit 1 ;;
+esac
