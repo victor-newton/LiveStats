@@ -18,7 +18,7 @@
 #
 # Uso:
 #   deploy/enviar.sh instalar --channel-id UCxxxxxxxxxxxxxxxxxxxxxx [--host 192.168.15.62] [--user Vitex]
-#        [--admin-user Vitex] [--public-base-url https://lives.vitex.xyz.br] [--extra-san IP-do-Tailscale]
+#        [--admin-user Vitex] [--admin-allow "192.168.15.0/24 100.64.0.0/10"] [--public-base-url https://lives.vitex.xyz.br] [--extra-san IP-do-Tailscale]
 #        [--chave-youtube-arquivo ARQ] [--sem-segredos] [--conectar-npm [NOME]] [--renew-tls] [--skip-build]
 #   deploy/enviar.sh preflight|status|conectar-npm|rollback [--host H] [--user U]
 set -euo pipefail
@@ -32,13 +32,14 @@ MODO=${1:-}
 [ -n "$MODO" ] || { sed -n '2,24p' "$0"; exit 1; }
 shift
 
-CANAL=""; ADMIN_USER=""; PUBLIC_URL=""; EXTRA=(); YT_ARQ=""; SEM_SEGREDOS=0; EXTRAS_INSTALL=()
+CANAL=""; ADMIN_ALLOW=""; ADMIN_USER=""; PUBLIC_URL=""; EXTRA=(); YT_ARQ=""; SEM_SEGREDOS=0; EXTRAS_INSTALL=()
 while [ $# -gt 0 ]; do
   case $1 in
     --host) HOST=$2; shift 2 ;;
     --user) USUARIO=$2; shift 2 ;;
     --channel-id) CANAL=$2; shift 2 ;;
     --admin-user) ADMIN_USER=$2; shift 2 ;;
+    --admin-allow) ADMIN_ALLOW=$2; shift 2 ;;
     --public-base-url) PUBLIC_URL=$2; shift 2 ;;
     --extra-san) EXTRA+=(--extra-san "$2"); shift 2 ;;
     --chave-youtube-arquivo) YT_ARQ=$2; shift 2 ;;
@@ -118,6 +119,7 @@ case $MODO in
     ARGS="--dir \"\$d\" --secrets-stdin --lan-ip $HOST"
     ARGS="$ARGS --channel-id $CANAL"
     if [ -n "$ADMIN_USER" ]; then valida '^[A-Za-z0-9._@-]{1,64}$' "$ADMIN_USER"; ARGS="$ARGS --admin-user $ADMIN_USER"; fi
+    if [ -n "$ADMIN_ALLOW" ]; then valida '^[0-9./ ]+$' "$ADMIN_ALLOW"; ARGS="$ARGS --admin-allow \"$ADMIN_ALLOW\""; fi
     if [ -n "$PUBLIC_URL" ]; then valida '^https?://[A-Za-z0-9.:/_-]+$' "$PUBLIC_URL"; ARGS="$ARGS --public-base-url $PUBLIC_URL"; fi
     if [ "${#EXTRA[@]}" -gt 0 ]; then
       for ((i = 1; i < ${#EXTRA[@]}; i += 2)); do
