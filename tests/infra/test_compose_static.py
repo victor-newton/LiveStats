@@ -214,3 +214,13 @@ def test_infra_cfg_15_chaves_dos_cookies_d37(compose):
     assert env["COOKIE_PRIVATE_KEY_FILE"] == "/run/secrets/cookie_private_key"
     assert "COOKIE_PUBLIC_KEY_FILE" not in env_of(svcs["worker-lives"])
     assert "COOKIE_PRIVATE_KEY_FILE" not in env_of(svcs["api"])
+
+
+def test_infra_cfg_15_override_e2e_mantem_o_bind_do_admin_do_compose_real(compose, repo):
+    """O override de teste troca a lista de portas (`!override`); o host do admin tem que ser o mesmo do compose real,
+    senao a SEC-21 testa o arquivo de teste e nao a regra de producao (ADMIN_BIND)."""
+    real = [p for p in compose["services"]["web"]["ports"] if p.endswith(":8081")]
+    assert real == ["${ADMIN_BIND:-127.0.0.1}:8081:8081"]
+    override = (repo / "tests" / "e2e" / "compose.e2e.yml").read_text(encoding="utf-8")
+    admin = re.findall(r'(?m)^\s*-\s*"([^"]*):\$\{E2E_ADMIN_PORT:-8081\}:8081"', override)
+    assert admin == ["${ADMIN_BIND:-127.0.0.1}"], admin
