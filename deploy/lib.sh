@@ -7,6 +7,15 @@ REDE_EDGE=livestats-edge
 SERVICOS="livestats-api livestats-worker-lives livestats-worker-inscritos livestats-web"
 export DIR_PADRAO REDE_EDGE SERVICOS
 
+# ZimaOS: a home do usuario (/DATA) tem um .docker do root (710) que o CLI nao consegue ler; assim o CLI nao
+# acha nem o plugin compose do sistema ("'compose' is not a docker command"). Nesse caso usa uma pasta de config
+# propria e vazia (sem credenciais); os plugins do sistema (/usr/libexec/docker/cli-plugins etc.) continuam valendo.
+if [ -z "${DOCKER_CONFIG:-}" ] && [ -e "${HOME:-/nao-existe}/.docker" ] \
+   && { [ ! -r "$HOME/.docker" ] || [ ! -x "$HOME/.docker" ]; }; then
+  DOCKER_CONFIG=$(mktemp -d "${TMPDIR:-/tmp}/livestats-docker.XXXXXX") || { printf '[ERRO]  mktemp falhou\n' >&2; exit 1; }
+  export DOCKER_CONFIG
+fi
+
 msg()    { printf '%s\n' "$*"; }
 ok()     { printf '[ok]    %s\n' "$*"; }
 info()   { printf '[info]  %s\n' "$*"; }
