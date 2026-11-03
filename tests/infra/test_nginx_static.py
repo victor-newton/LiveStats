@@ -140,20 +140,21 @@ def test_infra_ng_04_marcadores_no_server_certo():
     head, _, tail = template.partition("listen 8081")
     assert ng.PLACEHOLDER_PUBLIC in head and ng.PLACEHOLDER_ADMIN not in head
     assert ng.PLACEHOLDER_ADMIN in tail and ng.PLACEHOLDER_PUBLIC not in tail
-    assert template.count("${") == 2, "so os dois marcadores do envsubst"
+    assert ng.PLACEHOLDER_ADMIN_GEO in head and ng.PLACEHOLDER_ADMIN_GEO not in tail  # geo no http, antes dos server
+    assert template.count("${") == 3, "so os tres marcadores do envsubst (IP real da 8080 e a lista de permissao da 8081)"
 
 
 def test_infra_ng_04_09_diretivas_geradas_pelo_script():
     text = (ng.NGINX_DIR / "docker-entrypoint.d" / "15-livestats-realip.envsh").read_text(encoding="utf-8")
     pub = re.search(r'LIVESTATS_REALIP_PUBLIC="(real_ip[^"]*)"', text).group(1)
-    adm = re.search(r'LIVESTATS_REALIP_ADMIN="(real_ip[^"]*)"', text).group(1)
     assert "real_ip_header CF-Connecting-IP;" in pub and "X-Forwarded-For" not in pub
-    assert "real_ip_header X-Forwarded-For;" in adm and "real_ip_recursive off;" in adm
-    assert "CF-Connecting-IP" not in adm
-    assert pub.endswith("set_real_ip_from ${LIVESTATS_IP}/32;") and adm.endswith("set_real_ip_from ${LIVESTATS_IP}/32;")
-    assert text.count('=""') == 2, "vazio => marcador vazio => nenhuma diretiva"
+    assert pub.endswith("set_real_ip_from ${LIVESTATS_IP}/32;")
+    assert text.count('LIVESTATS_REALIP_PUBLIC=""') == 1, "vazio => marcador vazio => nenhuma diretiva"
+    # D33: a 8081 nao tem IP real: o script nao gera diretiva real_ip para ela nem le a variavel antiga
+    assert "ADMIN_TRUSTED_PROXY_IP" not in text and "LIVESTATS_REALIP_ADMIN" not in text
+    assert not re.search(r"real_ip_header\s+X-Forwarded-For", text)
     # as variaveis lidas sao exatamente as do compose
-    assert "TRUSTED_PROXY_CIDR" in text and "ADMIN_TRUSTED_PROXY_IP" in text
+    assert "TRUSTED_PROXY_CIDR" in text and "ADMIN_ALLOW_CIDRS" in text
 
 
 def test_infra_ng_04_09_validacao_rejeita_o_perigoso():
@@ -270,3 +271,51 @@ def test_infra_ng_09_8080_nao_usa_xff_para_ip_real(pub):
             assert "X-Forwarded-For" not in node.args
     template = (ng.NGINX_DIR / "templates" / "default.conf.template").read_text(encoding="utf-8")
     assert "http_x_forwarded_for" not in template.lower()
+
+
+# ---------------------------------------------------------------------------------------------- D33: 8081 em TLS
+def test_infra_ng_14_8081_escuta_em_tls_e_a_8080_nao(pub, adm):
+    assert adm.find("listen")[0].args == ["8081", "ssl", "default_server"]
+    assert pub.find("listen")[0].args == ["8080", "default_server"]
+    assert not [n for n in pub.walk() if n.name.startswith("ssl_")]
+
+
+def test_infra_ng_14_tls_12_13_sem_tickets_e_secrets_nos_caminhos_do_compose(adm):
+    one = lambda name: adm.find(name)[0].args  # noqa: E731
+    assert one("ssl_protocols") == ["TLSv1.2", "TLSv1.3"]
+    assert one("ssl_session_tickets") == ["off"]
+    assert one("ssl_certificate") == ["/run/secrets/admin_tls_cert"]
+    assert one("ssl_certificate_key") == ["/run/secrets/admin_tls_key"]
+    ciphers = one("ssl_ciphers")[0]
+    assert ciphers.count(":") >= 3 and not re.search(r"RC4|MD5|3DES|DES-CBC|NULL|EXPORT|aNULL|CBC", ciphers)
+    assert one("ssl_prefer_server_ciphers") == ["off"]
+
+
+def test_infra_ng_14_sem_hsts_em_lugar_nenhum(tree):
+    for node in tree.walk():
+        if node.name == "add_header":
+            assert node.args[0].lower() != "strict-transport-security"
+    for path in sorted(ng.NGINX_DIR.rglob("*")):
+        if path.is_file():
+            assert "strict-transport-security" not in path.read_text(encoding="utf-8").lower(), path
+
+
+def test_infra_ng_14_lista_de_permissao_no_rewrite_do_server_antes_das_locations(adm):
+    """`allow/deny` nao alcancam `location / { return 404; }`: o `if` + `return 403` no nivel do server cobre tudo."""
+    first_if = next(c for c in adm.children if c.name == "if")
+    assert first_if.args == ["($livestats_admin_allowed", "=", "0)"]
+    assert first_if.find("return")[0].args == ["403"]
+    names = [c.name for c in adm.children]
+    assert names.index("if") < names.index("location")
+    assert [c.args for c in adm.children if c.name == "deny"] == [["all"]]
+    assert 403 in [int(n.args[0]) for n in adm.children if n.name == "error_page" and n.args[0].isdigit()]
+
+
+def test_infra_ng_14_http_simples_na_porta_tls_vira_400_json(adm):
+    pages = [c for c in adm.children if c.name == "error_page"]
+    assert any(c.args[0] == "497" and "=400" in c.args and "@e400" in c.args for c in pages)
+
+
+def test_infra_ng_14_8081_sem_nenhum_cabecalho_de_ip_confiavel(adm):
+    assert not [n for n in adm.walk() if n.name in REAL_IP]
+    assert "http_x_forwarded_for" not in "".join(str(n.args) for n in adm.walk()).lower()

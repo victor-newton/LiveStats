@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 import docker_helpers as dh
+from tls_support import make_tls_pair
 
 pytestmark = pytest.mark.docker
 
@@ -64,11 +65,13 @@ def test_infra_cfg_06_12_13_env_example():
     text = (REPO / ".env.example").read_text(encoding="utf-8")
     values = dict(re.findall(r"(?m)^([A-Z_]+)=(.*)$", text))
     assert values["ADMIN_BIND"].strip() == "127.0.0.1"
-    for name in ("TRUSTED_PROXY_CIDR", "ADMIN_TRUSTED_PROXY_IP"):
-        value = values[name].strip()
-        if value:
-            assert re.fullmatch(r"\d+\.\d+\.\d+\.(\d+)(/32)?", value), f"{name}: so um /32"
-            assert not value.split("/")[0].endswith(".1"), f"{name}: nunca o gateway"
+    value = values["TRUSTED_PROXY_CIDR"].strip()
+    if value:
+        assert re.fullmatch(r"\d+\.\d+\.\d+\.(\d+)(/32)?", value), "TRUSTED_PROXY_CIDR: so um /32"
+        assert not value.split("/")[0].endswith(".1"), "TRUSTED_PROXY_CIDR: nunca o gateway"
+    # D33: lista de permissao do admin (padrao so o loopback); a variavel do proxy do admin deixou de existir
+    assert values["ADMIN_ALLOW_CIDRS"].strip() == "127.0.0.1/32"
+    assert "ADMIN_TRUSTED_PROXY_IP" not in text
     assert "AIza" not in text and "benja" not in text.lower()
 
 
@@ -157,6 +160,13 @@ def _gen_secrets(api_image: str) -> list[Path]:
         "youtube_api_key.txt": "t7test-sentinel-not-a-real-key",
     }
     created = []
+    # D33: o web nao sobe sem o par TLS do admin (certificado de teste gerado na hora)
+    for pem in ("admin_tls_cert.pem", "admin_tls_key.pem"):
+        assert not (folder / pem).exists(), f"{folder / pem} ja existe: o teste nao sobrescreve segredos reais"
+    cert, key = make_tls_pair(folder, ips=("127.0.0.1",))
+    for path in (cert, key):
+        assert path.stat().st_mtime > time.time() - 30
+        created.append(path)
     for name, value in files.items():
         path = folder / name
         assert not path.exists(), f"{path} ja existe: o teste nao sobrescreve segredos reais"

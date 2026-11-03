@@ -78,10 +78,13 @@ def test_infra_cfg_04_secrets(compose):
         "cookie_private_key": {"worker-inscritos"},
         "cookie_public_key": {"api"},
         "admin_password_hash": {"api"},
+        "admin_tls_cert": {"web"},  # D33: TLS proprio da 8081, so no web
+        "admin_tls_key": {"web"},
     }
-    assert not compose["services"]["web"].get("secrets")
+    assert sorted(compose["services"]["web"]["secrets"]) == ["admin_tls_cert", "admin_tls_key"]
     for name, d in compose["secrets"].items():
-        assert d["file"] == f"./secrets/{name}.txt"
+        ext = "pem" if name.startswith("admin_tls_") else "txt"
+        assert d["file"] == f"./secrets/{name}.{ext}"
 
 
 def test_infra_cfg_05_sem_segredo_em_environment(compose, compose_text):
@@ -177,7 +180,21 @@ def test_infra_cfg_12_confianca_do_proxy_publico(compose):
     assert value == "${TRUSTED_PROXY_CIDR:-}", "o padrao tem que ser VAZIO"
 
 
-def test_infra_cfg_13_confianca_do_proxy_admin(compose):
-    value = env_of(compose["services"]["web"])["ADMIN_TRUSTED_PROXY_IP"]
-    assert value == "${ADMIN_TRUSTED_PROXY_IP:-}", "o padrao tem que ser VAZIO"
+def test_infra_cfg_13_lista_de_ips_do_admin_e_nenhum_proxy_confiavel(compose, compose_text):
+    env = env_of(compose["services"]["web"])
+    assert env["ADMIN_ALLOW_CIDRS"] == "${ADMIN_ALLOW_CIDRS:-127.0.0.1/32}", "o padrao tem que ser so o loopback"
+    assert "ADMIN_TRUSTED_PROXY_IP" not in compose_text, "D33: a 8081 nao confia em cabecalho de IP"
     assert "${ADMIN_BIND:-127.0.0.1}:8081:8081" in compose["services"]["web"]["ports"]
+    for svc, d in compose["services"].items():
+        if svc != "web":
+            assert "ADMIN_ALLOW_CIDRS" not in env_of(d)
+
+
+def test_infra_cfg_14_segredos_tls_do_admin_so_no_web(compose, compose_text):
+    assert compose["secrets"]["admin_tls_cert"] == {"file": "./secrets/admin_tls_cert.pem"}
+    assert compose["secrets"]["admin_tls_key"] == {"file": "./secrets/admin_tls_key.pem"}
+    for svc, d in compose["services"].items():
+        mounted = set(d.get("secrets") or [])
+        assert (svc == "web") == ({"admin_tls_cert", "admin_tls_key"} <= mounted), svc
+        assert svc == "web" or not {s for s in mounted if s.startswith("admin_tls")}
+    assert not re.search(r"BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)", compose_text)

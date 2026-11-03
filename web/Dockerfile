@@ -24,13 +24,20 @@ COPY web/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY web/nginx/snippets/ /etc/nginx/snippets/
 COPY web/nginx/templates/ /etc/nginx/templates/
 COPY --chmod=0755 web/nginx/docker-entrypoint.d/15-livestats-realip.envsh /docker-entrypoint.d/15-livestats-realip.envsh
+# Par TLS DESCARTAVEL so para o `nginx -t` deste estagio (o estagio final nao o recebe; em producao os dois
+# secrets admin_tls_cert/admin_tls_key vem do compose). O openssl existe so neste estagio.
+RUN apk add --no-cache openssl \
+ && mkdir -p /run/secrets \
+ && openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=confcheck" \
+      -keyout /run/secrets/admin_tls_key -out /run/secrets/admin_tls_cert \
+ && chmod 0644 /run/secrets/admin_tls_key /run/secrets/admin_tls_cert
 RUN sed -i 's/\r$//' /docker-entrypoint.d/15-livestats-realip.envsh /etc/nginx/nginx.conf \
  && find /etc/nginx/snippets /etc/nginx/templates -type f -exec sed -i 's/\r$//' {} + \
  && rm -f /etc/nginx/conf.d/default.conf \
- && TRUSTED_PROXY_CIDR=172.29.80.10/32 ADMIN_TRUSTED_PROXY_IP=172.29.80.11 NGINX_ENTRYPOINT_QUIET_LOGS=1 \
+ && TRUSTED_PROXY_CIDR=172.29.80.10/32 ADMIN_ALLOW_CIDRS='192.168.15.0/24 100.64.0.0/10' NGINX_ENTRYPOINT_QUIET_LOGS=1 \
     sh -c '. /docker-entrypoint.d/15-livestats-realip.envsh && /docker-entrypoint.d/20-envsubst-on-templates.sh' \
  && nginx -t \
- && rm -f /etc/nginx/conf.d/*.conf
+ && rm -f /etc/nginx/conf.d/*.conf /run/secrets/admin_tls_key /run/secrets/admin_tls_cert
 
 # ---------------------------------------------------------------- estagio final
 FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03 AS runtime

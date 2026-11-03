@@ -110,9 +110,9 @@ def test_int_11_cookies_expirados_avisam_no_painel_e_mantem_o_ultimo_valor(stack
         assert frozen == later
 
         # o painel avisa que os cookies expiraram
-        with chromium_context() as ctx:
+        with chromium_context(ignore_https_errors=True) as ctx:
             page = ctx.new_page()
-            ui_login(page, "http://127.0.0.1:8081", USERNAME, stack.password)
+            ui_login(page, "https://127.0.0.1:8081", USERNAME, stack.password)
             alert = page.locator("#authAlert")
             alert.wait_for(state="visible", timeout=20000)
             text = alert.inner_text()
@@ -126,7 +126,7 @@ def test_int_11_cookies_expirados_avisam_no_painel_e_mantem_o_ultimo_valor(stack
         timeout=90,
         interval=1,
     )
-    with chromium_context() as ctx:
+    with chromium_context(ignore_https_errors=True) as ctx:
         page = ctx.new_page()
-        ui_login(page, "http://127.0.0.1:8081", USERNAME, stack.password)
+        ui_login(page, "https://127.0.0.1:8081", USERNAME, stack.password)
         assert not page.locator("#authAlert").is_visible()

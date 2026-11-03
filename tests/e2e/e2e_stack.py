@@ -30,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "tests" / "infra"))
 
+from tls_support import make_tls_pair  # noqa: E402
 from docker_helpers import (  # noqa: E402  (reaproveita os ajudantes da T7 sem altera-los)
     CLIENT_CODE,
     PYTHON_IMAGE,
@@ -129,14 +130,15 @@ class E2EStack:
         self.base = f"172.30.{self.subnet_third}"
         self.edge_subnet = f"{self.base}.0/24"
         self.cloudflared_ip = f"{self.base}.20"  # "cloudflared" do teste (TRUSTED_PROXY_CIDR)
-        self.npm_ip = f"{self.base}.21"  # "NPM" do teste (ADMIN_TRUSTED_PROXY_IP)
+        # D33: lista de permissao da 8081 = a sub-rede edge do teste (clientes de teste e o gateway, por onde o host chega)
+        self.allow_cidrs = f"{self.base}.0/24"
 
         self.password = secrets.token_urlsafe(18)
         self.api_key = "T8KEY" + secrets.token_hex(16)  # sentinela: parece uma chave, nao e uma
         self.channel_id = "UC" + secrets.token_urlsafe(17)[:22].replace("-", "a").replace("_", "b")
         self.auth_cookie = {"name": "T8AUTH" + secrets.token_hex(4), "value": "T8CV" + secrets.token_hex(12)}
         self.extra_cookie = {"name": "T8EXTRA" + secrets.token_hex(4), "value": "T8EV" + secrets.token_hex(12)}
-        self.env_extra = {"TRUSTED_PROXY_CIDR": f"{self.cloudflared_ip}/32", "ADMIN_TRUSTED_PROXY_IP": self.npm_ip}
+        self.env_extra = {"TRUSTED_PROXY_CIDR": f"{self.cloudflared_ip}/32", "ADMIN_ALLOW_CIDRS": self.allow_cidrs}
         self.env_extra.pop("ADMIN_BIND", None)
 
         self._session: Session | None = None
@@ -164,7 +166,7 @@ class E2EStack:
             "E2E_STATE_DIR": str(self.state_dir),
             "E2E_SECRETS_DIR": str(self.secrets_dir),
             "TRUSTED_PROXY_CIDR": "",
-            "ADMIN_TRUSTED_PROXY_IP": "",
+            "ADMIN_ALLOW_CIDRS": "127.0.0.1/32",
         }
         env.pop("ADMIN_BIND", None)
         env.update(self.env_extra)
@@ -216,6 +218,8 @@ class E2EStack:
         for name in ("admin_password_hash.txt", "youtube_api_key.txt"):
             (sd / name).chmod(0o644)
         self.pwd_hash = pwd_hash
+        # D33: par TLS de teste do admin (8081); 127.0.0.2 e o "IP da LAN" dos testes de ADMIN_BIND. Apagado com o tmp.
+        self.cert, self.key = make_tls_pair(sd, ips=("127.0.0.1", "127.0.0.2"))
 
     # ------------------------------------------------------------------ YouTube falso
     def default_videos(self) -> dict:
@@ -270,7 +274,7 @@ class E2EStack:
         if wait > 0:
             time.sleep(wait)
         try:
-            return http_request("127.0.0.1", port, path, method, headers, body)
+            return http_request("127.0.0.1", port, path, method, headers, body, tls_cert=self.cert if port == ADMIN_PORT else None)
         finally:
             self._last_request = time.monotonic()
 
@@ -353,7 +357,10 @@ class E2EStack:
 
     def client(self, last_octet: int, requests: list[dict], port: int = PUBLIC_PORT, host: str = "web") -> list[dict]:
         """Requisicoes de um container com IP FIXO na rede edge (a origem que o Nginx enxerga e controlada)."""
-        payload = json.dumps({"host": host, "port": port, "requests": requests})
+        spec = {"host": host, "port": port, "requests": requests}
+        if port == ADMIN_PORT:  # HTTPS: confia so no certificado de teste (o nome "web" nao esta no SAN)
+            spec["tls_ca"] = self.cert.read_text(encoding="ascii")
+        payload = json.dumps(spec)
         r = docker(
             "run", "--rm", "--network", "livestats-t8-edge", "--ip", f"{self.base}.{last_octet}", PYTHON_IMAGE,
             "python", "-c", CLIENT_CODE, payload, timeout=300,
@@ -361,7 +368,7 @@ class E2EStack:
         return json.loads(r.stdout)
 
     def recreate_web(self, **env) -> None:
-        """Recria so o `web` com outras variaveis (TRUSTED_PROXY_CIDR, ADMIN_TRUSTED_PROXY_IP, ADMIN_BIND)."""
+        """Recria so o `web` com outras variaveis (TRUSTED_PROXY_CIDR, ADMIN_ALLOW_CIDRS, ADMIN_BIND)."""
         for key, value in env.items():
             if value is None:
                 self.env_extra.pop(key, None)
