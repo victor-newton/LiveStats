@@ -4,6 +4,14 @@
 # calculados e VALIDADOS por /docker-entrypoint.d/15-livestats-realip.envsh a partir de TRUSTED_PROXY_CIDR (8080;
 # vazio, o padrao => nenhuma diretiva real_ip) e ADMIN_ALLOW_CIDRS (8081, lista de permissao, marcador LIVESTATS_ADMIN_ALLOW).
 
+# Lista de permissao da 8081 (D33), avaliada no REWRITE do server (antes de qualquer location): `allow/deny`
+# so rodam na fase de acesso e nao alcancam locations que respondem com `return` (ex.: `location / { return 404; }`).
+# O IP e o da CONEXAO ($remote_addr): a 8081 nao tem real_ip.
+geo $remote_addr $livestats_admin_allowed {
+    default 0;
+    ${LIVESTATS_ADMIN_GEO}
+}
+
 # ----------------------------------------------------------------------------------------------------
 # 8080 - PUBLICA (Cloudflare Tunnel aponta aqui). NAO existe nenhuma rota de admin: /, /admin,
 # /admin-assets/, /api/admin/ e /api/admin/login caem em `location /` => 404.
@@ -41,6 +49,9 @@ server {
     ssl_session_tickets  off;
     ssl_session_cache    none;
 
+    if ($livestats_admin_allowed = 0) {
+        return 403;
+    }
     ${LIVESTATS_ADMIN_ALLOW}
     deny all;
 

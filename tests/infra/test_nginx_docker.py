@@ -8,12 +8,16 @@ limit_req, IP real, metodos, limites de corpo e recuperacao quando a api e recri
 from __future__ import annotations
 
 import json
+import random
 import re
+import socket
+import ssl
 
 import pytest
 
 import docker_helpers as dh
 from docker_helpers import header, header_values
+from tls_support import client_context, make_tls_pair
 
 pytestmark = pytest.mark.docker
 
@@ -36,8 +40,14 @@ def web_image():
 
 
 @pytest.fixture(scope="module")
+def tls_pair(tmp_path_factory):
+    """Par TLS de teste (D33) em diretorio temporario, apagado pelo pytest ao final da sessao."""
+    return make_tls_pair(tmp_path_factory.mktemp("admin-tls"))
+
+
+@pytest.fixture(scope="module")
 def stack_default(web_image):
-    """TRUSTED_PROXY_CIDR e ADMIN_TRUSTED_PROXY_IP vazios (o padrao)."""
+    """TRUSTED_PROXY_CIDR vazio (o padrao); 8081 com a sub-rede de teste na lista de permissao."""
     stack = dh.Stack(web_image).up()
     yield stack
     stack.down()
@@ -45,8 +55,8 @@ def stack_default(web_image):
 
 @pytest.fixture(scope="module")
 def stack_trusted(web_image):
-    """cloudflared de teste = .10 (8080); Nginx Proxy Manager de teste = .11 (8081)."""
-    stack = dh.Stack(web_image, trusted_octet=10, admin_octet=11).up()
+    """cloudflared de teste = .10 (8080)."""
+    stack = dh.Stack(web_image, trusted_octet=10).up()
     yield stack
     stack.down()
 
@@ -71,38 +81,44 @@ def without_comments(conf):
     return "\n".join(line for line in conf.splitlines() if not line.lstrip().startswith("#"))
 
 
-def run_nginx(image, env, *cmd):
+def run_nginx(image, env, *cmd, tls=None, mount_cert=True, mount_key=True):
+    """`nginx` na imagem real com os secrets TLS de teste montados em /run/secrets (como o compose faz)."""
     args = ["run", "--rm"]
     for k, v in env.items():
         args += ["-e", f"{k}={v}"]
+    if tls is not None:
+        cert, key = tls
+        if mount_cert:
+            args += ["--mount", f"type=bind,source={cert},target=/run/secrets/admin_tls_cert,readonly"]
+        if mount_key:
+            args += ["--mount", f"type=bind,source={key},target=/run/secrets/admin_tls_key,readonly"]
     return dh.docker(*args, image, "nginx", *cmd, check=False)
 
 
-def test_infra_ng_07_nginx_t_com_configuracao_renderizada(web_image):
+def test_infra_ng_07_nginx_t_com_configuracao_renderizada(web_image, tls_pair):
     dh.require_docker()
-    r = run_nginx(web_image, {"TRUSTED_PROXY_CIDR": "172.29.80.10/32", "ADMIN_TRUSTED_PROXY_IP": "172.29.80.11"}, "-t")
+    r = run_nginx(web_image, {"TRUSTED_PROXY_CIDR": "172.29.80.10/32", "ADMIN_ALLOW_CIDRS": "192.168.15.0/24 100.64.0.0/10"}, "-t", tls=tls_pair)
     assert r.returncode == 0, r.stderr
     assert "syntax is ok" in r.stderr and "test is successful" in r.stderr
 
 
-def test_infra_ng_04_09_valores_validos_geram_as_diretivas(web_image):
+def test_infra_ng_04_valores_validos_geram_as_diretivas(web_image, tls_pair):
     dh.require_docker()
-    out = run_nginx(web_image, {"TRUSTED_PROXY_CIDR": " 172.29.80.10/32 ", "ADMIN_TRUSTED_PROXY_IP": "172.29.80.11"}, "-T")
+    out = run_nginx(web_image, {"TRUSTED_PROXY_CIDR": " 172.29.80.10/32 ", "ADMIN_ALLOW_CIDRS": "192.168.15.0/24 100.64.0.0/10"}, "-T", tls=tls_pair)
     assert out.returncode == 0, out.stderr
     conf = without_comments(out.stdout)
     assert "real_ip_header CF-Connecting-IP; real_ip_recursive off; set_real_ip_from 172.29.80.10/32;" in conf
-    assert "real_ip_header X-Forwarded-For; real_ip_recursive off; set_real_ip_from 172.29.80.11/32;" in conf
-    assert conf.count("set_real_ip_from") == 2
-    # cada diretiva no server certo
+    # a 8081 nao confia em nenhum cabecalho de IP (D33): so UMA diretiva real_ip em toda a configuracao, na 8080
+    assert conf.count("set_real_ip_from") == 1 and conf.count("real_ip_header") == 1
+    assert "X-Forwarded-For" not in conf
     first, second = conf.split("listen 8081", 1)
-    assert "CF-Connecting-IP; real_ip_recursive" in first and "X-Forwarded-For; real_ip_recursive" not in first
-    assert "X-Forwarded-For; real_ip_recursive" in second and "CF-Connecting-IP; real_ip_recursive" not in second
+    assert "CF-Connecting-IP; real_ip_recursive" in first and "real_ip" not in second
 
 
-@pytest.mark.parametrize("env", [{}, {"TRUSTED_PROXY_CIDR": "", "ADMIN_TRUSTED_PROXY_IP": ""}, {"TRUSTED_PROXY_CIDR": "   "}])
-def test_infra_ng_04_09_vazio_nao_emite_diretiva_real_ip(web_image, env):
+@pytest.mark.parametrize("env", [{}, {"TRUSTED_PROXY_CIDR": ""}, {"TRUSTED_PROXY_CIDR": "   "}])
+def test_infra_ng_04_vazio_nao_emite_diretiva_real_ip(web_image, tls_pair, env):
     dh.require_docker()
-    out = run_nginx(web_image, env, "-T")
+    out = run_nginx(web_image, env, "-T", tls=tls_pair)
     assert out.returncode == 0, out.stderr
     for forbidden in ("set_real_ip_from", "real_ip_header", "real_ip_recursive"):
         assert forbidden not in without_comments(out.stdout)
@@ -134,15 +150,158 @@ BAD_VALUES = [
 ]
 
 
-@pytest.mark.parametrize("variable", ["TRUSTED_PROXY_CIDR", "ADMIN_TRUSTED_PROXY_IP"])
 @pytest.mark.parametrize("value", BAD_VALUES)
-def test_infra_ng_04_09_valor_perigoso_aborta_a_subida(web_image, variable, value):
+def test_infra_ng_04_valor_perigoso_aborta_a_subida(web_image, tls_pair, value):
     dh.require_docker()
-    r = run_nginx(web_image, {variable: value}, "-t")
-    assert r.returncode != 0, f"{variable}={value!r} deveria abortar"
+    r = run_nginx(web_image, {"TRUSTED_PROXY_CIDR": value}, "-t", tls=tls_pair)
+    assert r.returncode != 0, f"TRUSTED_PROXY_CIDR={value!r} deveria abortar"
     assert "15-livestats-realip: ERRO" in r.stderr
-    assert variable in r.stderr
+    assert "TRUSTED_PROXY_CIDR" in r.stderr
     assert "syntax is ok" not in r.stderr
+
+
+# ---------------------------------------------------------------------------------------------- D33: lista de IPs
+ALLOW_BAD = [
+    "0.0.0.0/0",
+    "0.0.0.0",
+    "0.0.0.0/8",
+    "10.0.0.0/7",           # prefixo menor que 8
+    "10.0.0.0/0",
+    "128.0.0.0/1",
+    "192.168.15.0/33",
+    "192.168.15.0/-1",
+    "192.168.15.0/",
+    "192.168.15.0/24/1",
+    "192.168.15.5/24",      # bits de host preenchidos
+    "100.64.0.1/10",
+    "::1",
+    "::/0",
+    "fe80::1/64",
+    "2001:db8::/32",
+    "todos",
+    "any",
+    "all",
+    "*",
+    "192.168.15",
+    "192.168.15.0.1",
+    "192.168.15.256",
+    "192.168.015.0/24",     # zero a esquerda
+    "192.168.15.0/024",
+    "192.168.15.0/24; allow all",   # injecao de diretiva
+    "192.168.15.0/24;}server{listen 9999;",
+    "192.168.15.0/24\nallow all",
+    "192.168.15.0/24 }",
+    "192.168.15.0/24,10.0.0.0/8",
+    "$remote_addr",
+    "192.168.15.0/24 $host",
+    "'192.168.15.0/24'",
+    "192.168.15.0/24 #",
+    "192.168.15.0/24 0.0.0.0/0",    # um item bom nao salva o ruim
+    "0.0.0.0/0 192.168.15.0/24",
+    "192.168.15.0/24\tallow",
+]
+
+
+@pytest.mark.parametrize("value", ALLOW_BAD)
+def test_infra_ng_10_allow_cidrs_perigoso_aborta_a_subida(web_image, tls_pair, value):
+    dh.require_docker()
+    r = run_nginx(web_image, {"ADMIN_ALLOW_CIDRS": value}, "-t", tls=tls_pair)
+    assert r.returncode != 0, f"ADMIN_ALLOW_CIDRS={value!r} deveria abortar"
+    assert "15-livestats-realip: ERRO" in r.stderr
+    assert "ADMIN_ALLOW_CIDRS" in r.stderr
+    assert "syntax is ok" not in r.stderr
+
+
+def _admin_server(conf):
+    return conf.split("listen 8081", 1)[1]
+
+
+def test_infra_ng_10_allow_cidrs_valido_gera_allow_e_deny_all(web_image, tls_pair):
+    dh.require_docker()
+    out = run_nginx(web_image, {"ADMIN_ALLOW_CIDRS": " 192.168.15.0/24   100.64.0.0/10 10.1.2.3 "}, "-T", tls=tls_pair)
+    assert out.returncode == 0, out.stderr
+    conf = without_comments(out.stdout)
+    allows = re.findall(r"\b(allow|deny) ([^;\s]+);", _admin_server(conf))
+    assert allows == [("allow", "192.168.15.0/24"), ("allow", "100.64.0.0/10"), ("allow", "10.1.2.3/32"), ("deny", "all")]
+    # a mesma lista vale no rewrite do server (antes das locations que usam `return`)
+    geo = re.search(r"geo \$remote_addr \$livestats_admin_allowed \{(.*?)\}", conf, re.S).group(1)
+    assert re.findall(r"(\S+) (\S+);", geo) == [
+        ("default", "0"), ("192.168.15.0/24", "1"), ("100.64.0.0/10", "1"), ("10.1.2.3/32", "1")]
+    assert re.search(r"if \(\$livestats_admin_allowed = 0\) \{\s*return 403;\s*\}", _admin_server(conf))
+    # a 8080 nao ganha lista de permissao
+    assert not re.search(r"\b(allow|deny) [^;]+;", conf.split("listen 8081", 1)[0])
+
+
+@pytest.mark.parametrize("env", [{}, {"ADMIN_ALLOW_CIDRS": ""}, {"ADMIN_ALLOW_CIDRS": "   "}])
+def test_infra_ng_10_allow_cidrs_padrao_e_so_loopback(web_image, tls_pair, env):
+    dh.require_docker()
+    out = run_nginx(web_image, env, "-T", tls=tls_pair)
+    assert out.returncode == 0, out.stderr
+    admin = _admin_server(without_comments(out.stdout))
+    assert re.findall(r"\b(allow|deny) ([^;\s]+);", admin) == [("allow", "127.0.0.1/32"), ("deny", "all")]
+
+
+# ---------------------------------------------------------------------------------------------- D33: TLS obrigatorio
+def test_infra_ng_11_config_da_8081_tls_12_13_sem_tickets_sem_hsts(web_image, tls_pair):
+    dh.require_docker()
+    out = run_nginx(web_image, {}, "-T", tls=tls_pair)
+    assert out.returncode == 0, out.stderr
+    conf = without_comments(out.stdout)
+    public, admin = (re.sub(r"[ 	]+", " ", part) for part in conf.split("listen 8081", 1))
+    assert re.match(r" ssl default_server;", admin)
+    assert "ssl_protocols TLSv1.2 TLSv1.3;" in admin
+    assert "ssl_session_tickets off;" in admin
+    assert "ssl_certificate /run/secrets/admin_tls_cert;" in admin and "ssl_certificate_key /run/secrets/admin_tls_key;" in admin
+    assert "Strict-Transport-Security" not in conf.replace("\n", " ")
+    assert "ssl" not in public.replace("listen 8080 default_server", "")  # a 8080 segue em HTTP
+
+
+def test_infra_ng_11_sem_os_secrets_tls_o_web_nao_sobe(web_image, tls_pair):
+    dh.require_docker()
+    r = run_nginx(web_image, {}, "-t")  # nenhum secret
+    assert r.returncode != 0 and "15-livestats-realip: ERRO" in r.stderr
+    assert "admin_tls_cert" in r.stderr and "syntax is ok" not in r.stderr
+    r = run_nginx(web_image, {}, "-t", tls=tls_pair, mount_cert=False)  # so a chave
+    assert r.returncode != 0 and "admin_tls_cert" in r.stderr and "15-livestats-realip: ERRO" in r.stderr
+    r = run_nginx(web_image, {}, "-t", tls=tls_pair, mount_key=False)  # so o certificado
+    assert r.returncode != 0 and "admin_tls_key" in r.stderr and "15-livestats-realip: ERRO" in r.stderr
+
+
+def test_infra_ng_11_secret_tls_vazio_ou_invalido_nao_sobe(web_image, tls_pair, tmp_path):
+    dh.require_docker()
+    empty = tmp_path / "vazio.pem"
+    empty.write_bytes(b"")
+    r = run_nginx(web_image, {}, "-t", tls=(empty, tls_pair[1]))
+    assert r.returncode != 0 and "admin_tls_cert" in r.stderr and "15-livestats-realip: ERRO" in r.stderr
+    junk = tmp_path / "lixo.pem"  # nao e PEM: o Nginx recusa (nunca cai para HTTP)
+    junk.write_text("isto nao e um certificado\n", encoding="ascii")
+    r = run_nginx(web_image, {}, "-t", tls=(junk, tls_pair[1]))
+    assert r.returncode != 0 and "syntax is ok" not in r.stderr
+    assert "PEM" in r.stderr or "ssl" in r.stderr.lower()
+
+
+def test_infra_ng_11_chave_ilegivel_pelo_uid_101_nao_sobe(web_image, tls_pair):
+    """Chave de dono root e modo 0600 num volume: o uid 101 nao a le => erro explicito de permissao."""
+    dh.require_docker()
+    cert, key = tls_pair
+    volume = f"livestats-t7test-secrets-{random.randrange(10**6):06d}"
+    try:
+        dh.docker("volume", "create", volume)
+        dh.docker(
+            "run", "--rm", "--user", "0:0", "--entrypoint", "sh", "-v", f"{volume}:/dest",
+            "--mount", f"type=bind,source={cert},target=/c,readonly", "--mount", f"type=bind,source={key},target=/k,readonly",
+            web_image, "-c",
+            "cp /c /dest/admin_tls_cert && cp /k /dest/admin_tls_key && chmod 0644 /dest/admin_tls_cert && "
+            "chown 0:0 /dest/admin_tls_key && chmod 0600 /dest/admin_tls_key",
+        )
+        r = dh.docker(
+            "run", "--rm", "--user", "101:101",
+            "--mount", f"type=volume,source={volume},target=/run/secrets,readonly", web_image, "nginx", "-t", check=False,
+        )
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "admin_tls_key" in r.stderr and "15-livestats-realip: ERRO" in r.stderr and "uid 101" in r.stderr
+    finally:
+        dh.docker("volume", "rm", "-f", volume, check=False)
 
 
 # ---------------------------------------------------------------------------------------------- compose real
@@ -366,34 +525,110 @@ def test_infra_ng_04_ip_real_8080_so_do_32_confiavel(stack_trusted):
     assert "198.51.100.1 " in s.logs()
 
 
-def test_infra_ng_09_ip_real_8081_ultimo_salto_so_do_npm(stack_trusted):
+def test_infra_ng_09_8081_ignora_sempre_xff_e_cf_connecting_ip(stack_trusted):
+    """D33: a 8081 nao confia em cabecalho de IP algum, nem de uma origem 'conhecida' (inclusive o .10 do cloudflared)."""
     s = stack_trusted
     base = s.base
     xff = "203.0.113.7, 198.51.100.9"
-    s.client("11", [{"path": "/live1.json?t=f", "headers": {"X-Forwarded-For": xff}}], port=8081)
-    e = entry(s, "/live1.json?t=f")
-    assert e["headers"]["x-real-ip"] == "198.51.100.9"
-    assert e["headers"]["x-forwarded-for"] == "198.51.100.9"
-    # limite de login por IP real: 198.51.100.9 estoura no 7o; 198.51.100.10 ainda passa
+    for octet in ("11", "10"):  # .10 e o IP confiavel da 8080: na 8081 nao vale nada
+        marker = f"/live1.json?t=f{octet}"
+        s.client(octet, [{"path": marker, "headers": {"X-Forwarded-For": xff, "CF-Connecting-IP": "198.51.100.3"}}], port=8081)
+        e = entry(s, marker)
+        assert e["headers"]["x-real-ip"] == f"{base}.{octet}"
+        assert e["headers"]["x-forwarded-for"] == f"{base}.{octet}"
+        assert "cf-connecting-ip" not in e["headers"]
+    # variar o cabecalho nao escapa do limite de login do IP de conexao
     login = {"path": "/api/admin/login", "method": "POST", "body": "{}"}
-    res = s.client("11", [{**login, "headers": {"X-Forwarded-For": xff}, "repeat": 9}], port=8081)
-    assert statuses(res) == [200] * 6 + [429] * 3
-    ok = s.client("11", [{**login, "headers": {"X-Forwarded-For": "203.0.113.7, 198.51.100.10"}}], port=8081)
-    assert ok[0]["status"] == 200
-    # outra origem na edge: XFF ignorado, variar o cabecalho nao escapa do limite
-    varied = [{**login, "headers": {"X-Forwarded-For": f"198.51.100.{50 + i}"}} for i in range(9)]
+    varied = [{**login, "headers": {"X-Forwarded-For": f"198.51.100.{50 + i}", "CF-Connecting-IP": f"198.51.100.{80 + i}"}} for i in range(9)]
     res = s.client("14", varied, port=8081)
     assert statuses(res) == [200] * 6 + [429] * 3
-    s.client("15", [{"path": "/live1.json?t=g", "headers": {"X-Forwarded-For": xff}}], port=8081)
-    assert entry(s, "/live1.json?t=g")["headers"]["x-real-ip"] == f"{base}.15"
-    # o cloudflared (.10) nao e confiavel na 8081, e o NPM (.11) nao e na 8080
-    s.client("10", [{"path": "/live1.json?t=h", "headers": {"X-Forwarded-For": xff, "CF-Connecting-IP": "198.51.100.3"}}], port=8081)
-    assert entry(s, "/live1.json?t=h")["headers"]["x-real-ip"] == f"{base}.10"
-    s.client("11", [{"path": "/live1.json?t=i", "headers": {"CF-Connecting-IP": "198.51.100.3", "X-Forwarded-For": xff}}], port=8080)
-    assert entry(s, "/live1.json?t=i")["headers"]["x-real-ip"] == f"{base}.11"
-    # host (gateway) com XFF forjado
-    s.host_request(s.port_admin, "/live1.json?t=j", headers={"X-Forwarded-For": xff})
-    assert entry(s, "/live1.json?t=j")["headers"]["x-real-ip"] not in {"198.51.100.9", f"{base}.11"}
+    # outro IP de conexao, mesmo declarando o IP bloqueado no cabecalho, tem o limite proprio
+    ok = s.client("15", [{**login, "headers": {"X-Forwarded-For": "198.51.100.50"}}], port=8081)
+    assert ok[0]["status"] == 200
+    # o host (gateway) com cabecalhos forjados: vale o IP de conexao
+    s.host_request(s.port_admin, "/live1.json?t=fh", headers={"X-Forwarded-For": xff, "CF-Connecting-IP": "198.51.100.3"})
+    seen = entry(s, "/live1.json?t=fh")["headers"]["x-real-ip"]
+    assert seen not in {"198.51.100.9", "198.51.100.3", "203.0.113.7"}
+
+
+def test_infra_ng_12_8081_so_responde_em_tls_12_ou_13_e_sem_hsts(stack_default):
+    s = stack_default
+    # TLS 1.3 e 1.2 funcionam, verificando a cadeia e o IP no SAN
+    for version, expected in ((ssl.TLSVersion.TLSv1_3, "TLSv1.3"), (ssl.TLSVersion.TLSv1_2, "TLSv1.2")):
+        ctx = client_context(s.cert)
+        ctx.minimum_version = ctx.maximum_version = version
+        with socket.create_connection(("127.0.0.1", s.port_admin), timeout=10) as raw, ctx.wrap_socket(raw, server_hostname="127.0.0.1") as tls:
+            assert tls.version() == expected
+            tls.sendall(b"GET /api/admin/session HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            first = tls.recv(64)
+            assert first.startswith(b"HTTP/1.1 "), first
+    # TLS <= 1.1 recusado pelo servidor (o cliente tenta de verdade: nivel de seguranca 0)
+    old = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    old.check_hostname = False
+    old.verify_mode = ssl.CERT_NONE
+    old.set_ciphers("ALL:@SECLEVEL=0")
+    old.minimum_version = ssl.TLSVersion.TLSv1
+    old.maximum_version = ssl.TLSVersion.TLSv1_1
+    with pytest.raises(ssl.SSLError) as exc, socket.create_connection(("127.0.0.1", s.port_admin), timeout=10) as raw:
+        old.wrap_socket(raw, server_hostname="127.0.0.1")
+    assert any(w in str(exc.value).lower() for w in ("protocol version", "no protocols", "alert", "unsupported protocol", "wrong version")), exc.value
+    # sem HSTS em nenhuma resposta da 8081 (nem 200, 401, 404, 429), e a 8080 segue sem HTTPS
+    for path in ("/", "/admin-assets/js/main.js", "/api/admin/session", "/nao-existe", "/live1.json", "/health"):
+        r = s.host_request(s.port_admin, path)
+        assert header(r, "Strict-Transport-Security") is None, path
+    flood = s.client("34", [{"path": "/api/admin/session", "repeat": 40}], port=8081)
+    assert 429 in statuses(flood) and all(header(r, "Strict-Transport-Security") is None for r in flood)
+    r8080 = s.host_request(s.port_public, "/health")
+    assert r8080["status"] == 200 and header(r8080, "Strict-Transport-Security") is None
+
+
+def test_infra_ng_12_http_simples_na_8081_nunca_chega_a_uma_rota(stack_default):
+    s = stack_default
+    for path in ("/", "/api/admin/session", "/live1.json", "/health"):
+        r = dh.http_request("127.0.0.1", s.port_admin, path)  # HTTP puro de proposito
+        assert r["status"] == 400, (path, r["status"])
+        assert json.loads(r["body"]) == {"detail": "Bad Request"}
+        assert header(r, "Set-Cookie") is None
+        assert "admin" not in r["body"].lower() or r["body"] == '{"detail":"Bad Request"}'
+    assert not [e for e in s.api_log() if "?plain" in e["path"]]
+    # a 8080 continua em HTTP e sem nenhuma rota de admin
+    assert dh.http_request("127.0.0.1", s.port_public, "/health")["status"] == 200
+    for path in ("/", "/admin", "/admin-assets/index.html", "/api/admin/session"):
+        assert dh.http_request("127.0.0.1", s.port_public, path)["status"] == 404
+    with pytest.raises(ssl.SSLError):  # e a 8080 nao fala TLS
+        dh.http_request("127.0.0.1", s.port_public, "/health", tls_cert=s.cert)
+
+
+def test_infra_ng_13_lista_de_ips_permite_dentro_e_nega_fora_com_403_json(web_image):
+    dh.require_docker()
+    s = dh.Stack(web_image, allow="{base}.0/27").up()  # .0-.31: gateway (.1) e clientes .10-.31 dentro; .40 fora
+    try:
+        paths = ["/", "/admin", "/admin-assets/js/main.js", "/api/admin/session", "/api/admin/login", "/api/admin/slots", "/live1.json", "/health", "/nao-existe"]
+        specs = [{"path": f"{p}?allow=1", "headers": {"X-Forwarded-For": "192.168.15.9", "CF-Connecting-IP": "192.168.15.9"}} for p in paths]
+        specs.append({"path": "/api/admin/login?allow=1", "method": "POST", "body": "{}"})
+        inside = s.client("20", specs, port=8081)
+        assert [r["status"] for r in inside] == [200, 200, 200, 200, 200, 200, 200, 200, 404, 200]
+        outside = s.client("40", specs, port=8081)
+        for spec, resp in zip(specs, outside):
+            assert resp["status"] == 403, (spec["path"], resp["status"])
+            assert json.loads(resp["body"]) == {"detail": "Forbidden"}
+            assert header(resp, "Content-Type").startswith("application/json")
+            check_security(resp, label=f"403 {spec['path']}")
+            assert header(resp, "Set-Cookie") is None
+        # nada do que veio de fora chegou a api; cabecalhos de IP forjados nao liberam
+        reached_from_outside = [e for e in s.api_log() if e["path"].endswith("?allow=1") and e["headers"].get("x-real-ip") == f"{s.base}.40"]
+        assert reached_from_outside == []
+        # o IP de uma origem permitida declarado em XFF nao ajuda quem esta fora (e o contrario tambem nao atrapalha)
+        spoof = s.client("41", [{"path": "/api/admin/session", "headers": {"X-Forwarded-For": f"{s.base}.20"}}], port=8081)
+        assert spoof[0]["status"] == 403
+        # o host chega pelo gateway (dentro da lista) em HTTPS
+        assert s.host_request(s.port_admin, "/")["status"] == 200
+        # a 8080 nao tem lista: a origem de fora usa as rotas publicas normalmente
+        assert s.client("40", [{"path": "/live1.json"}, {"path": "/api/admin/session"}], port=8080)[0]["status"] == 200
+        assert s.client("40", [{"path": "/api/admin/session"}], port=8080)[0]["status"] == 404
+        assert any(" 403 " in line for line in s.logs().splitlines())
+    finally:
+        s.down()
 
 
 def test_infra_ng_04_09_padrao_vazio_ignora_os_dois_cabecalhos(stack_default):

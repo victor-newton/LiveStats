@@ -12,7 +12,8 @@ from pathlib import Path
 
 NGINX_DIR = Path(__file__).resolve().parents[2] / "web" / "nginx"
 PLACEHOLDER_PUBLIC = "${LIVESTATS_REALIP_PUBLIC}"
-PLACEHOLDER_ADMIN = "${LIVESTATS_REALIP_ADMIN}"
+PLACEHOLDER_ADMIN = "${LIVESTATS_ADMIN_ALLOW}"  # allow ... (8081, D33)
+PLACEHOLDER_ADMIN_GEO = "${LIVESTATS_ADMIN_GEO}"  # entradas do geo da lista de permissao
 
 
 class Node:
@@ -99,40 +100,40 @@ def parse(text: str):
     return root
 
 
-def _resolve_includes(node: Node, public: str, admin: str):
+def _resolve_includes(node: Node, public: str, admin: str, geo: str = ""):
     out = []
     for child in node.children or []:
         if child.name == "include":
             target = child.args[0]
             if target.startswith("/etc/nginx/snippets/"):
                 sub = parse((NGINX_DIR / "snippets" / target.rsplit("/", 1)[1]).read_text(encoding="utf-8"))
-                _resolve_includes(sub, public, admin)
+                _resolve_includes(sub, public, admin, geo)
                 for item in sub.children:
                     item.parent = node
                     out.append(item)
             elif target == "/etc/nginx/conf.d/*.conf":
                 template = (NGINX_DIR / "templates" / "default.conf.template").read_text(encoding="utf-8")
-                template = template.replace(PLACEHOLDER_PUBLIC, public).replace(PLACEHOLDER_ADMIN, admin)
+                template = template.replace(PLACEHOLDER_PUBLIC, public).replace(PLACEHOLDER_ADMIN, admin).replace(PLACEHOLDER_ADMIN_GEO, geo)
                 sub = parse(template)
-                _resolve_includes(sub, public, admin)
+                _resolve_includes(sub, public, admin, geo)
                 for item in sub.children:
                     item.parent = node
                     out.append(item)
             # mime.types e afins: ignorados
             continue
         if child.is_block:
-            _resolve_includes(child, public, admin)
+            _resolve_includes(child, public, admin, geo)
         out.append(child)
     node.children = out
 
 
-def load(public: str = "", admin: str = "") -> Node:
+def load(public: str = "", admin: str = "", geo: str = "") -> Node:
     """Arvore completa de nginx.conf, com snippets e template expandidos.
 
-    `public`/`admin` substituem os marcadores do envsubst (vazio = IP real desligado).
+    `public`/`admin`/`geo` substituem os marcadores do envsubst (vazio = IP real desligado e nenhuma entrada de lista).
     """
     root = parse((NGINX_DIR / "nginx.conf").read_text(encoding="utf-8"))
-    _resolve_includes(root, public, admin)
+    _resolve_includes(root, public, admin, geo)
     return root
 
 

@@ -137,9 +137,11 @@ case $_allow_raw in
     *[!0-9./' ']*) livestats_fail "ADMIN_ALLOW_CIDRS so aceita IPv4 e IPv4/N separados por espaco (recebido algo diferente disso)" ;;
 esac
 LIVESTATS_ADMIN_ALLOW=""
+LIVESTATS_ADMIN_GEO=""
 for _item in $_allow_raw; do
     livestats_cidr ADMIN_ALLOW_CIDRS "$_item"
     LIVESTATS_ADMIN_ALLOW="${LIVESTATS_ADMIN_ALLOW}allow ${LIVESTATS_CIDR}; "
+    LIVESTATS_ADMIN_GEO="${LIVESTATS_ADMIN_GEO}${LIVESTATS_CIDR} 1; "
 done
 
 # --- TLS da 8081: sem os dois secrets o web NAO sobe (nunca cai para HTTP).
@@ -148,4 +150,4 @@ for _f in /run/secrets/admin_tls_cert /run/secrets/admin_tls_key; do
     [ -r "$_f" ] || livestats_fail "secret TLS do admin sem permissao de leitura para o usuario do Nginx (uid 101): $_f (veja secrets/README.md)"
 done
 
-export LIVESTATS_REALIP_PUBLIC LIVESTATS_ADMIN_ALLOW
+export LIVESTATS_REALIP_PUBLIC LIVESTATS_ADMIN_ALLOW LIVESTATS_ADMIN_GEO
