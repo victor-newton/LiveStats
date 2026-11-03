@@ -87,7 +87,10 @@ function validationLine(item) {
   const loc = item && Array.isArray(item.loc) ? item.loc : [];
   const idx = loc.find((p) => typeof p === 'number');
   if (loc.includes('slots') && typeof idx === 'number') {
-    const field = loc.includes('goal') ? ' (meta de likes)' : loc.includes('color') ? ' (cor)' : '';
+    const field = loc.includes('goal') ? ' (meta de likes)'
+      : loc.includes('color') ? ' (cor)'
+        : loc.includes('font') ? ' (fonte)'
+          : loc.includes('text_color') ? ' (cor do texto)' : '';
     return `Slot ${idx + 1}${field}: ${msg}`;
   }
   return msg;

@@ -9,10 +9,28 @@ import {
 import {
   initSlots, resetSlots, loadSlots, saveSlots, renderEndpoints,
 } from './slots.js';
-import { loadStatus, resetStatus } from './status.js';
+import { resetStatus } from './status.js';
 import { saveCookies, resetCookies } from './cookies.js';
+import {
+  initSettings, loadFonts, applySettings, applySlotLooks, resetSettings, saveChannel, saveLooks, wireChannelInput,
+} from './settings.js';
+import { startHealth, resetHealth, refreshHealthNow } from './health.js';
 
 const REFRESH_MS = 15000;
+
+/** Avisos por origem (dados dos slots/configurações e status dos workers): aparece o primeiro não vazio. */
+const notices = { data: '', status: '' };
+
+/**
+ * @param {'data' | 'status'} source
+ * @param {string} text vazio = sem aviso
+ */
+function setNotice(source, text) {
+  notices[source] = text;
+  const shown = notices.data || notices.status;
+  if (shown) showMessage(byId('panelNotice'), shown);
+  else clearMessage(byId('panelNotice'));
+}
 
 /** Incrementa a cada entrada/saída do painel; respostas atrasadas de uma
  *  sessão anterior são descartadas. */
@@ -50,6 +68,10 @@ function clearSession() {
   resetSlots();
   resetStatus();
   resetCookies();
+  resetSettings();
+  resetHealth();
+  notices.data = '';
+  notices.status = '';
   clearMessage(byId('panelNotice'));
   byId('userName').textContent = '';
 }
@@ -84,22 +106,30 @@ function handleAuthLoss(resp) {
   return false;
 }
 
+/** Cada atualização leva um número; uma resposta mais antiga que a última já aplicada é descartada. */
+let refreshSeq = 0;
+let appliedSeq = 0;
+
 async function refreshAll() {
   const gen = generation;
-  const notice = byId('panelNotice');
+  const seq = ++refreshSeq;
   try {
-    const [slots, status] = await Promise.all([loadSlots(), loadStatus()]);
-    if (gen !== generation) return;
-    if (handleAuthLoss(slots) || handleAuthLoss(status)) return;
-    if (!slots.ok || !status.ok) {
-      const bad = !slots.ok ? slots : status;
-      showMessage(notice, `Falha ao atualizar os dados: ${errorText(bad, `HTTP ${bad.status}`)}`);
+    const [slots, settings] = await Promise.all([loadSlots(), api('GET', '/api/admin/settings')]);
+    if (gen !== generation || seq < appliedSeq) return;
+    appliedSeq = seq;
+    if (handleAuthLoss(slots) || handleAuthLoss(settings)) return;
+    if (slots.ok && slots.data) applySlotLooks(slots.data);
+    if (settings.ok && settings.data) applySettings(settings.data);
+    if (!slots.ok || !settings.ok) {
+      const bad = !slots.ok ? slots : settings;
+      setNotice('data', `Falha ao atualizar os dados: ${errorText(bad, `HTTP ${bad.status}`)}`);
     } else {
-      clearMessage(notice);
+      setNotice('data', '');
     }
   } catch (e) {
-    if (gen !== generation) return;
-    showMessage(notice, 'Sem conexão com o servidor. Tentando de novo em instantes.');
+    if (gen !== generation || seq < appliedSeq) return;
+    appliedSeq = seq;
+    setNotice('data', 'Sem conexão com o servidor. Tentando de novo em instantes.');
   }
 }
 
@@ -108,6 +138,7 @@ async function refreshAll() {
  */
 function enterPanel(session) {
   clearSession();
+  const gen = generation;
   setCsrfToken(session.csrf_token);
   publicBase = typeof session.public_base_url === 'string' && session.public_base_url
     ? session.public_base_url.replace(/\/+$/, '')
@@ -116,7 +147,21 @@ function enterPanel(session) {
   renderEndpoints(publicBase);
   clearMessage(byId('loginMsg'));
   showView('panel');
-  void refreshAll();
+  // A lista de fontes vem primeiro: os dropdowns precisam das opções antes de receber os valores salvos.
+  void loadFonts().then((fonts) => {
+    if (gen !== generation || handleAuthLoss(fonts)) return;
+    void refreshAll();
+  }).catch(() => {
+    if (gen !== generation) return;
+    void refreshAll();
+  });
+  startHealth({
+    onUnauthorized,
+    onStatus: (resp) => {
+      if (resp === null) setNotice('status', 'Sem conexão com o servidor. Tentando de novo em instantes.');
+      else setNotice('status', resp.ok ? '' : `Falha ao atualizar os dados: ${errorText(resp, `HTTP ${resp.status}`)}`);
+    },
+  });
   pollTimer = window.setInterval(() => void refreshAll(), REFRESH_MS);
 }
 
@@ -188,13 +233,28 @@ async function onLogout() {
 
 function wire() {
   initSlots();
+  initSettings();
+  wireChannelInput();
+  byId('channelForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    void saveChannel({ onUnauthorized });
+  });
+  byId('lookBtn').addEventListener('click', () => {
+    void saveLooks({ onUnauthorized, reload: () => void refreshAll() });
+  });
+  for (const pill of document.querySelectorAll('.nav-pill')) {
+    pill.addEventListener('click', () => {
+      const target = pill instanceof HTMLElement ? pill.dataset.target : undefined;
+      if (target) byId(target).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
   byId('loginForm').addEventListener('submit', (ev) => void onLoginSubmit(ev));
   byId('logoutBtn').addEventListener('click', () => void onLogout());
   byId('saveBtn').addEventListener('click', () => {
     void saveSlots({ onUnauthorized, reloadAll: () => void refreshAll() });
   });
   byId('cookiesBtn').addEventListener('click', () => {
-    void saveCookies({ onUnauthorized, onSaved: () => void refreshAll() });
+    void saveCookies({ onUnauthorized, onSaved: () => { void refreshAll(); refreshHealthNow(); } });
   });
 }
 

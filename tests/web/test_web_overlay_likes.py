@@ -379,7 +379,7 @@ def test_web_like_12_cabecalhos_csp_do_overlay_e_nenhuma_requisicao_externa(page
     wait_until(lambda: texto(page) == "1.000/10.000", "valor")
     page.wait_for_timeout(200)
     caminhos = {page.evaluate("(u) => new URL(u).pathname", u) for u in watch.requests if not u.startswith("data:")}
-    assert caminhos == {PATH, "/overlay/live.css", "/overlay/live.js", "/overlay/carousel.js", "/api/public/lives/1"}
+    assert caminhos == {PATH, "/overlay/live.css", "/overlay/live.js", "/overlay/carousel.js", "/overlay/aparencia.js", "/api/public/lives/1"}
     # a fixture `page` falha o teste se houver violação de CSP ou requisição a terceiros
 
 

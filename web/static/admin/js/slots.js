@@ -48,6 +48,16 @@ const COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 
 /** @type {Card[]} */
 let cards = [];
+/** Últimos valores de url, meta e cor GRAVADOS no servidor (a seção de aparência regrava com eles).
+ * @type {{url: string, goal: number | null, color: string}[] | null} */
+let serverItems = null;
+
+/**
+ * @returns {{url: string, goal: number | null, color: string}[] | null} cópia, ou null se ainda não carregou
+ */
+export function savedSlotItems() {
+  return serverItems ? serverItems.map((i) => ({ ...i })) : null;
+}
 /** @type {number[]} */
 let timers = [];
 
@@ -118,6 +128,7 @@ function labelWithHint(label, forId, text, hint) {
 export function resetSlots() {
   for (const t of timers) clearTimeout(t);
   timers = [];
+  serverItems = null;
   clearMessage(byId('saveErr'));
   setVisible(byId('saveMsg'), false);
   byId('epList').replaceChildren();
@@ -185,6 +196,13 @@ function statItem(value, label) {
  */
 export function applySlots(data) {
   const items = Array.isArray(data.slots) ? data.slots : [];
+  if (items.length === SLOTS) {
+    serverItems = items.map((s) => ({
+      url: typeof s.url === 'string' ? s.url : '',
+      goal: typeof s.goal === 'number' ? s.goal : null,
+      color: normalizeColor(s.color).toUpperCase(),
+    }));
+  }
   for (let i = 0; i < SLOTS; i++) {
     const item = items[i];
     if (!item || !cards[i]) continue;
@@ -228,14 +246,14 @@ function endpointGroups() {
       title: 'JSON por live',
       items: [
         ...numbers.map((n) => ({ label: `Live ${n} (legado: lista com 1 objeto)`, path: `/live${n}.json` })),
-        ...numbers.map((n) => ({ label: `Live ${n} (objeto, com meta e cor)`, path: `/api/public/lives/${n}` })),
+        ...numbers.map((n) => ({ label: `Live ${n} (objeto, com meta, cor e fonte)`, path: `/api/public/lives/${n}` })),
       ],
     },
     {
       title: 'JSON de inscritos',
       items: [
         { label: 'Inscritos (legado)', path: '/inscritos.json' },
-        { label: 'Inscritos (formato novo)', path: '/api/public/subscribers' },
+        { label: 'Inscritos (formato novo, com fonte e cor)', path: '/api/public/subscribers' },
       ],
     },
     {
@@ -366,6 +384,11 @@ export async function saveSlots(hooks) {
       return;
     }
     const saved = resp.data && Array.isArray(resp.data.slots) ? resp.data.slots : items;
+    serverItems = saved.map((/** @type {any} */ s, /** @type {number} */ i) => ({
+      url: typeof s.url === 'string' ? s.url : items[i].url,
+      goal: typeof s.goal === 'number' ? s.goal : null,
+      color: normalizeColor(s.color).toUpperCase(),
+    }));
     for (let i = 0; i < SLOTS; i++) {
       const item = saved[i] && typeof saved[i] === 'object' ? saved[i] : items[i];
       cards[i].input.value = typeof item.url === 'string' ? item.url : items[i].url;

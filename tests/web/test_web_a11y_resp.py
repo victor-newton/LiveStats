@@ -54,7 +54,8 @@ def test_web_a11y_01b_painel_com_rotulos_e_operavel_pelo_teclado(page: Page, api
     expect(page.get_by_label("JSON de cookies do EditThisCookie")).to_be_visible()
     # há títulos de seção e regiões com nome
     assert page.get_by_role("heading", level=2).count() >= 3
-    assert page.locator("#panelView section[aria-labelledby]").count() == 3
+    # D35: Lives, Saúde, Configurações, Inscritos, Cookies e Endpoints (antes eram 3 seções)
+    assert page.locator("#panelView section[aria-labelledby]").count() == 6
     # mensagens de status são anunciadas
     for sel, role in (("#saveMsg", "status"), ("#saveErr", "alert"), ("#cookiesMsg", "status"), ("#authAlert", "alert")):
         assert page.get_attribute(sel, "role") == role

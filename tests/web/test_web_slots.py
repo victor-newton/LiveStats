@@ -133,7 +133,9 @@ def test_web_slot_04_polling_de_15s_preserva_o_que_o_usuario_digita(page: Page, 
     assert n_get_slots(api) == base  # antes de 15 s não consulta
     page.clock.run_for(1)
     wait_until(lambda: n_get_slots(api) == base + 1, "1º polling após 15 s")
-    wait_until(lambda: len(api.requests("GET", "/api/admin/workers/status")) == status_base + 1, "status junto")
+    # D35: o status dos workers agora e consultado pela secao Saude a cada 10 s (alimenta tambem "Inscritos"):
+    # em 15 s passa exatamente um ciclo dela.
+    wait_until(lambda: len(api.requests("GET", "/api/admin/workers/status")) == status_base + 1, "status pela secao Saude")
 
     expect(page.locator(".slot-title").first).to_have_text("Depois")  # estatística atualizou
     expect(page.get_by_label("Slot 2", exact=True)).to_have_value("rascunho que ainda nao foi salvo")

@@ -130,7 +130,7 @@ def no_html_injected(page: Page) -> None:
     """Nenhum elemento "perigoso" nasceu dentro do corpo da página: o que veio
     do servidor foi tratado como texto."""
     n = page.evaluate(
-        "document.body.querySelectorAll('img, svg, iframe, object, embed, script, style, a').length"
-    )
+        "document.body.querySelectorAll('img, svg:not(#healthDiagram), iframe, object, embed, script, style, a').length"
+    )  # D35: o diagrama de saude (#healthDiagram) e o unico svg legitimo; seu conteudo e checado em WEB-HEALTH-05
     assert n == 0, f"{n} elementos injetados no corpo"
     assert page.evaluate("window.__xss") is None
