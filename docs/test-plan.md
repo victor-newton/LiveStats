@@ -186,6 +186,8 @@ Chromium e Playwright reais, contra um servidor local (`http://127.0.0.1`, porta
 | SUB-CK-05 | Só 5 campos usados | cookie com `httpOnly/sameSite/expirationDate` injetado sem esses atributos (como o Selenium legado) | repassar tudo |
 | SUB-AUTH-01 | Studio redireciona para `accounts.google.com`/URL com `signin` | `auth_state='login_required'`, `state='error'`, `last_error_code='login_required'`; **nenhum** valor gravado em `subscriber_reading` | gravar valor da página de login |
 | SUB-AUTH-02 | Voltando a ter cookies bons | recupera: `auth_state='ok'`, `state='ok'` | ficar preso em erro |
+| SUB-AUTH-04 | Studio abre em `studio.youtube.com` mas mostra "Ops, você não tem permissão…" / "you don't have permission…" (pt-BR e inglês), sem contador | `state='error'`, `auth_state='ok'`, `last_error_code='config_error'`, mensagem constante de permissão; nada gravado em `subscriber_reading` (último valor fica); WARNING sem texto da página; conta para o reload de 30 | mostrar só "contador não encontrado"; gravar valor |
+| SUB-AUTH-05 | Página com o contador e a palavra "permissão" em outro lugar | lida normalmente (`state='ok'`); não é tratada como sem permissão | falso positivo que bloqueia leitura válida |
 | SUB-SEC-01 | Sem porta de debug | argumentos de lançamento não contêm `--remote-debugging-port`; nenhuma conexão TCP aceita em 9222 durante a execução | manter 9222 (V7) |
 | SUB-SEC-02 | Screenshot | por padrão, **nenhum** arquivo de imagem é criado; com `DEBUG_SCREENSHOT=1` grava em `/tmp/debug` (ou diretório temporário), nunca sob `/data` nem sob pasta servida | gravar sempre / em `/data` |
 | SUB-SEC-03 | Logs durante cookies válidos, inválidos e falha de `add_cookies` | não contêm valores nem nomes de cookie | logar o cookie |

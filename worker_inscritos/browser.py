@@ -90,11 +90,34 @@ JS_ESTRATEGIA_3 = r"""
 
 ESTRATEGIAS = (JS_ESTRATEGIA_1, JS_ESTRATEGIA_2, JS_ESTRATEGIA_3)
 
-# Roda as estrategias em ordem e devolve [location.href, texto]; a URL e da pagina de onde o texto saiu.
+# Pagina de erro do Studio quando a conta dos cookies nao tem acesso ao canal (URL segue em studio.youtube.com).
+# Frases ja normalizadas (minusculas, sem acento, sem apostrofo/pontuacao, espacos unicos), pt-BR e ingles.
+FRASES_SEM_PERMISSAO = (
+    "voce nao tem permissao para acessar esta pagina",
+    "voce precisa fazer login em uma conta que tenha acesso",
+    "you dont have permission to access this page",
+    "you need to sign in to an account that has access",
+)
+
+_JS_SEM_PERMISSAO = (
+    r"""() => {
+    const txt = ((document.body && (document.body.innerText || document.body.textContent)) || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+        .replace(/['‘’`]/g, '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return """
+    + str(list(FRASES_SEM_PERMISSAO)).replace("'", '"')
+    + r""".some(f => txt.includes(f));
+}"""
+)
+
+# Roda as estrategias em ordem e devolve [location.href, texto, sem_permissao]; a URL e da pagina de onde o texto saiu.
+# `sem_permissao` so e calculado (e so vale) quando o contador NAO foi encontrado.
 _JS_LER_PAGINA = (
     "() => { const url = location.href; for (const f of ["
     + ", ".join(ESTRATEGIAS)
-    + "]) { const r = f(); if (r) return [url, r]; } return [url, null]; }"
+    + "]) { const r = f(); if (r) return [url, r, false]; } return [url, null, ("
+    + _JS_SEM_PERMISSAO
+    + ")()]; }"
 )
 
 
@@ -252,15 +275,16 @@ class BrowserSession:
         assert self.page is not None
         return self.page.url
 
-    def read_page(self) -> tuple[str, str | None]:
-        """(URL, texto cru) lidos no MESMO `evaluate`, ou seja, da mesma pagina.
+    def read_page(self) -> tuple[str, str | None, bool]:
+        """(URL, texto cru, sem_permissao) lidos no MESMO `evaluate`, ou seja, da mesma pagina.
 
         `page.url` na API sincrona pode estar desatualizado se a pagina navegou sozinha; por isso a URL
-        vem de `location.href` no mesmo instante da leitura do contador.
+        vem de `location.href` no mesmo instante da leitura do contador. `sem_permissao` e True so se o
+        contador nao existe e a pagina mostra o erro "voce nao tem permissao" do Studio (pt-BR ou ingles).
         """
         assert self.page is not None
-        url, bruto = self.page.evaluate(_JS_LER_PAGINA)
-        return str(url), (str(bruto) if bruto else None)
+        url, bruto, sem_permissao = self.page.evaluate(_JS_LER_PAGINA)
+        return str(url), (str(bruto) if bruto else None), bool(sem_permissao) and not bruto
 
     def read_counter(self) -> str | None:
         """Texto cru do contador, pela primeira estrategia que casar 3 ou mais digitos; None se nenhuma casar."""
