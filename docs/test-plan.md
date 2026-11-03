@@ -449,6 +449,37 @@ Regras anti-burla do topo valem aqui. Testes antigos só foram **atualizados** p
 | INT-C11-02 | Fonte e cor | escolhidas no painel aparecem no JSON novo (cor em maiúsculas), **não** nos legados, e no `/contador` e `/overlay/live.html` reais; mudar no painel muda o overlay aberto sem recarregar; sem CSP violada nem terceiros | aparência não chegar ao overlay |
 | INT-C11-03 | Validação e saúde na pilha real | canal/fonte/cor inválidos → 422 sem `input` e sem mudar nada; a seção Saúde mostra api, banco e workers em `ok` | aceitar valor ruim |
 
+## C12 — Regressão: o contador que DESCE
+
+No app antigo, quando os inscritos do canal desciam, o contador ficava parado até o número subir de novo e ultrapassar. Estes testes só acrescentam cobertura (nenhum código de produção mudou): a queda é lida pelo worker, publicada pela api e animada pelos overlays.
+
+### worker-inscritos (`tests/worker_inscritos/test_sub_queda.py`, Chromium real; a página troca o número no lugar, sem recarregar)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| SUB-QUEDA-01 | `753.880` → `753.879` → `753.878` nas quatro estruturas do `yta-smooth-counter` (A `.counter-value.last`, B `.counter-sequence-inner`, C só texto, animada com pilha de slot machine) | `subscriber_reading` (id 1) grava o valor MENOR a cada ciclo, estado `ok`, log `[MUDANCA] 753.880 -> 753.879` e `753.879 -> 753.878` | worker só gravar quando o valor sobe |
+| SUB-QUEDA-01b | Descer e subir de novo | `753.879` → `753.878` → `753.879` → `753.881` gravados e logados em ordem | idem |
+| SUB-QUEDA-02 | Queda que muda várias colunas e o número de dígitos (`760.000` → `759.999` → `1.000` → `999`) | cada valor gravado e logado | idem |
+| SUB-QUEDA-03 | A fixture reproduz a queda | na coluna animada o dígito antigo e o novo estão empilhados (`1`,`0`,`9`) e vale o último | fixture sem o dígito antigo |
+
+### front (`tests/web/test_web_queda.py`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| WEB-QUEDA-01 | `/api/public/subscribers` de `753.880` para `753.879` e `753.878` | cada `translateY` corresponde ao número novo, mesmos elementos, transição de 0,45 s; sobe de novo para `753.881` | overlay ignorar valor menor (`if (novo < valorAtual) return`) |
+| WEB-QUEDA-01b..c | Vários dígitos (`760.000` → `759.999`) e o caminho `/overlay/inscritos` | idem | idem |
+| WEB-QUEDA-02 | `1.000` → `999` (menos dígitos e sem separador) | carrossel reconstruído com 3 dígitos, atrasos de 40 ms, `translateY(-9em)` em todos; `999` → `1.000` volta | idem |
+| WEB-QUEDA-03 | Likes `1.000/10.000` → `999/10.000` (`/overlay/live.html?slot=1`) | texto e dígitos novos, 8 dígitos/separadores, barra de `10%` para `9.99%` (medida em pixels); sobe de novo | carrossel de likes ignorar valor menor |
+| WEB-QUEDA-03b | Likes `2.500` → `2.400` com meta | só o dígito que mudou troca o `transform` (0,45 s), barra de `25%` para `24%` | idem |
+| WEB-QUEDA-03c | Likes caindo sem meta | só o valor menor, sem barra | idem |
+
+### integração (`tests/e2e/test_int_queda.py`, pilha real, `E2E_PUBLIC_PORT=18080 E2E_ADMIN_PORT=18081`)
+
+| ID | Verifica | Resultado esperado | Falha se (mutação) |
+|---|---|---|---|
+| INT-QUEDA-01 | Studio falso mostra `753880` e depois `753879`, `753878` (e `753881`) | `/inscritos.json`, `/api/public/subscribers` e o overlay `/contador` já aberto refletem o valor menor, animado, sem recarregar | worker ou overlay ignorar valor menor |
+| INT-QUEDA-02 | `1000` → `999` | JSON e overlay passam a 3 dígitos | idem |
+
 ---
 
 ## Cobertura cruzada (PLANO §4 → testes)
