@@ -1,0 +1,5 @@
+# Dependencias diretas do worker-inscritos (versoes fixas).
+# Playwright fixa tambem a revisao do Chromium: a imagem de teste/producao precisa ser a MESMA versao
+# (ex.: mcr.microsoft.com/playwright/python:v1.58.0-noble) ou rodar `playwright install chromium` nessa versao.
+playwright==1.58.0
+PyNaCl==1.6.2

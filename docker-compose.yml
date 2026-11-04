@@ -1,0 +1,264 @@
+# LiveStats - esqueleto do compose (contrato T1; T7 completa Dockerfiles, nginx e metadados x-casaos).
+# Regras que T7 NAO pode alterar:
+#   - nomes dos 4 servicos, redes, volume e o mapeamento secret -> container
+#   - o volume livestats-admin e montado SOMENTE na api; os workers nao o enxergam
+#   - nenhum segredo em `environment:` (so caminhos *_FILE e configuracao nao secreta)
+#   - endurecimento de todos os servicos (usuario nao-root, read_only, cap_drop ALL, no-new-privileges)
+#   - unicas portas publicadas: 8080 (publica) e 8081 (admin) no servico web
+# Segredos: arquivos em ./secrets/ (fora do Git). Ver secrets/README.md.
+
+name: livestats
+
+# Metadados do painel do ZimaOS/CasaOS (T7): o app aparece como "LiveStats". Nenhum segredo aqui.
+# A entrada do cartao abre o overlay do contador na porta publica (8080); o painel admin fica na 8081
+# (so 127.0.0.1 por padrao; acesso normal pelo Nginx Proxy Manager com HTTPS, ver ARCHITECTURE P1/D32).
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: web
+  author: Victor Newton
+  developer: Victor Newton
+  category: Media
+  # Icone provisorio (Simple Icons, CC0, versao fixa). Trocar quando houver um icone proprio do projeto.
+  icon: https://cdn.jsdelivr.net/npm/simple-icons@13.21.0/icons/youtube.svg
+  index: /contador
+  port_map: "8080"
+  title:
+    en_us: LiveStats
+    pt_br: LiveStats
+  tagline:
+    en_us: YouTube/Twitch/Kick live stats and subscriber counter
+    pt_br: Estatisticas de lives (YouTube, Twitch e Kick) e contador de inscritos
+  description:
+    en_us: Unified live statistics (YouTube, Twitch and Kick, in sets) and YouTube subscriber counter, with OBS/vMix overlays, a protected admin panel and isolated secrets.
+    pt_br: Estatisticas de lives (YouTube, Twitch e Kick, em conjuntos) e contador de inscritos numa unica aplicacao, com overlays para OBS/vMix, painel admin protegido e segredos isolados.
+
+# Bloco reutilizado por todos os servicos (endurecimento).
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  init: true
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---------------------------------------------------------------- web (Nginx)
+  web:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    image: livestats/web:local
+    container_name: livestats-web
+    user: "101:101"                     # usuario do nginx-unprivileged (nao-root)
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # IP UNICO (/32) do cloudflared na rede edge (ex.: 172.29.80.10/32), de onde o Nginx aceita
+      # CF-Connecting-IP na porta 8080. VAZIO (padrao) = nao confiar em ninguem: o cabecalho e sempre
+      # ignorado. NUNCA usar a sub-rede inteira nem o IP do gateway da bridge (ex.: 172.29.80.1): conexoes
+      # que chegam pela porta publicada aparecem com o IP do gateway. Nao e segredo.
+      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-}
+      # Lista de permissao da 8081 (D33): IPv4 ou IPv4/N (N de 8 a 32) separados por espaco; o resto recebe 403.
+      # Padrao 127.0.0.1/32. A 8081 nao confia em nenhum cabecalho de IP. 0.0.0.0/0, texto e IPv6 abortam a subida.
+      ADMIN_ALLOW_CIDRS: ${ADMIN_ALLOW_CIDRS:-127.0.0.1/32}
+    ports:
+      - "8080:8080"                     # publica (Cloudflare Tunnel aponta aqui). Sem rota de admin.
+      # admin (D33): HTTPS proprio na 8081 (certificado autoassinado nos secrets admin_tls_cert/admin_tls_key) e
+      # lista ADMIN_ALLOW_CIDRS. Por padrao SO ouve em 127.0.0.1; no deploy ADMIN_BIND=0.0.0.0 e a lista filtra.
+      - "${ADMIN_BIND:-127.0.0.1}:8081:8081"
+    x-casaos:
+      envs:
+        - container: TRUSTED_PROXY_CIDR
+          description:
+            en_us: Fixed /32 IP of cloudflared on the edge network (empty = trust nobody).
+            pt_br: IP fixo /32 do cloudflared na rede edge (vazio = nao confiar em ninguem).
+        - container: ADMIN_ALLOW_CIDRS
+          description:
+            en_us: Space-separated IPv4/CIDR allow list for the HTTPS admin port 8081 (default 127.0.0.1/32).
+            pt_br: Lista de IPv4/CIDR (separados por espaco) permitidos na porta HTTPS do admin 8081 (padrao 127.0.0.1/32).
+      ports:
+        - container: "8080"
+          description:
+            en_us: Public port (overlays, JSON endpoints). No admin routes here.
+            pt_br: Porta publica (overlays e JSON). Nenhuma rota de admin aqui.
+        - container: "8081"
+          description:
+            en_us: Admin panel port (127.0.0.1 only by default).
+            pt_br: Porta do painel admin (somente 127.0.0.1 por padrao).
+    secrets:
+      - admin_tls_cert                  # certificado autoassinado da 8081 (so o web; sem ele o web nao sobe)
+      - admin_tls_key
+    networks:
+      - edge                            # onde as portas sao publicadas
+      - internal                        # fala com a api
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/cache/nginx:size=64m,uid=101,gid=101
+      - /etc/nginx/conf.d:size=1m,uid=101,gid=101   # envsubst dos templates
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------- api (FastAPI)
+  api:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: livestats/api:local
+    container_name: livestats-api
+    user: "10001:10001"
+    environment:
+      DB_PATH: /data/livestats.db
+      ADMIN_DB_PATH: /admin-state/admin.db     # sessoes e tentativas de login: volume SO da api
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?defina ADMIN_USERNAME no .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}          # so para exibir as URLs no painel (ex.: https://live.exemplo.com)
+      COOKIE_PUBLIC_KEY_FILE: /run/secrets/cookie_public_key
+      ADMIN_PASSWORD_HASH_FILE: /run/secrets/admin_password_hash
+    secrets:
+      - cookie_public_key               # SOMENTE a chave publica: a api cifra, nao decifra
+      - admin_password_hash
+    volumes:
+      - livestats-data:/data
+      - livestats-admin:/admin-state    # estado de admin: montado SOMENTE na api
+    networks:
+      - internal                        # internal: true => SEM internet
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------- worker-lives
+  worker-lives:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: worker_lives/Dockerfile
+    image: livestats/worker-lives:local
+    container_name: livestats-worker-lives
+    user: "10001:10001"
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      DB_PATH: /data/livestats.db
+      LIVE_INTERVAL: ${LIVE_INTERVAL:-10}   # segundos entre leituras de cada live, em paralelo (5 a 15; D42)
+      KICK_BROWSER: ${KICK_BROWSER:-1}      # 1 = fallback com Chromium so para o Kick se o Cloudflare bloquear o httpx (D39)
+      HOME: /home/app
+    # Sem secrets: o worker-lives le paginas publicas (D39). Egress: so HTTPS para youtube.com,
+    # twitch.tv/gql.twitch.tv e kick.com (o Docker nao filtra por dominio).
+    volumes:
+      - livestats-data:/data
+    networks:
+      - egress                          # so internet; sem acesso a api/web
+    shm_size: "256mb"                   # Chromium do fallback do Kick
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /home/app:size=64m,uid=10001,gid=10001
+    healthcheck:
+      test: ["CMD", "python", "-m", "worker_lives.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------- worker-inscritos (Playwright)
+  worker-inscritos:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: worker_inscritos/Dockerfile
+    image: livestats/worker-inscritos:local
+    container_name: livestats-worker-inscritos
+    user: "10001:10001"
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      DB_PATH: /data/livestats.db
+      COOKIE_PRIVATE_KEY_FILE: /run/secrets/cookie_private_key
+      COOKIE_PUBLIC_KEY_FILE: /run/secrets/cookie_public_key   # D37: so cifra a sessao renovada
+      SCRAPE_INTERVAL: ${SCRAPE_INTERVAL:-10}
+      DEBUG_SCREENSHOT: ${DEBUG_SCREENSHOT:-0}   # 1 grava print em /tmp/debug (tmpfs); nunca em /data
+      HOME: /home/app
+    secrets:
+      - cookie_private_key              # a chave privada existe SOMENTE neste container
+      - cookie_public_key               # D37: a publica tambem (so cifra a renovacao da sessao)
+    volumes:
+      - livestats-data:/data
+    networks:
+      - egress
+    shm_size: "512mb"                   # Chromium (Chromium precisa de memoria compartilhada)
+    pids_limit: 512                     # Chromium cria varios processos
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /home/app:size=128m,uid=10001,gid=10001
+    healthcheck:
+      test: ["CMD", "python", "-m", "worker_inscritos.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+# -------------------------------------------------------------------- redes
+networks:
+  # web <-> api. internal: true => sem rota para fora (a api nao tem internet).
+  internal:
+    name: livestats-internal
+    driver: bridge
+    internal: true
+  # Onde o web publica 8080/8081 (rede interna nao publica portas). Sem NAT de saida:
+  # o web nao precisa de internet. O cloudflared (se estiver neste host) entra nesta rede com IP FIXO
+  # (ex.: 172.29.80.10, fora do .1 do gateway), e so esse IP/32 vai em TRUSTED_PROXY_CIDR. O Nginx Proxy Manager
+  # entra do mesmo jeito (rede externa livestats-edge, ipv4_address fixo, ex.: 172.29.80.11), se houver.
+  edge:
+    name: livestats-edge
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.29.80.0/24}
+  # Saida para a internet, somente workers. Sem web/api nesta rede.
+  egress:
+    name: livestats-egress
+    driver: bridge
+
+# ------------------------------------------------------------------ volumes
+volumes:
+  livestats-data:                       # dados compartilhados: api + workers
+    name: livestats-data
+  livestats-admin:                      # sessoes/login_attempts: SOMENTE api
+    name: livestats-admin
+
+# ------------------------------------------------------------------ secrets
+# Criados pelo operador (ver secrets/README.md, escrito na T2). Nenhum valor aqui.
+secrets:
+  cookie_private_key:                   # -> worker-inscritos
+    file: ./secrets/cookie_private_key.txt
+  cookie_public_key:                    # -> api e worker-inscritos (D37)
+    file: ./secrets/cookie_public_key.txt
+  admin_password_hash:                  # -> api (hash argon2, nao a senha)
+    file: ./secrets/admin_password_hash.txt
+  admin_tls_cert:                       # -> web (certificado TLS autoassinado da 8081, com o IP no SAN)
+    file: ./secrets/admin_tls_cert.pem
+  admin_tls_key:                        # -> web (chave privada do certificado acima)
+    file: ./secrets/admin_tls_key.pem

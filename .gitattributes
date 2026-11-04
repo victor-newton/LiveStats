@@ -1,0 +1,10 @@
+# Fim de linha canonico no repositorio: LF. O Git converte no checkout se o sistema pedir.
+* text=auto eol=lf
+
+# Binarios: nunca passam por conversao de texto nem por diff textual.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.woff binary
+*.woff2 binary
+*.ico binary

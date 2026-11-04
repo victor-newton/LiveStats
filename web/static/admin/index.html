@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>LiveStats</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/admin-assets/css/main.css">
+<script type="module" src="/admin-assets/js/main.js"></script>
+</head>
+<body>
+<p class="loading" id="loadingView" role="status">Carregando…</p>
+
+<section class="login-wrap" id="loginView" aria-labelledby="loginTitle" hidden>
+  <div class="login-card">
+    <div class="brand"><span class="brand-mark"><span></span></span>LiveStats</div>
+    <h1 id="loginTitle">Entrar</h1>
+    <form id="loginForm" method="post" novalidate>
+      <div class="field">
+        <label for="loginUser">Usuário</label>
+        <input id="loginUser" name="username" type="text" autocomplete="username" autocapitalize="off" maxlength="64" required>
+      </div>
+      <div class="field">
+        <label for="loginPass">Senha</label>
+        <input id="loginPass" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="loginBtn">Entrar</button>
+      <p class="msg err" id="loginMsg" role="alert" hidden></p>
+    </form>
+  </div>
+</section>
+
+<div class="app" id="panelView" hidden>
+  <div class="scrim" id="sideScrim"></div>
+  <aside class="side" id="side" aria-label="Navegação">
+    <div class="brand"><span class="brand-mark"><span></span></span>LiveStats</div>
+    <button class="btn btn-primary wide" type="button" id="btnNovoConjunto">Novo conjunto</button>
+
+    <nav class="nav" aria-label="Seções">
+      <button class="nav-item" type="button" id="nav-visao">
+        <svg class="ico" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.2" y="2.2" width="4.8" height="4.8" rx="1.2" stroke="currentColor" stroke-width="1.4"/><rect x="9" y="2.2" width="4.8" height="4.8" rx="1.2" stroke="currentColor" stroke-width="1.4"/><rect x="2.2" y="9" width="4.8" height="4.8" rx="1.2" stroke="currentColor" stroke-width="1.4"/><rect x="9" y="9" width="4.8" height="4.8" rx="1.2" stroke="currentColor" stroke-width="1.4"/></svg>
+        <span class="grow">Visão geral</span>
+      </button>
+      <div class="nav-label">Conjuntos</div>
+      <div id="navSets"></div>
+      <div class="nav-label">Inscritos</div>
+      <button class="nav-item" type="button" id="nav-inscritos">
+        <svg class="ico" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6" stroke="currentColor" stroke-width="1.4"/><path d="M3 13.5c.7-2.4 2.7-3.6 5-3.6s4.3 1.2 5 3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span class="grow">Contador e cookies</span>
+      </button>
+      <div class="nav-label">Sistema</div>
+      <button class="nav-item" type="button" id="nav-saude">
+        <svg class="ico" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 8.5h3l1.8-4 3 7.5 2-5h3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="grow">Saúde</span>
+      </button>
+    </nav>
+
+    <div class="side-foot">
+      <button class="health-chip" type="button" id="healthChip" data-level="ok">
+        <span class="pulse"></span>
+        <span class="chip-text"><strong id="chipTitle">Tudo funcionando</strong><small id="chipSub">aguardando a primeira leitura</small></span>
+      </button>
+      <div class="user-box" id="userBox">
+        <span class="user-name" id="userName"></span>
+        <button type="button" class="btn btn-ghost" id="logoutBtn">Sair</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="top">
+      <button class="btn btn-ghost btn-icon" type="button" id="btnMenu" aria-label="Abrir menu" aria-expanded="false">
+        <svg class="ico" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+      <div class="crumb" id="crumb"></div>
+    </header>
+    <main class="content">
+      <p class="msg err" id="panelNotice" role="alert" hidden></p>
+      <p class="msg err" id="authAlert" role="alert" hidden></p>
+      <section class="screen" id="scr-visao" hidden aria-label="Visão geral"></section>
+      <section class="screen" id="scr-conjunto" hidden aria-label="Conjunto"></section>
+      <section class="screen" id="scr-inscritos" hidden aria-label="Contador e cookies"></section>
+      <section class="screen" id="scr-saude" hidden aria-label="Saúde"></section>
+    </main>
+  </div>
+</div>
+
+<dialog id="dlgSet" aria-labelledby="dlgSetT">
+  <form id="setForm" novalidate>
+    <div class="dlg-h"><h3 id="dlgSetT">Configurar conjunto</h3><button type="button" class="btn btn-ghost btn-icon" data-close aria-label="Fechar">✕</button></div>
+    <div class="dlg-b">
+      <div class="row2">
+        <div class="field"><label for="stName">Nome</label><input id="stName" type="text" maxlength="60" autocomplete="off"></div>
+        <div class="field"><label for="stGoal">Meta de likes do conjunto</label><input id="stGoal" class="num" type="text" inputmode="numeric" autocomplete="off" placeholder="Sem meta"></div>
+      </div>
+      <div class="row2 colors" id="setColors"></div>
+      <div class="field"><label for="stFont">Fonte do overlay</label><select id="stFont"></select></div>
+      <div id="setPreview"></div>
+      <p class="msg err" id="setErr" role="alert" hidden></p>
+    </div>
+    <div class="dlg-f">
+      <button type="button" class="btn btn-ghost danger" id="setDelete">Apagar conjunto</button>
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button type="submit" class="btn btn-primary" id="setSave">Salvar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgAdd" aria-labelledby="dlgAddT">
+  <form id="addForm" novalidate>
+    <div class="dlg-h"><h3 id="dlgAddT">Adicionar live</h3><button type="button" class="btn btn-ghost btn-icon" data-close aria-label="Fechar">✕</button></div>
+    <div class="dlg-b">
+      <div class="field">
+        <label for="addUrl">Link da live</label>
+        <input id="addUrl" type="text" inputmode="url" maxlength="2048" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://youtube.com/watch?v=…, twitch.tv/canal ou kick.com/canal">
+        <span class="hint">YouTube (vídeo, /live ou @canal/live), Twitch ou Kick. A plataforma aparece sozinha.</span>
+      </div>
+      <div class="detect" id="detect" aria-live="polite"></div>
+      <div class="field"><label for="addName">Nome no painel (opcional)</label><input id="addName" type="text" maxlength="60" autocomplete="off"><span class="hint">Vazio = nome automático. Pode trocar depois.</span></div>
+      <p class="msg err" id="addErr" role="alert" hidden></p>
+    </div>
+    <div class="dlg-f">
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button type="submit" class="btn btn-primary" id="addSave">Adicionar live</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

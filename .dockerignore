@@ -1,0 +1,55 @@
+# LiveStats - arquivos que NUNCA entram no contexto de build das imagens (T7).
+# Os Dockerfiles usam COPY de caminhos explicitos; isto e a segunda barreira (segredos e lixo).
+
+# Controle de versao e CI
+.git
+.github
+.gitattributes
+.gitignore
+.pre-commit-config.yaml
+.gitleaks.toml
+.editorconfig
+
+# Segredos e configuracao local
+secrets/
+.env
+.env.*
+*.key
+*.pem
+cookies.json
+debug.png
+
+# Pacotes
+servidor-opt.tar.gz
+*.tar.gz
+
+# Dados de runtime
+data/
+**/data/
+perfil_bot/
+*.db
+*.db-wal
+*.db-shm
+
+# Testes, documentacao e scripts nao entram nas imagens
+tests/
+docs/
+scripts/
+deploy/
+*.md
+
+# Python / Node / editor
+**/__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+node_modules/
+playwright-report/
+test-results/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
