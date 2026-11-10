@@ -25,6 +25,9 @@
 #   deploy/enviar.sh instalar --host IP-DO-SERVIDOR --user USUARIO-SSH
 #        [--admin-user NOME] [--admin-allow "192.168.0.0/16 100.64.0.0/10"] [--public-base-url https://live.exemplo.com] [--extra-san IP-do-Tailscale]
 #        [--sem-segredos] [--conectar-npm [NOME]] [--renew-tls] [--skip-build]
+#        [--admin-externo [--admin-trusted-proxy IP-do-NPM]] [--admin-interno] [--admin-real-ip-header CF-Connecting-IP]
+#        [--public-admin-url https://painel.exemplo.com] [--master-allow "CIDRS"]
+#      (acesso externo ao painel, D49: o IP fixo do NPM e obrigatorio; veja o README, "Acessar o painel de fora da rede")
 #   deploy/enviar.sh preflight|status|conectar-npm|rollback --host H --user U
 #   deploy/enviar.sh registrar-zimaos [--remover] [--recriar-web] --host H --user U
 #   (--host e --user tambem podem vir das variaveis LIVESTATS_HOST e LIVESTATS_USER)
@@ -36,10 +39,10 @@ DEST=/DATA/AppData/livestats
 SSH=${ENVIAR_SSH:-ssh}   # sobrescrevivel para ensaios locais; em producao e o ssh de verdade
 
 MODO=${1:-}
-[ -n "$MODO" ] || { sed -n '2,29p' "$0"; exit 1; }
+[ -n "$MODO" ] || { sed -n '2,32p' "$0"; exit 1; }
 shift
 
-ADMIN_ALLOW=""; ADMIN_USER=""; PUBLIC_URL=""; EXTRA=(); SEM_SEGREDOS=0; EXTRAS_INSTALL=(); EXTRAS_REGISTRO=()
+ADMIN_ALLOW=""; ADMIN_USER=""; PUBLIC_URL=""; ADMIN_EXTERNO=""; ADMIN_PROXY=""; PUBLIC_ADMIN=""; MASTER_ALLOW=""; REAL_IP_HEADER=""; EXTRA=(); SEM_SEGREDOS=0; EXTRAS_INSTALL=(); EXTRAS_REGISTRO=()
 while [ $# -gt 0 ]; do
   case $1 in
     --host) HOST=$2; shift 2 ;;
@@ -47,6 +50,12 @@ while [ $# -gt 0 ]; do
     --admin-user) ADMIN_USER=$2; shift 2 ;;
     --admin-allow) ADMIN_ALLOW=$2; shift 2 ;;
     --public-base-url) PUBLIC_URL=$2; shift 2 ;;
+    --admin-externo) ADMIN_EXTERNO=1; shift ;;
+    --admin-interno) ADMIN_EXTERNO=0; shift ;;
+    --admin-trusted-proxy) ADMIN_PROXY=$2; shift 2 ;;
+    --public-admin-url) PUBLIC_ADMIN=$2; shift 2 ;;
+    --master-allow) MASTER_ALLOW=$2; shift 2 ;;
+    --admin-real-ip-header) REAL_IP_HEADER=$2; shift 2 ;;
     --extra-san) EXTRA+=(--extra-san "$2"); shift 2 ;;
     --sem-segredos) SEM_SEGREDOS=1; shift ;;
     --renew-tls) EXTRAS_INSTALL+=(--renew-tls); shift ;;
@@ -112,10 +121,10 @@ case $MODO in
     fi
     ADMIN_PW=""
     if [ "$SEM_SEGREDOS" = 0 ]; then
-      lerpar "Senha do admin do painel (minimo 12 caracteres): " ADMIN_PW
+      lerpar "Senha do admin do painel (minimo 8 caracteres): " ADMIN_PW
       lerpar "Repita a senha do admin: " REPETE
       [ "$ADMIN_PW" = "$REPETE" ] || { echo "As senhas nao conferem." >&2; exit 1; }
-      [ "${#ADMIN_PW}" -ge 12 ] || { echo "A senha do admin precisa de pelo menos 12 caracteres." >&2; exit 1; }
+      [ "${#ADMIN_PW}" -ge 8 ] || { echo "A senha do admin precisa de pelo menos 8 caracteres." >&2; exit 1; }
     fi
 
     TMP=$(mktemp -d)
@@ -127,6 +136,11 @@ case $MODO in
     if [ -n "$ADMIN_USER" ]; then valida '^[A-Za-z0-9._@-]{1,64}$' "$ADMIN_USER"; ARGS="$ARGS --admin-user $ADMIN_USER"; fi
     if [ -n "$ADMIN_ALLOW" ]; then valida '^[0-9./ ]+$' "$ADMIN_ALLOW"; ARGS="$ARGS --admin-allow \"$ADMIN_ALLOW\""; fi
     if [ -n "$PUBLIC_URL" ]; then valida '^https?://[A-Za-z0-9.:/_-]+$' "$PUBLIC_URL"; ARGS="$ARGS --public-base-url $PUBLIC_URL"; fi
+    if [ "$ADMIN_EXTERNO" = 1 ]; then ARGS="$ARGS --admin-externo"; elif [ "$ADMIN_EXTERNO" = 0 ]; then ARGS="$ARGS --admin-interno"; fi
+    if [ -n "$ADMIN_PROXY" ]; then valida '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' "$ADMIN_PROXY"; ARGS="$ARGS --admin-trusted-proxy $ADMIN_PROXY"; fi
+    if [ -n "$PUBLIC_ADMIN" ]; then valida '^https?://[A-Za-z0-9.:/_-]+$' "$PUBLIC_ADMIN"; ARGS="$ARGS --public-admin-url $PUBLIC_ADMIN"; fi
+    if [ -n "$REAL_IP_HEADER" ]; then valida '^(X-Forwarded-For|CF-Connecting-IP|X-Real-IP)$' "$REAL_IP_HEADER"; ARGS="$ARGS --admin-real-ip-header $REAL_IP_HEADER"; fi
+    if [ -n "$MASTER_ALLOW" ]; then valida '^[0-9./ ]+$' "$MASTER_ALLOW"; ARGS="$ARGS --master-allow \"$MASTER_ALLOW\""; fi
     if [ "${#EXTRA[@]}" -gt 0 ]; then
       for ((i = 1; i < ${#EXTRA[@]}; i += 2)); do
         valida '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' "${EXTRA[$i]}"; ARGS="$ARGS --extra-san ${EXTRA[$i]}"
@@ -145,5 +159,5 @@ case $MODO in
     } | "$SSH" "${SSH_OPTS[@]}" "$ALVO" "$REMOTO"
     ;;
   *)
-    sed -n '2,29p' "$0"; exit 1 ;;
+    sed -n '2,32p' "$0"; exit 1 ;;
 esac

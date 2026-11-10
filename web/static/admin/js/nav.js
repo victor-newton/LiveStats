@@ -1,148 +1,127 @@
 // @ts-check
-// Barra lateral em lista que abre (Visão geral; Conjuntos com submenu por conjunto: Painel, cada live com a
-// sua cor, Links; Inscritos; Saúde), migalhas e troca de tela com entrada suave.
+// Navegação (D53): UMA barra de abas, sem barra lateral. No desktop ela fica no cabeçalho fixo (marca, abas, estado
+// geral e menu da conta); até 820 px o CSS a leva para baixo da tela, como nos aplicativos do celular. Aqui moram
+// também a troca de tela com entrada suave, o chip de estado e o menu da conta.
 
 import { byId } from './dom.js';
-import { h, icon, setStyle } from './h.js';
-import { collapse } from './ui.js';
+import { h } from './h.js';
 import {
-  state, setById, liveName, sortedLives, services,
+  state, services, counterService, isMaster,
 } from './store.js';
-import { safeColor, relTime, toEpoch } from './util.js';
+import { relTime, toEpoch } from './util.js';
 
 /** @typedef {import('./store.js').Route} Route */
 
 /** @type {(route: Route) => void} */
 let onNavigate = () => {};
-let sig = '';
-/** @type {Map<number, {toggle: HTMLElement, col: ReturnType<typeof collapse>, painel: HTMLElement, links: HTMLElement, lives: Map<number, HTMLElement>}>} */
-let items = new Map();
+/** @type {() => void} */
+let onLogout = () => {};
 /** @type {number | null} */
 let enterTimer = null;
 
-const SCREENS = ['visao', 'conjunto', 'inscritos', 'saude'];
+const SCREENS = ['visao', 'conjuntos', 'conjunto', 'inscritos', 'conta', 'saude', 'mestre'];
 const ENTER_MS = 1800;
+/** Abas por papel (D53). A Conta do mestre abre pelo menu do cabeçalho. */
+const TABS_USER = ['visao', 'conjuntos', 'inscritos', 'conta'];
+const TABS_MASTER = ['visao', 'conjuntos', 'inscritos', 'saude', 'mestre'];
 
 /** @param {(route: Route) => void} fn */
 export function setNavHandler(fn) {
   onNavigate = fn;
 }
 
-/** Liga os botões fixos da barra, o menu do celular e o botão de novo conjunto. */
+/** @param {() => void} fn */
+export function setLogoutHandler(fn) {
+  onLogout = fn;
+}
+
+/** @returns {string[]} abas visíveis para o usuário da sessão */
+export function visibleTabs() {
+  return isMaster() ? TABS_MASTER : TABS_USER;
+}
+
+/** Telas que o usuário atual pode abrir (o servidor também nega as do mestre). @param {string} screen */
+export function allowed(screen) {
+  if (screen === 'saude' || screen === 'mestre') return isMaster();
+  return true;
+}
+
+function closeAccount() {
+  byId('accountMenu').hidden = true;
+  byId('accountBtn').setAttribute('aria-expanded', 'false');
+}
+
+/** Liga as abas, o chip e o menu da conta. */
 export function initNav() {
-  for (const name of ['visao', 'inscritos', 'saude']) {
-    byId(`nav-${name}`).addEventListener('click', () => onNavigate({ screen: /** @type {any} */ (name), setId: null, focus: null }));
+  for (const name of ['visao', 'conjuntos', 'inscritos', 'conta', 'saude', 'mestre']) {
+    byId(`nav-${name}`).addEventListener('click', () => {
+      /** @type {Route} */
+      const r = { screen: /** @type {any} */ (name), setId: null, focus: null };
+      if (name === 'mestre') r.seg = 'usuarios';
+      onNavigate(r);
+    });
   }
-  byId('healthChip').addEventListener('click', () => onNavigate({ screen: 'saude', setId: null, focus: null }));
-  byId('btnMenu').addEventListener('click', () => {
-    const side = byId('side');
-    const open = !side.classList.contains('open');
-    side.classList.toggle('open', open);
-    byId('btnMenu').setAttribute('aria-expanded', String(open));
+  byId('healthChip').addEventListener('click', () => onNavigate({ screen: isMaster() ? 'saude' : 'inscritos', setId: null, focus: null }));
+  byId('accountBtn').addEventListener('click', () => {
+    const menu = byId('accountMenu');
+    const open = menu.hidden;
+    menu.hidden = !open;
+    byId('accountBtn').setAttribute('aria-expanded', String(open));
   });
-  byId('sideScrim').addEventListener('click', closeMenu);
+  byId('menuConta').addEventListener('click', () => {
+    closeAccount();
+    onNavigate({ screen: 'conta', setId: null, focus: null });
+  });
+  byId('logoutBtn').addEventListener('click', () => {
+    closeAccount();
+    onLogout();
+  });
+  document.addEventListener('click', (ev) => {
+    if (!byId('accountMenu').hidden && !(/** @type {HTMLElement} */ (ev.target)).closest('#account')) closeAccount();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !byId('accountMenu').hidden) {
+      closeAccount();
+      byId('accountBtn').focus();
+    }
+  });
 }
 
-function closeMenu() {
-  byId('side').classList.remove('open');
-  byId('btnMenu').setAttribute('aria-expanded', 'false');
-}
-
-/** Esvazia a barra (sessão encerrada). */
+/** Esvazia o cabeçalho (sessão encerrada). */
 export function resetNav() {
-  sig = '';
-  items = new Map();
-  byId('navSets').replaceChildren();
-  byId('crumb').replaceChildren();
-  closeMenu();
+  closeAccount();
+  for (const t of visibleTabsAll()) byId(`nav-${t}`).hidden = true;
+  byId('userName').textContent = '';
+  byId('accountInitial').textContent = '';
+  byId('accountRole').textContent = '';
   if (enterTimer !== null) clearTimeout(enterTimer);
   enterTimer = null;
 }
 
-/** Reconstrói a lista de conjuntos só se a estrutura mudou; depois sincroniza aberto/atual. */
-export function renderNav() {
-  const next = JSON.stringify(state.sets.map((x) => [x.id, x.name, sortedLives(x).map((l) => [l.id, liveName(l), safeColor(l.color)])]));
-  if (next !== sig) {
-    sig = next;
-    build();
-  }
-  syncNav();
+/** @returns {string[]} */
+function visibleTabsAll() {
+  return SCREENS.filter((x) => x !== 'conjunto');
 }
 
-function build() {
-  const box = byId('navSets');
-  box.replaceChildren();
-  items = new Map();
-  if (!state.sets.length) {
-    box.appendChild(h('p', { class: 'nav-empty', text: 'Nenhum conjunto ainda.' }));
-    return;
-  }
-  for (const set of state.sets) {
-    const lives = sortedLives(set);
-    const toggle = h('button', { type: 'button', class: 'nav-item set-toggle', 'aria-expanded': 'false' },
-      icon('chev', 12),
-      h('span', { class: 'grow', text: set.name }),
-      h('span', { class: 'count num', text: String(lives.length) }));
-    toggle.firstElementChild?.classList.add('chev');
-    const painel = h('button', { type: 'button', class: 'nav-item' }, h('span', { class: 'dot dot-set' }), h('span', { class: 'grow', text: 'Painel' }));
-    const links = h('button', { type: 'button', class: 'nav-item' }, h('span', { class: 'dot dot-set' }), h('span', { class: 'grow', text: 'Links do conjunto' }));
-    /** @type {Map<number, HTMLElement>} */
-    const liveBtns = new Map();
-    const sub = h('div', { class: 'sub' }, painel);
-    for (const l of lives) {
-      const dot = h('span', { class: 'dot' });
-      setStyle(dot, { background: safeColor(l.color) });
-      const b = h('button', { type: 'button', class: 'nav-item nav-live', title: liveName(l) }, dot, h('span', { class: 'grow', text: liveName(l) }));
-      b.addEventListener('click', () => onNavigate({ screen: 'conjunto', setId: set.id, focus: { live: l.id } }));
-      liveBtns.set(l.id, b);
-      sub.appendChild(b);
-    }
-    sub.appendChild(links);
-    const col = collapse(sub);
-    const sid = set.id;
-    toggle.addEventListener('click', () => {
-      if (state.navOpen.has(sid)) state.navOpen.delete(sid);
-      else state.navOpen.add(sid);
-      syncNav();
-    });
-    painel.addEventListener('click', () => onNavigate({ screen: 'conjunto', setId: sid, focus: null }));
-    links.addEventListener('click', () => onNavigate({ screen: 'conjunto', setId: sid, focus: { links: true } }));
-    box.append(toggle, col.root);
-    items.set(sid, { toggle, col, painel, links, lives: liveBtns });
-  }
+/** Mostra só as abas do papel e o nome da conta. */
+export function renderAccount() {
+  const show = new Set(visibleTabs());
+  for (const t of visibleTabsAll()) byId(`nav-${t}`).hidden = !show.has(t);
+  byId('tabs').dataset.count = String(show.size);
+  const u = state.user;
+  const name = u ? (u.display_name || u.username) : '';
+  byId('userName').textContent = name;
+  byId('accountInitial').textContent = name ? name.trim().slice(0, 1).toUpperCase() : '';
+  byId('accountRole').textContent = u ? `${u.username} · ${isMaster() ? 'mestre' : 'usuário'}` : '';
 }
 
-/** Aberto/fechado de cada conjunto e a marca "página atual". */
+/** Marca a aba da tela atual (aria-current). */
 export function syncNav() {
   const r = state.route;
-  for (const b of document.querySelectorAll('#side [aria-current]')) b.removeAttribute('aria-current');
-  if (r.screen !== 'conjunto') {
-    const fixed = document.getElementById(`nav-${r.screen}`);
-    if (fixed) fixed.setAttribute('aria-current', 'page');
-  }
-  for (const [id, it] of items) {
-    const open = state.navOpen.has(id);
-    it.toggle.setAttribute('aria-expanded', String(open));
-    it.col.set(open);
-    if (r.screen === 'conjunto' && r.setId === id) {
-      const f = r.focus;
-      if (f && f.live !== undefined && it.lives.has(f.live)) it.lives.get(f.live)?.setAttribute('aria-current', 'page');
-      else if (f && f.links) it.links.setAttribute('aria-current', 'page');
-      else it.painel.setAttribute('aria-current', 'page');
-    }
-  }
-}
-
-/** Migalhas no topo. */
-export function renderCrumb() {
-  const r = state.route;
-  const set = setById(r.setId);
-  /** @type {[string, string]} */
-  let pair = ['LiveStats', 'Visão geral'];
-  if (r.screen === 'conjunto') pair = ['Conjuntos', set ? set.name : '—'];
-  else if (r.screen === 'inscritos') pair = ['Inscritos', 'Contador e cookies'];
-  else if (r.screen === 'saude') pair = ['Sistema', 'Saúde'];
-  byId('crumb').replaceChildren(h('span', { text: pair[0] }), h('span', { text: '/' }), h('b', { text: pair[1] }));
+  for (const b of document.querySelectorAll('#tabs [aria-current]')) b.removeAttribute('aria-current');
+  const tab = r.screen === 'conjunto' ? 'conjuntos' : r.screen;
+  const el = document.getElementById(`nav-${tab}`);
+  if (el && !el.hidden) el.setAttribute('aria-current', 'page');
 }
 
 /**
@@ -151,13 +130,10 @@ export function renderCrumb() {
  */
 export function showScreen(route) {
   state.route = route;
-  if (route.screen === 'conjunto' && route.setId !== null) state.navOpen.add(route.setId);
   for (const name of SCREENS) {
     const scr = byId(`scr-${name}`);
     const on = name === route.screen;
-    if (on && scr.hidden) {
-      scr.hidden = false;
-    }
+    if (on && scr.hidden) scr.hidden = false;
     if (!on) {
       scr.hidden = true;
       scr.classList.remove('enter');
@@ -169,22 +145,50 @@ export function showScreen(route) {
   scr.classList.add('enter');
   if (enterTimer !== null) clearTimeout(enterTimer);
   enterTimer = window.setTimeout(() => scr.classList.remove('enter'), ENTER_MS);
-  closeMenu();
-  renderCrumb();
+  closeAccount();
   syncNav();
+  window.scrollTo({ top: 0 });
 }
 
-/** Texto e estado da faixa "Tudo funcionando" da barra lateral. */
+/** Texto e estado do chip "Tudo funcionando" do cabeçalho: serviços (mestre) ou contador próprio (usuário). */
 export function renderChip() {
-  const list = services();
-  const bad = list.filter((x) => x.level === 'bad');
-  const warn = list.filter((x) => x.level === 'warn' || x.level === 'off');
-  const okN = list.filter((x) => x.level === 'ok').length;
   const chip = byId('healthChip');
-  const level = bad.length ? 'bad' : warn.length ? 'warn' : 'ok';
+  if (isMaster()) {
+    const list = services();
+    const bad = list.filter((x) => x.level === 'bad');
+    const warn = list.filter((x) => x.level === 'warn' || x.level === 'off');
+    const okN = list.filter((x) => x.level === 'ok').length;
+    chip.dataset.level = bad.length ? 'bad' : warn.length ? 'warn' : 'ok';
+    byId('chipTitle').textContent = bad.length ? 'Atenção: há falhas' : warn.length ? 'Funcionando com avisos' : 'Tudo funcionando';
+    const beat = state.status && state.status.workers && state.status.workers.lives
+      ? toEpoch(state.status.workers.lives.last_heartbeat_at) : null;
+    byId('chipSub').textContent = `${okN} de ${list.length} serviços ok${beat !== null ? ` · leitura ${relTime(beat)}` : ''}`;
+    return;
+  }
+  const cs = counterService();
+  const lost = !state.apiOk;
+  const level = lost || cs.level === 'bad' ? 'bad' : cs.level === 'ok' || cs.level === 'off' ? 'ok' : 'warn';
   chip.dataset.level = level;
-  byId('chipTitle').textContent = bad.length ? 'Atenção: há falhas' : warn.length ? 'Funcionando com avisos' : 'Tudo funcionando';
-  const beat = state.status && state.status.workers && state.status.workers.lives
-    ? toEpoch(state.status.workers.lives.last_heartbeat_at) : null;
-  byId('chipSub').textContent = `${okN} de ${list.length} serviços ok${beat !== null ? ` · leitura ${relTime(beat)}` : ''}`;
+  byId('chipTitle').textContent = lost ? 'Sem conexão' : level === 'bad' ? 'Atenção: há falhas' : level === 'warn' ? 'Funcionando com avisos' : 'Tudo funcionando';
+  const upd = state.counter && state.counter.reading ? toEpoch(state.counter.reading.read_at) : null;
+  byId('chipSub').textContent = state.counterOff ? 'contador desativado' : `contador ${cs.label}${upd !== null ? ` · ${relTime(upd)}` : ''}`;
+}
+
+/**
+ * Cabeçalho de página com o caminho (migalhas). `items`: texto ou {text, go}.
+ * @param {(string | {text: string, go: () => void})[]} items
+ * @returns {HTMLElement}
+ */
+export function crumbs(items) {
+  const nav = h('nav', { class: 'crumbs', 'aria-label': 'Caminho' });
+  items.forEach((it, i) => {
+    if (i) nav.appendChild(h('span', { class: 'crumb-sep', 'aria-hidden': 'true', text: '›' }));
+    if (typeof it === 'string') nav.appendChild(h('b', { text: it }));
+    else {
+      const b = h('button', { type: 'button', class: 'crumb-link', text: it.text });
+      b.addEventListener('click', it.go);
+      nav.appendChild(b);
+    }
+  });
+  return nav;
 }

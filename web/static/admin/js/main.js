@@ -1,34 +1,44 @@
 // @ts-check
-// Ponto de entrada do painel LiveStats: sessão, login/logout, navegação e atualização periódica.
+// Ponto de entrada do painel LiveStats: sessão (usuário e papel, D48), login/logout, troca de senha obrigatória,
+// navegação e atualização periódica.
 // Ritmo (D46): números atuais a cada 2 s, numa só requisição por tela; histórico e demais dados a cada 10 s;
-// Saúde a cada 5 s. As requisições não se acumulam (setTimeout encadeado: a próxima só sai depois da resposta)
-// e param com a aba escondida. Os dados do servidor só chegam à tela via textContent.
+// Saúde e Mestre (só do mestre) a cada 5 s. As requisições não se acumulam (setTimeout encadeado: a próxima só sai
+// depois da resposta) e param com a aba escondida. Os dados do servidor só chegam à tela via textContent.
 
 import { api, setCsrfToken, clearCsrfToken, errorText } from './api.js';
 import {
   byId, inputById, buttonById, setVisible, showMessage, clearMessage,
 } from './dom.js';
 import { loadFonts, resetFonts } from './fonts.js';
-import { setNetHooks } from './net.js';
+import { setNetHooks, isPasswordRequired } from './net.js';
 import {
-  state, resetState, setById,
+  state, resetState, setById, isMaster,
 } from './store.js';
 import {
-  initNav, setNavHandler, renderNav, renderChip, showScreen, resetNav,
+  initNav, setNavHandler, setLogoutHandler, renderChip, renderAccount, showScreen, resetNav, syncNav, allowed,
 } from './nav.js';
-import { initDialogs, openNewSet, resetDialogs } from './dialogs.js';
-import { clearToast } from './ui.js';
+import { initDialogs, resetDialogs } from './dialogs.js';
+import { clearToast, toast } from './ui.js';
 import { syncClock } from './util.js';
+import {
+  routeFromLocation, pathOf, writePath, currentRoute, DEFAULT_PATH,
+} from './rotas.js';
+import { initGlow } from './glow.js';
 import * as visao from './visao.js';
+import * as conjuntos from './conjuntos.js';
 import * as conjunto from './conjunto.js';
 import * as inscritos from './inscritos.js';
+import * as conta from './conta.js';
 import * as saude from './saude.js';
+import * as mestre from './mestre.js';
 
 const FAST_MS = 2000;
 const HEALTH_MS = 5000;
 const SLOW_MS = 10000;
 
-const views = { visao, conjunto, inscritos, saude };
+const views = {
+  visao, conjuntos, conjunto, inscritos, conta, saude, mestre,
+};
 
 /** Avisos de falha ao atualizar: aparece o primeiro não vazio. */
 let notice = '';
@@ -60,10 +70,11 @@ let stamp = 0;
 let setsStamp = 0;
 let statusStamp = 0;
 
-/** @param {'loading' | 'login' | 'panel'} view */
+/** @param {'loading' | 'login' | 'password' | 'panel'} view */
 function showView(view) {
   setVisible(byId('loadingView'), view === 'loading');
   setVisible(byId('loginView'), view === 'login');
+  setVisible(byId('pwView'), view === 'password');
   setVisible(byId('panelView'), view === 'panel');
 }
 
@@ -74,7 +85,7 @@ function stopTimers() {
   slowTimer = null;
 }
 
-/** Descarta TODO dado de sessão: token, campos, estatísticas, status. */
+/** Descarta TODO dado de sessão: token, campos, estatísticas, status, senhas. */
 function clearSession() {
   generation += 1;
   stopTimers();
@@ -82,16 +93,20 @@ function clearSession() {
   resetState();
   noticeStamp = 0;
   visao.resetVisao();
+  conjuntos.resetConjuntos();
   conjunto.resetConjunto();
   inscritos.resetInscritos();
+  conta.resetConta();
+  conta.resetPasswordView();
   saude.resetSaude();
+  mestre.resetMestre();
   resetNav();
   resetDialogs();
   resetFonts();
   clearToast();
   setNotice('');
+  counterProblem = '';
   clearMessage(byId('authAlert'));
-  byId('userName').textContent = '';
   for (const scr of document.querySelectorAll('.screen')) /** @type {HTMLElement} */ (scr).hidden = true;
 }
 
@@ -108,13 +123,49 @@ function onUnauthorized() {
   goToLogin('Sessão expirada. Entre novamente.');
 }
 
+/** A conta precisa trocar a senha antes de qualquer outra coisa (D48): tela cheia, sem timers, sem dados. */
+function showPasswordView() {
+  generation += 1;
+  stopTimers();
+  resetDialogs();
+  clearToast();
+  setNotice('');
+  if (state.user) state.user = { ...state.user, must_change_password: true };
+  conta.resetPasswordView();
+  showView('password');
+  inputById('pwCur').focus();
+}
+
 /**
  * @param {import('./api.js').ApiResponse[]} resps
- * @returns {boolean} true se alguma resposta foi 401 (já tratada)
+ * @returns {boolean} true se alguma resposta encerrou a sessão (401) ou exige a troca de senha (403): já tratada
  */
 function authLost(resps) {
   if (resps.some((r) => r && r.status === 401)) {
     onUnauthorized();
+    return true;
+  }
+  if (resps.some((r) => r && isPasswordRequired(r))) {
+    showPasswordView();
+    return true;
+  }
+  return false;
+}
+
+/** O servidor negou (404) uma rota do mestre: esconde Saúde e Mestre e volta ao Início, sem quebrar. */
+function denyMaster() {
+  if (state.masterDenied) return;
+  state.masterDenied = true;
+  renderAccount();
+  toast('Esta área não está disponível para a sua conta.');
+  if (state.route.screen === 'saude' || state.route.screen === 'mestre') navigate({ screen: 'visao', setId: null, focus: null }, 'replace');
+}
+
+/** @param {import('./api.js').ApiResponse[]} resps @returns {boolean} */
+function masterRouteDenied(resps) {
+  const r = state.route.screen;
+  if ((r === 'saude' || r === 'mestre') && resps.some((x) => x && x.status === 404)) {
+    denyMaster();
     return true;
   }
   return false;
@@ -122,33 +173,73 @@ function authLost(resps) {
 
 // ------------------------------------------------------------------ atualização
 
-/** Aviso de cookies do Studio (expirados, ilegíveis ou ausentes): vale em QUALQUER tela, para o usuário saber que precisa trocá-los. */
+/** Falha ao ler o contador (resposta de erro da passada completa): vale só onde o contador é o assunto. */
+let counterProblem = '';
+
+/**
+ * Aviso do contador de inscritos (cookies expirados, ilegíveis ou ausentes; falha de leitura): aparece SÓ no Início,
+ * dentro da seção do contador, e na aba Contador. Nas demais telas fica escondido: o assunto é outro.
+ */
 function renderAuthAlert() {
-  const w = state.status && state.status.workers ? state.status.workers.inscritos : null;
-  const msg = inscritos.authMessage(w ? w.auth_state : undefined);
   const el = byId('authAlert');
-  if (msg) { showMessage(el, msg); el.dataset.authState = String(w && w.auth_state); } else { clearMessage(el); delete el.dataset.authState; }
+  const rota = currentRoute();
+  const here = rota === 'inicio' || rota === 'contador';
+  // Trocando cookies/canal: o aviso antigo (cookies expirados etc.) ainda vale até a nova leitura; o cartão "Conectando" cuida disso.
+  const auth = state.counter && !inscritos.isConnecting() ? inscritos.authMessage(state.counter.auth_state) : '';
+  const msg = here ? (auth || counterProblem) : '';
+  if (here) {
+    const host = rota === 'inicio' ? byId('subsZoneBox') : byId('content');
+    if (el.parentElement !== host) {
+      if (rota === 'inicio') host.insertBefore(el, host.children[1] || null);
+      else host.insertBefore(el, byId('scr-visao'));
+    }
+  }
+  if (msg) {
+    showMessage(el, msg);
+    if (auth) el.dataset.authState = String(state.counter.auth_state); else delete el.dataset.authState;
+  } else { clearMessage(el); delete el.dataset.authState; }
 }
 
-/** Redesenha a tela atual, a barra lateral e a faixa de saúde (só troca valores). */
+/** Redesenha a tela atual e o cabeçalho (só troca valores). */
 function renderAll() {
   renderAuthAlert();
   views[state.route.screen].render(false);
-  renderNav();
+  renderAccount();
+  syncNav();
   renderChip();
 }
 
+/** Para onde voltar quando o conjunto aberto some (apagado em outro lugar). @param {import('./store.js').Route} r @returns {import('./store.js').Route} */
+function fallbackRoute(r) {
+  if (r.userId !== undefined && r.userId !== null && isMaster()) return { screen: 'mestre', setId: null, focus: null, seg: 'dados', userId: r.userId };
+  return { screen: 'conjuntos', setId: null, focus: null };
+}
+
 /**
- * Mostra uma tela (com entrada suave) e busca os dados dela já.
+ * Mostra uma tela (com entrada suave) e busca os dados dela já. O endereço acompanha a tela: `push` empilha no
+ * histórico, `replace` troca a entrada atual e `pop` (voltar/avançar) só corrige o endereço se a rota foi redirecionada.
  * @param {import('./store.js').Route} route
+ * @param {'push' | 'replace' | 'pop'} [how]
  */
-function navigate(route) {
+function navigate(route, how = 'push') {
   let r = route;
-  if (r.screen === 'conjunto' && !setById(r.setId)) r = { screen: 'visao', setId: null, focus: null };
+  if (!allowed(r.screen)) r = { screen: 'visao', setId: null, focus: null };
+  if (r.screen === 'mestre') {
+    r = { ...r, seg: r.seg || 'usuarios' };
+    if (r.seg === 'dados' && (r.userId === undefined || r.userId === null)) r = { ...r, seg: 'usuarios' };
+  }
+  if (r.screen === 'conjunto' && !setById(r.setId)) {
+    r = fallbackRoute(r);
+    if (!r.userId) toast('Conjunto não encontrado.');
+    if (how === 'push') how = 'replace';
+  }
+  writePath(pathOf(r), how === 'push' ? 'push' : 'replace');
   conjunto.resetFocus();
   showScreen(r);
   views[r.screen].render(true);
-  renderNav();
+  renderAuthAlert();
+  renderAccount();
+  syncNav();
   renderChip();
   void refreshAll();
 }
@@ -175,10 +266,10 @@ function firstProblem(resps) {
   return bad ? `Falha ao atualizar os dados: ${errorText(bad, `HTTP ${bad.status}`)}` : '';
 }
 
-/** A tela do conjunto sumiu (apagado em outro lugar): volta à Visão geral. */
+/** A tela do conjunto sumiu (apagado em outro lugar): volta à lista. */
 function ensureRoute() {
   if (state.route.screen === 'conjunto' && !setById(state.route.setId)) {
-    navigate({ screen: 'visao', setId: null, focus: null });
+    navigate(fallbackRoute(state.route), 'replace');
     return false;
   }
   return true;
@@ -210,25 +301,30 @@ async function slowOnce() {
   let resps;
   try {
     const t0 = performance.now();
-    const [sets, settings, status] = await Promise.all([
+    const wantCounter = !!state.user && (state.user.has_counter !== false || state.user.role === 'master');
+    const [sets, counter, status] = await Promise.all([
       api('GET', '/api/admin/sets'),
-      api('GET', '/api/admin/settings'),
-      api('GET', '/api/admin/workers/status'),
+      wantCounter ? inscritos.fetchCounter() : Promise.resolve(null),
+      isMaster() ? api('GET', '/api/admin/workers/status') : Promise.resolve(null),
     ]);
     if (gen !== generation) return;
-    resps = [sets, settings, status];
+    resps = [sets, counter, status].filter((x) => x !== null);
+    if (!wantCounter) state.counterOff = true;
     if (authLost(resps)) return;
+    if (status && status.status === 404) { denyMaster(); return; }
     applySets(sets, st);
-    applyStatus(status, st);
-    if (settings.ok && settings.data) state.settings = settings.data;
+    if (status) applyStatus(status, st);
     state.apiOk = true;
     if (route.screen === 'saude') state.apiMs = Math.round(performance.now() - t0);
-    setNotice(firstProblem(resps), st);
+    counterProblem = counter && !counter.ok && !(counter.status === 403 && counter.data && counter.data.code === 'counter_disabled')
+      ? `Contador: ${errorText(counter, `HTTP ${counter.status}`)}` : '';
+    setNotice(firstProblem(resps.filter((r) => r !== counter)), st);
     if (route === state.route && ensureRoute()) renderAll(); // os números já na tela; o resto (histórico etc.) vem a seguir
     // dados próprios da tela (histórico do gráfico, minigráficos, saúde...): precisam dos conjuntos já carregados
     const extra = views[route.screen].fetchExtra ? await views[route.screen].fetchExtra().catch(() => []) : [];
     if (gen !== generation) return;
     if (authLost(extra)) return;
+    if (masterRouteDenied(extra)) return;
   } catch (e) {
     if (gen !== generation) return;
     state.apiOk = false;
@@ -248,7 +344,7 @@ async function fastOnce() {
   /** @type {import('./api.js').ApiResponse[]} */
   let resps = [];
   try {
-    if (route.screen === 'visao') {
+    if (route.screen === 'visao' || route.screen === 'conjuntos') {
       const r = await api('GET', '/api/admin/sets');
       resps = [r];
       if (gen === generation) applySets(r, st);
@@ -259,11 +355,16 @@ async function fastOnce() {
         const one = r.data.set && typeof r.data.set === 'object' ? r.data.set : r.data;
         const i = state.sets.findIndex((x) => x.id === one.id);
         if (i >= 0 && Array.isArray(one.lives)) state.sets[i] = one;
+        else if (state.foreign.has(one.id) && Array.isArray(one.lives)) state.foreign.set(one.id, one);
       }
     } else if (route.screen === 'inscritos') {
-      const r = await api('GET', '/api/public/subscribers');
-      if (gen === generation && r.ok && r.data) state.subscribers = r.data;
-      return finishFast(gen, route, [], st);
+      if (state.counterOff) return;
+      const r = await inscritos.fetchCounter();
+      resps = [r];
+    } else if (route.screen === 'conta') {
+      return;
+    } else if (route.screen === 'mestre') {
+      resps = await mestre.fetchExtra();
     } else {
       const [status, health] = await Promise.all([
         api('GET', '/api/admin/workers/status'),
@@ -279,7 +380,10 @@ async function fastOnce() {
     renderChip();
     return;
   }
+  if (gen !== generation) return;
+  if (masterRouteDenied(resps)) return;
   if (route.screen === 'conjunto' && resps[0] && resps[0].status === 404) {
+    state.foreign.delete(/** @type {number} */ (route.setId));
     void refreshAll(); // o conjunto pode ter sido apagado: a passada completa decide
     return;
   }
@@ -307,7 +411,8 @@ function finishFast(gen, route, resps, st) {
  */
 function schedule(kind) {
   const gen = generation;
-  const wait = kind === 'slow' ? SLOW_MS : (state.route.screen === 'saude' ? HEALTH_MS : FAST_MS);
+  const scr = state.route.screen;
+  const wait = kind === 'slow' ? SLOW_MS : (scr === 'saude' || scr === 'mestre' ? HEALTH_MS : FAST_MS);
   const timer = window.setTimeout(async () => {
     if (gen !== generation) return;
     if (!document.hidden) {
@@ -341,27 +446,58 @@ document.addEventListener('visibilitychange', () => {
 
 // ------------------------------------------------------------------ sessão
 
-/** @param {{username: string, csrf_token: string, public_base_url?: string | null}} session */
+/**
+ * Usuário da sessão (D48). Sem `user` na resposta (servidor antigo), a interface assume o papel mais restrito.
+ * @param {any} session
+ * @returns {any}
+ */
+function userOf(session) {
+  const u = session.user && typeof session.user === 'object' ? session.user : null;
+  return u || {
+    id: 0, username: session.username || '', display_name: '', role: 'user', must_change_password: false, has_counter: true, max_sets: 0, max_lives: 0,
+  };
+}
+
+/** @param {any} session resposta de GET /api/admin/session */
 function enterPanel(session) {
   clearSession();
   const gen = generation;
   setCsrfToken(session.csrf_token);
+  state.user = userOf(session);
   state.publicBase = typeof session.public_base_url === 'string' && session.public_base_url
     ? session.public_base_url.replace(/\/+$/, '')
     : window.location.origin;
-  byId('userName').textContent = session.username;
+  state.adminUrl = typeof session.public_admin_url === 'string' && session.public_admin_url
+    ? session.public_admin_url.replace(/\/+$/, '')
+    : window.location.origin;
   clearMessage(byId('loginMsg'));
+  if (state.user.must_change_password) {
+    showPasswordView();
+    return;
+  }
+  renderAccount();
   showView('panel');
   // A lista de fontes vem primeiro: os dropdowns precisam das opções antes de receber os valores salvos.
-  const start = () => {
+  const start = async () => {
     if (gen !== generation) return;
-    navigate({ screen: 'visao', setId: null, focus: null });
+    const first = routeFromLocation();
+    if (first.screen === 'conjunto') {
+      // Link direto para um conjunto: a lista precisa estar carregada para validar o id.
+      try {
+        const sets = await api('GET', '/api/admin/sets');
+        if (gen !== generation || authLost([sets])) return;
+        applySets(sets, ++stamp);
+      } catch (e) {
+        if (gen !== generation) return;
+      }
+    }
+    navigate(first, 'replace');
     startLoops();
   };
   void loadFonts().then((fonts) => {
     if (gen !== generation || authLost([fonts])) return;
-    start();
-  }).catch(() => start());
+    void start();
+  }).catch(() => void start());
 }
 
 async function boot() {
@@ -394,14 +530,14 @@ async function onLoginSubmit(ev) {
     const resp = await api('POST', '/api/admin/login', { username: user.value, password: pass.value });
     pass.value = '';
     if (resp.ok && resp.data) {
-      // A resposta do login não traz public_base_url; o token CSRF é o mesmo.
+      // O token CSRF é o mesmo da sessão; a sessão completa (usuário, papel, endereços) vem de GET /session.
       setCsrfToken(resp.data.csrf_token);
       const sess = await api('GET', '/api/admin/session');
       enterPanel(sess.ok && sess.data ? sess.data : resp.data);
       return;
     }
     if (resp.status === 401) {
-      showMessage(msg, 'Credenciais inválidas');
+      showMessage(msg, 'Usuário ou senha inválidos.');
     } else if (resp.status === 429) {
       const espera = resp.retryAfter ? ` Aguarde ${resp.retryAfter} s.` : '';
       showMessage(msg, `Muitas tentativas. Tente novamente em instantes.${espera}`);
@@ -425,25 +561,50 @@ async function onLogout() {
     console.warn('Falha ao chamar o logout:', e);
   }
   if (gen !== generation) return;
+  writePath(DEFAULT_PATH, 'replace');
   goToLogin();
 }
 
+async function afterPasswordChange() {
+  try {
+    const sess = await api('GET', '/api/admin/session');
+    if (sess.ok && sess.data) {
+      enterPanel(sess.data);
+      return;
+    }
+  } catch (e) {
+    console.warn('Falha ao recarregar a sessão:', e);
+  }
+  goToLogin('Senha alterada. Entre novamente.');
+}
+
 function wire() {
-  setNetHooks({ onUnauthorized, refresh: () => refreshAll() });
+  setNetHooks({ onUnauthorized, refresh: () => refreshAll(), onPasswordRequired: showPasswordView });
+  initGlow();
   conjunto.initConjunto();
+  conjunto.setNavigator(navigate);
   visao.initVisao();
+  conjuntos.initConjuntos();
   inscritos.initInscritos();
+  conta.initConta();
+  conta.wireConta({ onLogout: () => void onLogout() });
+  conta.onProfileChange(() => renderAccount());
+  conta.initPasswordView({ onDone: () => void afterPasswordChange(), onLogout: () => void onLogout() });
   saude.initSaude();
+  mestre.initMestre();
+  mestre.setMestreNavigator(navigate);
   setNavHandler(navigate);
+  setLogoutHandler(() => void onLogout());
   initNav();
   initDialogs(navigate);
-  visao.setOpenHandler((id) => navigate({ screen: 'conjunto', setId: id, focus: null }));
-  byId('btnNovoConjunto').addEventListener('click', () => {
-    byId('side').classList.remove('open');
-    openNewSet();
-  });
+  const open = (/** @type {number} */ id) => navigate({ screen: 'conjunto', setId: id, focus: null, userId: null });
+  visao.setOpenHandler(open);
+  conjuntos.setOpenHandler(open);
   byId('loginForm').addEventListener('submit', (ev) => void onLoginSubmit(ev));
-  byId('logoutBtn').addEventListener('click', () => void onLogout());
+  window.addEventListener('popstate', () => {
+    if (!state.user || byId('panelView').hidden) return;
+    navigate(routeFromLocation(), 'pop');
+  });
 }
 
 wire();

@@ -8,13 +8,30 @@ import { showMessage, clearMessage } from './dom.js';
 let onUnauthorized = () => {};
 /** @type {() => Promise<void>} */
 let refresh = async () => {};
+/** @type {() => void} */
+let onPasswordRequired = () => {};
 
 /**
- * @param {{onUnauthorized: () => void, refresh: () => Promise<void>}} hooks
+ * @param {{onUnauthorized: () => void, refresh: () => Promise<void>, onPasswordRequired?: () => void}} hooks
  */
 export function setNetHooks(hooks) {
   onUnauthorized = hooks.onUnauthorized;
   refresh = hooks.refresh;
+  if (hooks.onPasswordRequired) onPasswordRequired = hooks.onPasswordRequired;
+}
+
+/** Leva à tela de troca de senha obrigatória. */
+export function passwordRequired() {
+  onPasswordRequired();
+}
+
+/**
+ * 403 `password_change_required` (D48): a conta precisa trocar a senha antes de qualquer outra coisa.
+ * @param {import('./api.js').ApiResponse} resp
+ * @returns {boolean}
+ */
+export function isPasswordRequired(resp) {
+  return resp.status === 403 && !!resp.data && resp.data.code === 'password_change_required';
 }
 
 /** Pede uma atualização imediata dos dados do painel. @returns {Promise<void>} */
@@ -41,6 +58,10 @@ export async function write(method, path, body, errEl) {
     const resp = await api(method, path, body);
     if (resp.status === 401) {
       onUnauthorized();
+      return null;
+    }
+    if (isPasswordRequired(resp)) {
+      onPasswordRequired();
       return null;
     }
     if (!resp.ok) {

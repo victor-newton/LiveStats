@@ -1,9 +1,11 @@
 """Acesso ao SQLite compartilhado (/data/livestats.db) pelo worker-inscritos.
 
 - Nunca executa DDL e nunca cria o arquivo: quem aplica db/schema.sql e a api (data-model.md 1).
-- Toda conexao instala `set_authorizer` com as permissoes de data-model.md 2: leitura de `cookie_sets` e
-  `schema_meta`; escrita em `subscriber_reading` e `worker_status`; em `cookie_sets` so INSERT e DELETE (D37); nada mais. E uma defesa contra BUG do
-  proprio codigo (SQL errada), nao contra processo comprometido (o isolamento real e por volume e criptografia).
+- Toda conexao instala `set_authorizer` com as permissoes de data-model.md 2: leitura de `cookie_sets`, `schema_meta` e,
+  so nas colunas de que precisa, `counters` e `users` (D51); escrita em `subscriber_reading`, `counter_status` e
+  `worker_status`; em `cookie_sets` so INSERT e DELETE (D37); nada mais. E uma defesa contra BUG do proprio codigo
+  (SQL errada), nao contra processo comprometido (o isolamento real e por volume e criptografia).
+- D51: toda leitura e escrita de contador leva `counter_id` explicito; nada do contador de um usuario toca o de outro.
 - Este modulo desconhece o estado de admin (outro banco, outro volume).
 """
 
@@ -20,20 +22,32 @@ log = logging.getLogger("worker_inscritos.store")
 
 WORKER_NAME = "inscritos"
 
-# Leitura permitida (tabela -> colunas, None = qualquer). Em `worker_status.worker` e `subscriber_reading.id`
-# so a chave: o SQLite le a coluna do conflito ao executar o UPSERT; os demais campos nao sao legiveis.
+# Leitura permitida (tabela -> colunas, None = qualquer). Em `worker_status.worker` so a chave: o SQLite le a coluna do
+# conflito ao executar o UPSERT; os demais campos nao sao legiveis.
 _READ_OK: dict[str, set[str] | None] = {
     "cookie_sets": None,
     "schema_meta": None,
     "worker_status": {"worker"},
-    "subscriber_reading": {"id"},
-    "channel_info": None,  # D38: o UPSERT le a coluna do conflito
-    # D43 (esquema v6): historico, saude e eventos; lidos pelas limpezas (`WHERE at < ?`), pelo guarda de 1 por minuto e pela poda
+    "subscriber_reading": None,  # D51: o UPSERT le a coluna do conflito (counter_id)
+    "channel_info": None,  # D38: idem
+    "counter_status": None,  # D51: so este worker escreve
+    # D51: quais contadores existem e se o dono os mantem ativos (so as colunas necessarias)
+    "counters": {"id", "owner_id", "channel_override"},  # D54: o override so e lido aqui (a api escreve)
+    "users": {"id", "role", "status", "has_counter"},
+    # D43/D47 (esquema v7): historico por canal, saude e eventos; lidos pelas limpezas e pela poda
     "subscriber_samples": None,
     "health_minutes": None,
     "events": None,
 }
-_WRITE_OK = {"subscriber_reading", "worker_status", "channel_info", "subscriber_samples", "health_minutes", "events"}
+_WRITE_OK = {
+    "subscriber_reading",
+    "worker_status",
+    "channel_info",
+    "counter_status",
+    "subscriber_samples",
+    "health_minutes",
+    "events",
+}
 
 SAMPLES_KEEP_SECONDS = 8 * 86400  # D43: amostras de inscritos com mais de 8 dias saem
 HEALTH_KEEP_SECONDS = 7200  # D43: saude com mais de 2 h sai
@@ -47,6 +61,7 @@ _ALWAYS_OK_ACTIONS = {
     sqlite3.SQLITE_FUNCTION,
     sqlite3.SQLITE_TRANSACTION,
 }
+
 
 def _make_authorizer(role: str):
     leitura = _HEALTHCHECK_READ_OK if role == "healthcheck" else _READ_OK
@@ -138,6 +153,33 @@ class StatusRow:
     auth_state: str
     cookies_applied_id: int | None
     version: str
+    mem_bytes: int | None = None  # D56: memoria do container (cgroup) neste batimento
+
+
+@dataclass
+class CounterStatusRow:
+    """Estado de um contador (D51). `state` em starting/ok/degraded/error/paused."""
+
+    state: str
+    auth_state: str | None
+    last_success_at: int | None
+    last_attempt_at: int | None
+    next_read_at: int | None
+    consecutive_failures: int
+    last_error_code: str | None
+    last_error_message: str | None
+    cookies_applied_id: int | None
+    loads_last_hour: int
+
+
+@dataclass(frozen=True)
+class CounterInfo:
+    """Contador de usuario visto pelo pool: ativo (conta ativa e com contador) e o conjunto de cookies mais novo."""
+
+    counter_id: int
+    enabled: bool
+    latest_cookie_id: int | None
+    channel_override: str | None = None  # D54
 
 
 class Store:
@@ -147,14 +189,70 @@ class Store:
     def close(self) -> None:
         self.con.close()
 
+    # ------------------------------------------------------------------ contadores (D51)
+    def master_counter_id(self) -> int:
+        """Contador do dono com papel `master` (id 1 no esquema v8)."""
+        row = self.con.execute(
+            "SELECT c.id FROM counters c JOIN users u ON u.id = c.owner_id WHERE u.role = 'master' ORDER BY c.id LIMIT 1"
+        ).fetchone()
+        return 1 if row is None else int(row[0])
+
+    def user_counters(self) -> list[CounterInfo]:
+        """Contadores dos usuarios comuns. `enabled` = conta ativa e `has_counter = 1`."""
+        linhas = self.con.execute(
+            "SELECT c.id, u.status, u.has_counter, (SELECT MAX(s.id) FROM cookie_sets s WHERE s.counter_id = c.id), c.channel_override "
+            "FROM counters c JOIN users u ON u.id = c.owner_id WHERE u.role <> 'master' ORDER BY c.id"
+        ).fetchall()
+        return [
+            CounterInfo(int(i), status == "active" and int(tem) == 1, None if ck is None else int(ck), None if ov is None else str(ov))
+            for i, status, tem, ck, ov in linhas
+        ]
+
+    def get_channel_override(self, counter_id: int) -> str | None:
+        """D54: canal que o dono escolheu para este contador (ID UC...), ou None para usar o detectado pelos cookies."""
+        row = self.con.execute("SELECT channel_override FROM counters WHERE id = ?", (counter_id,)).fetchone()
+        return None if row is None or row[0] is None else str(row[0])
+
+    def get_auth_state(self, counter_id: int) -> str | None:
+        row = self.con.execute("SELECT auth_state FROM counter_status WHERE counter_id = ?", (counter_id,)).fetchone()
+        return None if row is None or row[0] is None else str(row[0])
+
+    def write_counter_status(self, counter_id: int, s: CounterStatusRow) -> None:
+        self.con.execute(
+            "INSERT INTO counter_status (counter_id, state, auth_state, last_success_at, last_attempt_at, next_read_at, "
+            "consecutive_failures, last_error_code, last_error_message, cookies_applied_id, loads_last_hour) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(counter_id) DO UPDATE SET state = excluded.state, auth_state = excluded.auth_state, "
+            "last_success_at = excluded.last_success_at, last_attempt_at = excluded.last_attempt_at, "
+            "next_read_at = excluded.next_read_at, consecutive_failures = excluded.consecutive_failures, "
+            "last_error_code = excluded.last_error_code, last_error_message = excluded.last_error_message, "
+            "cookies_applied_id = excluded.cookies_applied_id, loads_last_hour = excluded.loads_last_hour",
+            (
+                counter_id,
+                s.state,
+                s.auth_state,
+                s.last_success_at,
+                s.last_attempt_at,
+                s.next_read_at,
+                s.consecutive_failures,
+                s.last_error_code[:40] if s.last_error_code else None,
+                s.last_error_message[:200] if s.last_error_message else None,
+                s.cookies_applied_id,
+                max(0, s.loads_last_hour),
+            ),
+        )
+
     # ------------------------------------------------------------------ cookies
-    def latest_cookie_set_id(self) -> int | None:
-        row = self.con.execute("SELECT id FROM cookie_sets ORDER BY id DESC LIMIT 1").fetchone()
+    def latest_cookie_set_id(self, counter_id: int) -> int | None:
+        row = self.con.execute(
+            "SELECT id FROM cookie_sets WHERE counter_id = ? ORDER BY id DESC LIMIT 1", (counter_id,)
+        ).fetchone()
         return None if row is None else int(row[0])
 
-    def get_cookie_set(self, set_id: int) -> CookieSetRow | None:
+    def get_cookie_set(self, counter_id: int, set_id: int) -> CookieSetRow | None:
         row = self.con.execute(
-            "SELECT id, key_id, ciphertext, source, created_at FROM cookie_sets WHERE id = ?", (set_id,)
+            "SELECT id, key_id, ciphertext, source, created_at FROM cookie_sets WHERE id = ? AND counter_id = ?",
+            (set_id, counter_id),
         ).fetchone()
         return (
             None
@@ -162,42 +260,63 @@ class Store:
             else CookieSetRow(int(row[0]), str(row[1]), bytes(row[2]), str(row[3]), str(row[4]))
         )
 
-    def get_channel_info(self) -> tuple[str, str] | None:
-        """(channel_id, channel_name) gravados (D38); None se ainda nao houve deteccao."""
-        row = self.con.execute("SELECT channel_id, channel_name FROM channel_info WHERE id = 1").fetchone()
+    def get_channel_info(self, counter_id: int) -> tuple[str, str] | None:
+        """(channel_id, channel_name) gravados (D38) do contador; None se ainda nao houve deteccao."""
+        row = self.con.execute(
+            "SELECT channel_id, channel_name FROM channel_info WHERE counter_id = ?", (counter_id,)
+        ).fetchone()
         return None if row is None else (str(row[0]), str(row[1]))
 
     # ------------------------------------------------------------------ escrita
-    def save_reading(self, value: str, raw: str, read_at: str) -> None:
-        """Linha unica id=1, reescrita a cada leitura valida (mesmo com valor igual). `raw` <= 256 (D20)."""
+    def save_reading(self, counter_id: int, value: str, raw: str, read_at: str) -> None:
+        """Linha unica por contador, reescrita a cada leitura valida (mesmo com valor igual). `raw` <= 256 (D20)."""
         self.con.execute(
-            "INSERT INTO subscriber_reading (id, value, raw, read_at) VALUES (1, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET value = excluded.value, raw = excluded.raw, read_at = excluded.read_at",
-            (value, raw[:256], read_at),
+            "INSERT INTO subscriber_reading (counter_id, value, raw, read_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(counter_id) DO UPDATE SET value = excluded.value, raw = excluded.raw, read_at = excluded.read_at",
+            (counter_id, value, raw[:256], read_at),
         )
 
-    def save_channel_info(self, channel_id: str, channel_name: str, detected_at: str) -> None:
-        """D38: linha unica id=1, so este worker escreve. Nome limitado a 200 caracteres."""
+    def save_channel_info(self, counter_id: int, channel_id: str, channel_name: str, detected_at: str) -> None:
+        """D38: linha unica por contador, so este worker escreve. Nome limitado a 200 caracteres."""
         self.con.execute(
-            "INSERT INTO channel_info (id, channel_id, channel_name, detected_at) VALUES (1, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id, "
+            "INSERT INTO channel_info (counter_id, channel_id, channel_name, detected_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(counter_id) DO UPDATE SET channel_id = excluded.channel_id, "
             "channel_name = excluded.channel_name, detected_at = excluded.detected_at",
-            (channel_id, channel_name[:200], detected_at),
+            (counter_id, channel_id, channel_name[:200], detected_at),
         )
 
-    def save_subscriber_sample(self, at: int, value: int) -> bool:
-        """D43: no maximo uma amostra por minuto (guarda no SQL, vale mesmo apos reinicio); apaga as > 8 dias."""
+    def activate_channel(
+        self, counter_id: int, channel_id: str, channel_name: str, detected_at: str
+    ) -> tuple[int, int] | None:
+        """Ativa canal detectado e restaura sua ultima amostra; nunca reutiliza o contador de outro canal."""
+        with self.transaction():
+            self.save_channel_info(counter_id, channel_id, channel_name, detected_at)
+            row = self.con.execute(
+                "SELECT at, value FROM subscriber_samples WHERE counter_id = ? AND channel_id = ? "
+                "ORDER BY at DESC LIMIT 1",
+                (counter_id, channel_id),
+            ).fetchone()
+            if row is None:
+                self.con.execute("DELETE FROM subscriber_reading WHERE counter_id = ?", (counter_id,))
+                return None
+            at, value = int(row[0]), int(row[1])
+            self.save_reading(counter_id, str(value), str(value), iso_utc(at))
+            return at, value
+
+    def save_subscriber_sample(self, counter_id: int, channel_id: str, at: int, value: int) -> bool:
+        """Uma amostra por minuto, contador e canal, substituida pela leitura mais recente; apaga as > 8 dias."""
         minuto = at // 60 * 60
         with self.transaction():
             cur = self.con.execute(
-                "INSERT OR IGNORE INTO subscriber_samples (at, value) "
-                "SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM subscriber_samples WHERE at >= ?)",
-                (at, value, minuto),
+                "INSERT INTO subscriber_samples (counter_id, channel_id, at, value) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(counter_id, channel_id, at) DO UPDATE SET value = excluded.value",
+                (counter_id, channel_id, minuto, value),
             )
-            gravou = cur.rowcount > 0
-            if gravou:
-                self.con.execute("DELETE FROM subscriber_samples WHERE at < ?", (at - SAMPLES_KEEP_SECONDS,))
-        return gravou
+            self.con.execute(
+                "DELETE FROM subscriber_samples WHERE counter_id = ? AND at < ?",
+                (counter_id, at - SAMPLES_KEEP_SECONDS),
+            )
+        return cur.rowcount > 0
 
     def save_health_minute(self, minute: int, avg_ms: int, max_ms: int, ok: int, errors: int) -> None:
         """D43: agregado do minuto (reescrito a cada leitura do minuto em andamento); apaga o que tem > 2 h."""
@@ -225,36 +344,39 @@ class Store:
             )
 
     def renew_cookie_set(
-        self, ciphertext: bytes, key_id: str, count: int, applied_id: int, created_at: str
+        self, counter_id: int, ciphertext: bytes, key_id: str, count: int, applied_id: int, created_at: str
     ) -> int | None:
-        """D37: grava a renovacao so se o conjunto mais recente ainda e o aplicado (`MAX(id) = applied_id`).
+        """D37: grava a renovacao so se o conjunto mais recente DO CONTADOR ainda e o aplicado (`MAX(id) = applied_id`).
 
-        INSERT da nova linha e DELETE das anteriores na mesma transacao. None = descartada (o admin colou outro).
+        INSERT da nova linha e DELETE das anteriores (so deste contador) na mesma transacao.
+        None = descartada (o dono colou outro).
         """
         with self.transaction():
-            atual = self.con.execute("SELECT MAX(id) FROM cookie_sets").fetchone()[0]
+            atual = self.con.execute(
+                "SELECT MAX(id) FROM cookie_sets WHERE counter_id = ?", (counter_id,)
+            ).fetchone()[0]
             if atual is None or int(atual) != applied_id:
                 return None
             cur = self.con.execute(
-                "INSERT INTO cookie_sets (ciphertext, key_id, cookie_count, uploaded_by, created_at, source, renewed_from) "
-                "VALUES (?, ?, ?, 'worker', ?, 'worker', ?)",
-                (ciphertext, key_id, count, created_at, applied_id),
+                "INSERT INTO cookie_sets (counter_id, ciphertext, key_id, cookie_count, uploaded_by, created_at, "
+                "source, renewed_from) VALUES (?, ?, ?, ?, 'worker', ?, 'worker', ?)",
+                (counter_id, ciphertext, key_id, count, created_at, applied_id),
             )
             novo = int(cur.lastrowid)
-            self.con.execute("DELETE FROM cookie_sets WHERE id <> ?", (novo,))
+            self.con.execute("DELETE FROM cookie_sets WHERE counter_id = ? AND id <> ?", (counter_id, novo))
         return novo
 
     def write_status(self, s: StatusRow) -> None:
         self.con.execute(
             "INSERT INTO worker_status (worker, state, last_heartbeat_at, last_success_at, consecutive_failures, "
             "interval_seconds, next_attempt_at, last_error_code, last_error_message, auth_state, "
-            "cookies_applied_id, version) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?) "
+            "cookies_applied_id, version, mem_bytes) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(worker) DO UPDATE SET state = excluded.state, "
             "last_heartbeat_at = excluded.last_heartbeat_at, last_success_at = excluded.last_success_at, "
             "consecutive_failures = excluded.consecutive_failures, interval_seconds = excluded.interval_seconds, "
             "next_attempt_at = excluded.next_attempt_at, last_error_code = excluded.last_error_code, "
             "last_error_message = excluded.last_error_message, auth_state = excluded.auth_state, "
-            "cookies_applied_id = excluded.cookies_applied_id, version = excluded.version",
+            "cookies_applied_id = excluded.cookies_applied_id, version = excluded.version, mem_bytes = excluded.mem_bytes",
             (
                 WORKER_NAME,
                 s.state,
@@ -267,6 +389,7 @@ class Store:
                 s.auth_state,
                 s.cookies_applied_id,
                 s.version,
+                s.mem_bytes,
             ),
         )
 

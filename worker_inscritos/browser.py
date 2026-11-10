@@ -47,7 +47,9 @@ IGNORE_DEFAULT_ARGS = ["--enable-automation"]
 INIT_SCRIPT = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
 
 # As tres estrategias de leitura do `yta-smooth-counter`, em ordem.
-# Cada uma so vale se o texto montado casar /\d{3,}/.
+# As duas primeiras leem os digitos de dentro do contador (`.counter-value.last` / `.counter-sequence-inner`, que so existem
+# la): basta 1 digito (D54: canais com menos de 100 inscritos). A terceira le o texto solto do elemento e continua
+# exigindo 3 ou mais digitos, para nao confundir um rotulo com a contagem.
 JS_ESTRATEGIA_1 = r"""
 () => {
     const counters = document.querySelectorAll('yta-smooth-counter');
@@ -57,7 +59,7 @@ JS_ESTRATEGIA_1 = r"""
         let num = '';
         for (const v of valores)
             num += (v.innerText || v.textContent || '').trim();
-        if (/\d{3,}/.test(num)) return num;
+        if (/\d/.test(num)) return num;
     }
     return null;
 }
@@ -75,7 +77,7 @@ JS_ESTRATEGIA_2 = r"""
             if (!divs.length) continue;
             num += (divs[divs.length - 1].innerText || divs[divs.length - 1].textContent || '').trim();
         }
-        if (/\d{3,}/.test(num)) return num;
+        if (/\d/.test(num)) return num;
     }
     return null;
 }
@@ -172,6 +174,7 @@ class BrowserSession:
         self.studio_home_url = studio_home_url
         self.studio_url_for = studio_url_for
         self.channel: tuple[str, str] | None = None  # D38: (id, nome) da ultima abertura do Studio
+        self.channel_override: str | None = None  # D54: canal escolhido pelo dono; None = o detectado pelo redirect
         self.timings = timings or Timings()
         self.stop = stop or threading.Event()
         self.debug_dir = debug_dir
@@ -275,14 +278,24 @@ class BrowserSession:
         timeout_ms = t.nav_timeout * 1000
         log.info("[AUTH] Abrindo YouTube Studio...")
         self.channel = None
-        self.page.goto(self.studio_home_url, timeout=timeout_ms)
-        self._esperar_carga()
-        canal_id = self._esperar_canal(t.ready_timeout * 1000)
-        if canal_id is not None:  # D38: o redirect revelou o canal; segue para o analytics dele
-            self.channel = (canal_id, self._ler_nome_canal(t.ready_timeout * 1000 / 3))
-            log.info("[CANAL] canal detectado pelo redirect do Studio")
-            self.page.goto(self.studio_url_for(canal_id), timeout=timeout_ms)
+        escolhido = self.channel_override
+        if escolhido is not None:  # D54: sem o redirect da pagina inicial; abre o canal escolhido (nome) e o analytics dele
+            self.page.goto(f"{self.studio_home_url}channel/{escolhido}", timeout=timeout_ms)
             self._esperar_carga()
+            if not is_login_url(self.page.url):
+                self.channel = (escolhido, self._ler_nome_canal(t.ready_timeout * 1000 / 3))
+                log.info("[CANAL] canal escolhido pelo dono")
+                self.page.goto(self.studio_url_for(escolhido), timeout=timeout_ms)
+                self._esperar_carga()
+        else:
+            self.page.goto(self.studio_home_url, timeout=timeout_ms)
+            self._esperar_carga()
+            canal_id = self._esperar_canal(t.ready_timeout * 1000)
+            if canal_id is not None:  # D38: o redirect revelou o canal; segue para o analytics dele
+                self.channel = (canal_id, self._ler_nome_canal(t.ready_timeout * 1000 / 3))
+                log.info("[CANAL] canal detectado pelo redirect do Studio")
+                self.page.goto(self.studio_url_for(canal_id), timeout=timeout_ms)
+                self._esperar_carga()
         self.stop.wait(t.after_studio)
         self._debug_screenshot()
 
@@ -367,5 +380,5 @@ class BrowserSession:
         return str(url), (str(bruto) if bruto else None), bool(sem_permissao) and not bruto
 
     def read_counter(self) -> str | None:
-        """Texto cru do contador, pela primeira estrategia que casar 3 ou mais digitos; None se nenhuma casar."""
+        """Texto cru do contador, pela primeira estrategia que casar (1+ digito nas duas primeiras, 3+ na terceira); None se nenhuma."""
         return self.read_page()[1]

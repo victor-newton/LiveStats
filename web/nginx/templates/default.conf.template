@@ -4,11 +4,13 @@
 # calculados e VALIDADOS por /docker-entrypoint.d/15-livestats-realip.envsh a partir de TRUSTED_PROXY_CIDR (8080;
 # vazio, o padrao => nenhuma diretiva real_ip) e ADMIN_ALLOW_CIDRS (8081, lista de permissao, marcador LIVESTATS_ADMIN_ALLOW).
 
+# Com ADMIN_EXTERNAL_ACCESS=1 (D49) a lista nao se aplica (default 1, sem allow/deny) e o IP real vem do ultimo salto de
+# X-Forwarded-For do proxy confiavel (LIVESTATS_REALIP_ADMIN); o login usa a zona login_ext (5/min).
 # Lista de permissao da 8081 (D33), avaliada no REWRITE do server (antes de qualquer location): `allow/deny`
 # so rodam na fase de acesso e nao alcancam locations que respondem com `return` (ex.: `location / { return 404; }`).
 # O IP e o da CONEXAO ($remote_addr): a 8081 nao tem real_ip.
 geo $remote_addr $livestats_admin_allowed {
-    default 0;
+    default ${LIVESTATS_ADMIN_GEO_DEFAULT};
     ${LIVESTATS_ADMIN_GEO}
 }
 
@@ -26,6 +28,17 @@ server {
     include /etc/nginx/snippets/server_common.conf;
     include /etc/nginx/snippets/locations_public.conf;
 
+    # Overlay do contador: so na publica. Na 8081 o caminho /contador e uma rota do painel (abaixo).
+    location = /contador {
+        limit_req zone=public burst=30 nodelay;
+        default_type application/json;
+        include /etc/nginx/snippets/static_headers_overlay.conf;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405 '{"detail":"Method Not Allowed"}';
+        }
+        try_files /overlay/contador.html =404;
+    }
+
     location / {
         return 404;
     }
@@ -41,6 +54,8 @@ server {
     listen 8081 ssl default_server;
     server_name _;
 
+    ${LIVESTATS_REALIP_ADMIN}
+
     ssl_certificate      /run/secrets/admin_tls_cert;
     ssl_certificate_key  /run/secrets/admin_tls_key;
     ssl_protocols        TLSv1.2 TLSv1.3;
@@ -53,7 +68,7 @@ server {
         return 403;
     }
     ${LIVESTATS_ADMIN_ALLOW}
-    deny all;
+    ${LIVESTATS_ADMIN_DENY}
 
     # HTTP simples na porta TLS: 400 JSON (o 497 do Nginx e tratado como o 400 comum).
     error_page 497 =400 @e400;
@@ -82,8 +97,22 @@ server {
         try_files /admin-assets/index.html =404;
     }
 
-    location ^~ /admin-assets/ {
+    # Rotas do painel por caminho (History API): o MESMO index para uma lista branca exata, sem try_files generico;
+    # qualquer outro caminho segue para `location /` (404). Os assets do HTML sao absolutos (/admin-assets/...).
+    location ~ ^/(?:inicio|conjuntos|contador|saude|mestre|conta|conjuntos/[0-9]+)$ {
         limit_req zone=public burst=30 nodelay;
+        default_type application/json;
+        include /etc/nginx/snippets/static_headers.conf;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405 '{"detail":"Method Not Allowed"}';
+        }
+        try_files /admin-assets/index.html =404;
+    }
+
+    # O painel v4 carrega ~35 arquivos (modulos JS, CSS, fontes) de uma vez a cada abertura: burst maior que o das
+    # demais rotas, senao uma segunda abertura em 1-2 s (ou varias pessoas atras do mesmo IP) leva 429 num modulo e o painel nao sobe.
+    location ^~ /admin-assets/ {
+        limit_req zone=public burst=100 nodelay;
         default_type application/json;
         include /etc/nginx/snippets/static_headers.conf;
         if ($request_method !~ ^(GET|HEAD)$) {
@@ -107,17 +136,19 @@ server {
         if ($request_method !~ ^(GET|HEAD|POST|PUT|PATCH|DELETE)$) {
             return 405 '{"detail":"Method Not Allowed"}';
         }
+        include /etc/nginx/snippets/admin_api_headers.conf;
         include /etc/nginx/snippets/proxy_api.conf;
     }
 
     # --- login: limite proprio, por IP real. Regex (e nao `location =`) para cobrir tambem
     # /api/admin/login/ e variantes com barras repetidas.
     location ~ ^/api/admin/login/*$ {
-        limit_req zone=login burst=5 nodelay;
+        limit_req ${LIVESTATS_ADMIN_LOGIN_LIMIT};
         default_type application/json;
         if ($request_method !~ ^(GET|HEAD|POST|PUT|PATCH|DELETE)$) {
             return 405 '{"detail":"Method Not Allowed"}';
         }
+        include /etc/nginx/snippets/admin_api_headers.conf;
         include /etc/nginx/snippets/proxy_api.conf;
     }
 

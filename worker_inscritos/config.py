@@ -24,6 +24,16 @@ DEFAULT_WWW_BASE_URL = "https://www.youtube.com"
 DEFAULT_STUDIO_BASE_URL = "https://studio.youtube.com"
 
 DEFAULT_SCRAPE_INTERVAL = 10
+DEFAULT_RELOAD_INTERVAL = 60  # D47
+MIN_RELOAD_INTERVAL = 15
+MAX_RELOAD_INTERVAL = 3600
+DEFAULT_USER_POOL_SIZE = 1  # D51: paginas do pool dos contadores de usuario (0 desliga)
+MAX_USER_POOL_SIZE = 8
+DEFAULT_USER_COUNTER_INTERVAL = 60  # D51: segundos entre leituras de cada contador de usuario
+MIN_USER_COUNTER_INTERVAL = 30
+MAX_USER_COUNTER_INTERVAL = 3600
+DEFAULT_MAX_USER_COUNTERS = 20  # D51: contadores de usuario ativos ao mesmo tempo
+MAX_MAX_USER_COUNTERS = 500
 MIN_SCRAPE_INTERVAL = 5
 MAX_SCRAPE_INTERVAL = 3600  # worker_status.interval_seconds BETWEEN 1 AND 3600
 
@@ -45,6 +55,10 @@ class Config:
     debug_dir: str
     www_base_url: str
     studio_base_url: str
+    reload_interval: int = DEFAULT_RELOAD_INTERVAL  # D47: 0 desliga; segundos entre reaberturas do Studio
+    user_pool_size: int = DEFAULT_USER_POOL_SIZE  # D51: 0 desliga os contadores de usuario
+    user_counter_interval: int = DEFAULT_USER_COUNTER_INTERVAL
+    max_user_counters: int = DEFAULT_MAX_USER_COUNTERS
 
     @property
     def studio_home_url(self) -> str:
@@ -103,6 +117,37 @@ def _ler_intervalo(env: Mapping[str, str]) -> int:
     return valor
 
 
+def _ler_recarga(env: Mapping[str, str]) -> int:
+    """D47: STUDIO_RELOAD_INTERVAL (s). O contador do Studio (`yta-smooth-counter`) nao mostra quedas sozinho; reabrir a
+    pagina de tempos em tempos le o valor real. 0 desliga."""
+    bruto = env.get("STUDIO_RELOAD_INTERVAL", "").strip()
+    if not bruto:
+        return DEFAULT_RELOAD_INTERVAL
+    try:
+        valor = int(bruto)
+    except ValueError:
+        raise ConfigError("STUDIO_RELOAD_INTERVAL deve ser um inteiro") from None
+    if valor != 0 and not MIN_RELOAD_INTERVAL <= valor <= MAX_RELOAD_INTERVAL:
+        raise ConfigError(f"STUDIO_RELOAD_INTERVAL deve ser 0 ou estar entre {MIN_RELOAD_INTERVAL} e {MAX_RELOAD_INTERVAL}")
+    return valor
+
+
+def _ler_inteiro(env: Mapping[str, str], nome: str, padrao: int, minimo: int, maximo: int, permite_zero: bool = False) -> int:
+    bruto = env.get(nome, "").strip()
+    if not bruto:
+        return padrao
+    try:
+        valor = int(bruto)
+    except ValueError:
+        raise ConfigError(f"{nome} deve ser um inteiro") from None
+    if permite_zero and valor == 0:
+        return 0
+    if not minimo <= valor <= maximo:
+        faixa = f"0 ou estar entre {minimo} e {maximo}" if permite_zero else f"estar entre {minimo} e {maximo}"
+        raise ConfigError(f"{nome} deve ser {faixa}")
+    return valor
+
+
 def load_config(env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
 
@@ -131,6 +176,12 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         private_key_file=key_file,
         public_key_file=pub_file,
         scrape_interval=_ler_intervalo(env),
+        reload_interval=_ler_recarga(env),
+        user_pool_size=_ler_inteiro(env, "USER_POOL_SIZE", DEFAULT_USER_POOL_SIZE, 1, MAX_USER_POOL_SIZE, permite_zero=True),
+        user_counter_interval=_ler_inteiro(
+            env, "USER_COUNTER_INTERVAL", DEFAULT_USER_COUNTER_INTERVAL, MIN_USER_COUNTER_INTERVAL, MAX_USER_COUNTER_INTERVAL
+        ),
+        max_user_counters=_ler_inteiro(env, "MAX_USER_COUNTERS", DEFAULT_MAX_USER_COUNTERS, 1, MAX_MAX_USER_COUNTERS),
         debug_screenshot=debug,
         debug_dir=debug_dir,
         www_base_url=validar_base_url(

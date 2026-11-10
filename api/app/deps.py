@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
-from .auth import SESSION_COOKIE, AdminAuth, SessionData, is_unsafe_method
+from .auth import SESSION_COOKIE, AdminAuth, Ctx, ip_allowed, is_unsafe_method
 from .clock import Clock
 from .config import Settings
 from .cookies import CookieSealer
@@ -27,6 +27,16 @@ class AppState:
     clock: Clock
     auth: AdminAuth
     sealer: CookieSealer
+
+
+class ApiError(Exception):
+    """Erro com ``code`` estavel para o painel: ``{"detail": ..., "code": ...}`` (ex.: ``password_change_required``)."""
+
+    def __init__(self, status_code: int, detail: str, code: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+        self.code = code
 
 
 class ValidationFailed(Exception):
@@ -52,17 +62,43 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def require_session(request: Request, state: AppState = Depends(get_state)) -> SessionData:
-    session = state.auth.load_session(request.cookies.get(SESSION_COOKIE))
-    if session is None:
+# Rotas liberadas enquanto a troca de senha e obrigatoria (D48): so estas tres.
+_ALLOWED_WHILE_MUST_CHANGE = frozenset({"/api/admin/session", "/api/admin/logout", "/api/admin/me/password"})
+
+
+def require_session(request: Request, state: AppState = Depends(get_state)) -> Ctx:
+    ctx = state.auth.resolve(request.cookies.get(SESSION_COOKIE))
+    if ctx is None:
         raise HTTPException(status_code=401, detail="Não autenticado")
-    return session
+    if ctx.user.must_change and request.url.path not in _ALLOWED_WHILE_MUST_CHANGE:
+        raise ApiError(403, "Troque a senha provisória para continuar", "password_change_required")
+    return ctx
 
 
-def require_csrf(request: Request, session: SessionData = Depends(require_session)) -> SessionData:
-    if is_unsafe_method(request.method) and not AdminAuth.csrf_matches(session, request.headers.get("x-csrf-token")):
+def require_csrf(request: Request, ctx: Ctx = Depends(require_session)) -> Ctx:
+    if is_unsafe_method(request.method) and not AdminAuth.csrf_matches(ctx.session, request.headers.get("x-csrf-token")):
         raise HTTPException(status_code=403, detail="CSRF token inválido ou ausente")
-    return session
+    return ctx
+
+
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail="Not Found")
+
+
+def require_master(
+    request: Request, ctx: Ctx = Depends(require_session), state: AppState = Depends(get_state)
+) -> Ctx:
+    """Rotas do mestre (D52): usuario comum (ou mestre fora de ``MASTER_ALLOW_CIDRS``) recebe 404, como se a rota nao existisse."""
+    if not ctx.is_master or not ip_allowed(state.settings.master_allow_cidrs, client_ip(request)):
+        raise _not_found()
+    return ctx
+
+
+def require_master_only(ctx: Ctx = Depends(require_session)) -> Ctx:
+    """Saude e eventos (D52): so o mestre (404 para os demais); a lista de IPs do mestre nao se aplica aqui."""
+    if not ctx.is_master:
+        raise _not_found()
+    return ctx
 
 
 async def read_body(request: Request) -> bytes:

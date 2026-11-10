@@ -18,6 +18,13 @@
 #   --public-base-url URL     URL publica exibida no painel (padrao https://live.exemplo.com)
 #   --admin-bind IP           onde a 8081 escuta no host (padrao 0.0.0.0; a lista de IPs filtra)
 #   --admin-allow "CIDRS"     lista da 8081 (padrao "192.168.0.0/16 100.64.0.0/10")
+#   --admin-externo           liga o acesso externo ao painel (D49): a lista de IPs deixa de valer e o login fica em 5/min por IP;
+#                             exige o IP fixo do NPM (--admin-trusted-proxy ou o ja gravado no .env)
+#   --admin-interno           desliga o acesso externo (volta a lista ADMIN_ALLOW_CIDRS)
+#   --admin-trusted-proxy IP  IP fixo (/32) do NPM na rede livestats-edge (ADMIN_TRUSTED_PROXY_IP)
+#   --public-admin-url URL    endereco externo do painel, exibido na tela Conta (ex.: https://painel.exemplo.com)
+#   --admin-real-ip-header H  cabecalho do IP do cliente no painel externo: X-Forwarded-For (padrao), CF-Connecting-IP (tunel Cloudflare) ou X-Real-IP
+#   --master-allow "CIDRS"    IPv4/CIDR de onde o mestre pode entrar (MASTER_ALLOW_CIDRS; vazio = mantem o do .env)
 #   --renew-tls               gera um certificado TLS novo
 #   --reset-admin-password    troca o hash da senha do admin
 #   --skip-build              nao reconstroi as imagens
@@ -42,6 +49,11 @@ TROCAR_SENHA=0
 PULAR_BUILD=0
 CONECTAR_NPM=0
 NPM_NOME=""
+ADMIN_EXTERNO=""        # vazio = mantem o do .env
+ADMIN_PROXY=""
+PUBLIC_ADMIN=""
+MASTER_ALLOW=""
+REAL_IP_HEADER=""
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -52,6 +64,12 @@ while [ $# -gt 0 ]; do
     --public-base-url) PUBLIC_URL=$2; shift 2 ;;
     --admin-bind) ADMIN_BIND=$2; shift 2 ;;
     --admin-allow) ADMIN_ALLOW=$2; shift 2 ;;
+    --admin-externo) ADMIN_EXTERNO=1; shift ;;
+    --admin-interno) ADMIN_EXTERNO=0; shift ;;
+    --admin-trusted-proxy) ADMIN_PROXY=$2; shift 2 ;;
+    --public-admin-url) PUBLIC_ADMIN=$2; shift 2 ;;
+    --master-allow) MASTER_ALLOW=$2; shift 2 ;;
+    --admin-real-ip-header) REAL_IP_HEADER=$2; shift 2 ;;
     --secrets-stdin) SECRETS_STDIN=1; shift ;;
     --renew-tls) RENOVAR_TLS=1; shift ;;
     --reset-admin-password) TROCAR_SENHA=1; shift ;;
@@ -59,7 +77,7 @@ while [ $# -gt 0 ]; do
     --connect-npm)
       CONECTAR_NPM=1; shift
       if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NPM_NOME=$1; shift; fi ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     *) die "Argumento desconhecido: $1 (use --help)." ;;
   esac
 done
@@ -68,6 +86,13 @@ ipv4() { printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; }
 [ -n "$LAN_IP" ] || die "Informe --lan-ip (IP da LAN do servidor)."
 ipv4 "$LAN_IP" || die "--lan-ip invalido: $LAN_IP"
 for ip in $EXTRA_SAN; do ipv4 "$ip" || die "--extra-san invalido: $ip"; done
+
+# Acesso externo (D49): recusa ANTES de qualquer mudanca se faltar o proxy confiavel (valida so; grava na secao do .env).
+if [ "$ADMIN_EXTERNO" = 1 ] || [ -n "$ADMIN_PROXY" ]; then
+  _prx=$ADMIN_PROXY
+  [ -n "$_prx" ] || _prx=$(env_get "$DIR/.env" ADMIN_TRUSTED_PROXY_IP)
+  [ -n "$_prx" ] || die "--admin-externo exige o IP fixo do Nginx Proxy Manager (ADMIN_TRUSTED_PROXY_IP): informe --admin-trusted-proxy IP (ex.: 172.29.80.11) ou rode antes deploy/connect_npm.sh. Sem proxy confiavel o painel nao pode ser aberto de fora. Nada foi alterado."
+fi
 
 # ---- 1. segredos que chegam por stdin (lidos primeiro; depois a entrada padrao fecha) ----------------
 ADMIN_PW=""
@@ -118,9 +143,11 @@ ipv4 "$ADMIN_BIND" || die "--admin-bind invalido."
   env_set "$ENV_ARQ" TRUSTED_PROXY_CIDR "$(env_get "$ENV_ARQ" TRUSTED_PROXY_CIDR)"
   # D42: um LIVE_INTERVAL=30 herdado de um .env.example de versao anterior derrubaria o worker-lives (maximo 15 s).
   ajustar_live_interval "$ENV_ARQ"
+  # D49/D48: acesso externo, endereco externo do painel e filtro do mestre; vazio preserva o valor do .env.
+  aplicar_acesso_externo "$ENV_ARQ" "$ADMIN_EXTERNO" "$ADMIN_PROXY" "$PUBLIC_ADMIN" "$MASTER_ALLOW" "$REAL_IP_HEADER"
 )
 chmod 600 "$ENV_ARQ"
-ok ".env gravado (usuario $ADMIN_USER, admin em $ADMIN_BIND:8081, lista: $ADMIN_ALLOW, TRUSTED_PROXY_CIDR='$(env_get "$ENV_ARQ" TRUSTED_PROXY_CIDR)')."
+ok ".env gravado (usuario $ADMIN_USER, admin em $ADMIN_BIND:8081, lista: $ADMIN_ALLOW, TRUSTED_PROXY_CIDR='$(env_get "$ENV_ARQ" TRUSTED_PROXY_CIDR)', acesso externo: $(env_get "$ENV_ARQ" ADMIN_EXTERNAL_ACCESS))."
 
 # ---- 5. imagens --------------------------------------------------------------------------------------
 if [ "$PULAR_BUILD" = 1 ]; then
@@ -170,13 +197,13 @@ if [ -s "$SEG/admin_password_hash.txt" ] && [ "$TROCAR_SENHA" = 0 ]; then
   ok "admin_password_hash.txt ja existe (mantido)."
 else
   if [ -z "$ADMIN_PW" ]; then
-    ler_oculto "Senha do admin (minimo 12 caracteres): "; ADMIN_PW=$SEGREDO_LIDO
+    ler_oculto "Senha do admin (minimo 8 caracteres): "; ADMIN_PW=$SEGREDO_LIDO
     ler_oculto "Repita a senha: "
     [ "$SEGREDO_LIDO" = "$ADMIN_PW" ] || die "As senhas nao conferem."
   fi
   HASH=$(printf '%s\n' "$ADMIN_PW" | docker_ run --rm -i --network none --read-only --cap-drop ALL \
         --security-opt no-new-privileges --user 10001:10001 livestats/api:local python -m tools.hash_password) \
-    || die "Falha ao gerar o hash (a senha precisa ter pelo menos 12 caracteres)."
+    || die "Falha ao gerar o hash (a senha precisa ter pelo menos 8 caracteres)."
   ADMIN_PW=""
   # shellcheck disable=SC2016  # $ literal: prefixo do hash PHC
   case $HASH in '$argon2id$'*) ;; *) die "A ferramenta hash_password nao devolveu um hash argon2id." ;; esac

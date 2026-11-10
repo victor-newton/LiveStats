@@ -113,14 +113,14 @@ class CookieSealer:
         return self._box.encrypt(plain)
 
 
-def store_cookie_set(conn: sqlite3.Connection, ciphertext: bytes, key_id: str, count: int, uploaded_by: str, now: float) -> int:
-    """INSERT da nova linha e DELETE das demais na mesma transacao (so a ultima e mantida)."""
+def store_cookie_set(conn: sqlite3.Connection, counter_id: int, ciphertext: bytes, key_id: str, count: int, uploaded_by: str, now: float) -> int:
+    """INSERT da nova linha e DELETE das demais DO MESMO CONTADOR na mesma transacao (so a ultima de cada contador e mantida)."""
     with db.transaction(conn, immediate=True):
         cur = conn.execute(
-            "INSERT INTO cookie_sets (ciphertext, key_id, cookie_count, uploaded_by, created_at, source) "
-            "VALUES (?, ?, ?, ?, ?, 'admin')",
-            (ciphertext, key_id, count, uploaded_by[:64], timestamp_publico(now)),
+            "INSERT INTO cookie_sets (counter_id, ciphertext, key_id, cookie_count, uploaded_by, created_at, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'admin')",
+            (counter_id, ciphertext, key_id, count, uploaded_by[:64], timestamp_publico(now)),
         )
         new_id = int(cur.lastrowid)
-        conn.execute("DELETE FROM cookie_sets WHERE id <> ?", (new_id,))
+        conn.execute("DELETE FROM cookie_sets WHERE counter_id = ? AND id <> ?", (counter_id, new_id))
     return new_id

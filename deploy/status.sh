@@ -46,6 +46,15 @@ for par in "livestats-worker-lives worker_lives.healthcheck" "livestats-worker-i
 done
 
 titulo "Rede e proxy"
+if [ "$(env_get "$DIR/.env" ADMIN_EXTERNAL_ACCESS)" = 1 ]; then
+  if [ -n "$(env_get "$DIR/.env" ADMIN_TRUSTED_PROXY_IP)" ]; then
+    ok "Acesso externo ao painel LIGADO (ADMIN_EXTERNAL_ACCESS=1; proxy confiavel $(env_get "$DIR/.env" ADMIN_TRUSTED_PROXY_IP); a lista de IPs nao se aplica; login 5/min por IP). Endereco: '$(env_get "$DIR/.env" PUBLIC_ADMIN_URL)'"
+  else
+    erro "ADMIN_EXTERNAL_ACCESS=1 mas ADMIN_TRUSTED_PROXY_IP esta vazio: o web nao sobe. Rode deploy/connect_npm.sh ou defina o IP fixo do NPM."
+  fi
+else
+  info "Acesso externo ao painel DESLIGADO (so a lista ADMIN_ALLOW_CIDRS vale). Para ligar: enviar.sh instalar --admin-externo."
+fi
 msg "TRUSTED_PROXY_CIDR='$(env_get "$DIR/.env" TRUSTED_PROXY_CIDR)'  ADMIN_BIND='$(env_get "$DIR/.env" ADMIN_BIND)'  ADMIN_ALLOW_CIDRS='$(env_get "$DIR/.env" ADMIN_ALLOW_CIDRS)'"
 if docker_ network inspect "$REDE_EDGE" >/dev/null 2>&1; then
   docker_ network inspect -f '{{range .Containers}}  {{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}' "$REDE_EDGE"

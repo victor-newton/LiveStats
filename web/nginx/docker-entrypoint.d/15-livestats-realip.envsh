@@ -144,10 +144,45 @@ for _item in $_allow_raw; do
     LIVESTATS_ADMIN_GEO="${LIVESTATS_ADMIN_GEO}${LIVESTATS_CIDR} 1; "
 done
 
+# --- acesso externo ao painel (D49). ADMIN_EXTERNAL_ACCESS=1 (padrao 0): a 8081 deixa de aplicar a lista
+# ADMIN_ALLOW_CIDRS (que continua validada acima: 0.0.0.0/0 segue proibido), confia em X-Forwarded-For SOMENTE se a
+# conexao vem do /32 de ADMIN_TRUSTED_PROXY_IP (o ultimo salto do cabecalho vira o IP do cliente) e limita o login a
+# 5/min por IP. Sem ADMIN_TRUSTED_PROXY_IP o container nao sobe: sem proxy confiavel o IP real nao existe e o
+# limite de tentativas valeria para o proxy inteiro.
+# ADMIN_REAL_IP_HEADER (padrao X-Forwarded-For): cabecalho de onde vem o IP do cliente, so valido vindo do proxy confiavel.
+# Com tunel do Cloudflare use CF-Connecting-IP (o ultimo salto de X-Forwarded-For seria so o do tunel).
+_hdr=$(printf '%s' "${ADMIN_REAL_IP_HEADER:-X-Forwarded-For}" | tr -d '[:space:]')
+case $_hdr in
+    X-Forwarded-For|CF-Connecting-IP|X-Real-IP) ;;
+    *) livestats_fail "ADMIN_REAL_IP_HEADER invalido ('${ADMIN_REAL_IP_HEADER:-}'): use X-Forwarded-For, CF-Connecting-IP ou X-Real-IP" ;;
+esac
+_external=$(printf '%s' "${ADMIN_EXTERNAL_ACCESS:-0}" | tr -d '[:space:]')
+case $_external in
+    0|'')
+        LIVESTATS_ADMIN_GEO_DEFAULT=0
+        LIVESTATS_ADMIN_DENY="deny all;"
+        LIVESTATS_REALIP_ADMIN=""
+        LIVESTATS_ADMIN_LOGIN_LIMIT="zone=login burst=5 nodelay"
+        ;;
+    1)
+        if [ -z "$(printf '%s' "${ADMIN_TRUSTED_PROXY_IP:-}" | tr -d '[:space:]')" ]; then
+            livestats_fail "ADMIN_EXTERNAL_ACCESS=1 exige ADMIN_TRUSTED_PROXY_IP (o IP fixo /32 do Nginx Proxy Manager na rede livestats-edge); sem proxy confiavel o IP do cliente nao e conhecido. Defina-o no .env ou desligue o acesso externo (ADMIN_EXTERNAL_ACCESS=0)"
+        fi
+        livestats_proxy_ip ADMIN_TRUSTED_PROXY_IP "${ADMIN_TRUSTED_PROXY_IP}"
+        LIVESTATS_ADMIN_GEO_DEFAULT=1
+        LIVESTATS_ADMIN_ALLOW=""
+        LIVESTATS_ADMIN_GEO=""
+        LIVESTATS_ADMIN_DENY=""
+        LIVESTATS_REALIP_ADMIN="real_ip_header ${_hdr}; real_ip_recursive off; set_real_ip_from ${LIVESTATS_IP}/32;"
+        LIVESTATS_ADMIN_LOGIN_LIMIT="zone=login_ext burst=4 nodelay"
+        ;;
+    *) livestats_fail "ADMIN_EXTERNAL_ACCESS deve ser 0 ou 1 (recebido '${ADMIN_EXTERNAL_ACCESS}')" ;;
+esac
+
 # --- TLS da 8081: sem os dois secrets o web NAO sobe (nunca cai para HTTP).
 for _f in /run/secrets/admin_tls_cert /run/secrets/admin_tls_key; do
     [ -s "$_f" ] || livestats_fail "secret TLS do admin ausente ou vazio: $_f (veja secrets/README.md); o web nao sobe sem HTTPS na 8081"
     [ -r "$_f" ] || livestats_fail "secret TLS do admin sem permissao de leitura para o usuario do Nginx (uid 101): $_f (veja secrets/README.md)"
 done
 
-export LIVESTATS_REALIP_PUBLIC LIVESTATS_ADMIN_ALLOW LIVESTATS_ADMIN_GEO
+export LIVESTATS_REALIP_PUBLIC LIVESTATS_ADMIN_ALLOW LIVESTATS_ADMIN_GEO LIVESTATS_ADMIN_GEO_DEFAULT LIVESTATS_ADMIN_DENY LIVESTATS_REALIP_ADMIN LIVESTATS_ADMIN_LOGIN_LIMIT

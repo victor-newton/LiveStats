@@ -5,20 +5,24 @@
 
 import { api } from './api.js';
 import { byId } from './dom.js';
+import { crumbs } from './nav.js';
 import { h, icon, setStyle } from './h.js';
-import { lineChart, donutChart } from './charts.js';
-import { registerFontSelect, setFontValue } from './fonts.js';
+import { lineChart, donutChart, ring } from './charts.js';
+import { setAccent } from './glow.js';
+import { fontDropdown, setFontValue } from './fonts.js';
+import { dropdown, setDropdownOptions } from './dropdown.js';
+import { infoTip, setInfoTip } from './infotip.js';
 import { write, readGoal, requestRefresh, sessionLost } from './net.js';
 import { liveEndpoints, setEndpoints } from './endpoints.js';
 import {
-  colorField, overlayPreview, collapse, linkItem, statusPill, setPill, platBadge, armedButton, toast,
+  colorField, overlayPreview, collapse, linkItem, statusPill, setPill, platBadge, platLogo, armedButton, toast,
 } from './ui.js';
 import {
   state, setById, liveStats, liveName, sortedLives, setTotals,
 } from './store.js';
 import { showMessage, clearMessage } from './dom.js';
 import {
-  fmt, fmtDec, hhmm, reduced, safeColor, setText, toEpoch, PLATFORM_NAME,
+  fmt, fmtDec, hhmm, reduced, safeColor, setText, toEpoch, PLATFORM_NAME, PLATFORM_CLASS,
 } from './util.js';
 import { openAddLive, openConfigSet } from './dialogs.js';
 
@@ -32,6 +36,10 @@ const ERROR_TEXTS = {
   invalid_response: 'resposta inválida',
 };
 const RANGES = [[5, 'Últimos 5 min'], [30, 'Últimos 30 min'], [60, 'Última hora'], [120, 'Últimas 2 horas']];
+const STATE_TEXT = /** @type {Record<string, string>} */ ({
+  ao_vivo: 'ao vivo', encerrada: 'encerrada', agendada: 'agendada', offline: 'offline', erro: 'erro',
+});
+const CHIP_HINT = '';
 const STEP_TEXT = { 10: '10 s', 30: '30 s', 60: 'minuto' };
 
 /** @typedef {ReturnType<typeof buildLive>} LiveItem */
@@ -46,6 +54,14 @@ let donutKey = '';
 let linksKey = '';
 let pendingAnimate = false;
 let focusKey = '';
+let crumbKey = '';
+/** @type {(route: import('./store.js').Route) => void} */
+let navigateTo = () => {};
+
+/** @param {(route: import('./store.js').Route) => void} fn */
+export function setNavigator(fn) {
+  navigateTo = fn;
+}
 
 /** @param {HTMLElement} node @param {string} text */
 function setTxt(node, text) {
@@ -64,42 +80,40 @@ function setTrend(chip, pct) {
   setTxt(chip, `${pct < 0 ? '↓' : '↑'} ${fmtDec(Math.abs(pct))}%`);
 }
 
-/** Monta a estrutura fixa da tela (uma vez). */
+/** Monta a estrutura fixa da tela (uma vez): grade bento. */
 export function initConjunto() {
   const scr = byId('scr-conjunto');
   R.title = h('h1', { id: 'setTitle' });
   R.sub = h('p', { id: 'setSub' });
+  R.subTip = infoTip('A leitura de cada live acontece a cada 10 segundos. Os números do conjunto somam todas as lives dele.', { label: 'Sobre a leitura das lives' });
   R.btnConfig = h('button', { type: 'button', class: 'btn', id: 'btnConfigSet' }, icon('gear', 14), 'Configurar conjunto');
   R.btnAdd = h('button', { type: 'button', class: 'btn btn-primary', id: 'btnAddLive' }, icon('plus', 14), 'Adicionar live');
   R.btnConfig.addEventListener('click', () => { const s = setById(state.route.setId); if (s) openConfigSet(s); });
   R.btnAdd.addEventListener('click', () => { const s = setById(state.route.setId); if (s) openAddLive(s); });
 
   // números
-  R.kViewers = h('span', { class: 'num v', id: 'kViewers' });
+  R.kViewers = h('span', { class: 'num v big', id: 'kViewers' });
   R.tViewers = h('span', { class: 'trend', hidden: true });
+  R.kAvg = h('b', { class: 'num' });
+  R.kMax = h('b', { class: 'num' });
   R.kLikes = h('span', { class: 'num v', id: 'kLikes' });
   R.kGoal = h('small', { class: 'num', id: 'kGoal' });
-  R.meterFill = h('i');
-  R.meter = h('div', { class: 'meter' }, R.meterFill);
+  R.ring = ring({ pct: null, color: '#34D399', center: '—', size: 58, label: 'Likes em relação à meta', animate: true });
+  R.ringFoot = h('div', { class: 'foot', text: 'sem meta definida' });
   R.kOn = h('span', { class: 'num v', id: 'kOn' });
   R.kOnOf = h('small', { class: 'num' });
   R.pills = h('div', { class: 'foot pills' });
   R.kPeak = h('span', { class: 'num v', id: 'kPeak' });
   R.peakFoot = h('div', { class: 'foot' });
-  const kpi = (/** @type {string} */ label, /** @type {Node[]} */ value, /** @type {Node[]} */ foot) => h('div', { class: 'card kpi' },
-    h('div', { class: 'label', text: label }), h('div', { class: 'value' }, ...value), ...foot);
-  const kpis = h('div', { class: 'kpis' },
-    kpi('Espectadores agora', [R.kViewers], [h('div', { class: 'foot' }, R.tViewers, ' nos últimos 15 min')]),
-    kpi('Likes (só YouTube)', [R.kLikes, ' ', R.kGoal], [R.meter]),
-    kpi('Lives ao vivo', [R.kOn, ' ', R.kOnOf], [R.pills]),
-    kpi('Pico de hoje', [R.kPeak], [R.peakFoot]));
+  const live = (/** @type {string} */ t) => h('span', { class: 'badge-live' }, h('i'), t);
 
-  // gráfico de linha
-  R.range = h('select', { class: 'select', id: 'range', 'aria-label': 'Período do gráfico' });
-  for (const [v, t] of RANGES) R.range.appendChild(h('option', { value: v, text: t }));
-  /** @type {HTMLSelectElement} */ (R.range).value = String(state.range);
+  // cartão grande: gráfico de linha suave
+  R.range = dropdown({
+    id: 'range', label: 'Período do gráfico', className: 'select', value: String(state.range), options: RANGES.map(([v, t]) => ({ value: String(v), text: String(t) })),
+  }).el;
   R.tChart = h('span', { class: 'trend', hidden: true });
-  R.lineSub = h('p', { id: 'lineSub', text: 'Soma das lives do conjunto.' });
+  R.lineTip = infoTip('Soma das lives do conjunto.', { label: 'Sobre o gráfico' });
+  R.lineSub = h('span', { id: 'lineSub', class: 'sr-only', text: 'Soma das lives do conjunto.' });
   R.svg = /** @type {SVGElement} */ (document.createElementNS('http://www.w3.org/2000/svg', 'svg'));
   R.svg.setAttribute('class', 'chart');
   R.svg.setAttribute('id', 'lineChart');
@@ -108,48 +122,69 @@ export function initConjunto() {
   R.svg.setAttribute('aria-label', 'Gráfico de linha de espectadores e likes');
   R.tip = h('div', { class: 'tip', hidden: true });
   R.range.addEventListener('change', () => void changeRange());
-  const chartCard = h('div', { class: 'card' },
-    h('div', { class: 'card-h' },
-      h('div', null, h('h2', null, 'Espectadores e likes ', R.tChart), R.lineSub),
+  const chartCard = h('div', { class: 'card glow-card acc-indigo b-chart', id: 'cardChart' },
+    h('div', { class: 'card-title' }, h('span', null, 'Espectadores e likes'), live('ao vivo')),
+    h('div', { class: 'stat-row' },
+      h('div', { class: 'stat-main' }, h('div', { class: 'value' }, R.kViewers), h('div', { class: 'stat-sub' }, 'espectadores agora ', R.tViewers)),
+      h('div', { class: 'stat-side' }, h('span', null, 'média ', R.kAvg), h('span', null, 'pico ', R.kMax)),
       h('div', { class: 'card-tools' },
         h('div', { class: 'legend' },
           h('span', null, h('i', { class: 'lg views' }), 'Espectadores'),
           h('span', null, h('i', { class: 'lg likes' }), 'Likes')),
         R.range)),
+    h('div', { class: 'chart-sub' }, R.lineTip, R.lineSub, R.tChart),
     h('div', { class: 'chart-box' }, R.svg, R.tip));
 
-  // rosca
+  // cartão alto: rosca
   R.donut = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   R.donut.setAttribute('id', 'donut');
   R.donut.setAttribute('viewBox', '0 0 220 220');
   R.donut.setAttribute('role', 'img');
   R.donut.setAttribute('aria-label', 'Gráfico de rosca da participação de cada live');
   R.shareList = h('div', { class: 'share-list', id: 'shareList' });
-  const donutCard = h('div', { class: 'card' },
-    h('div', { class: 'card-h' }, h('div', null, h('h2', null, 'Participação por live'), h('p', { text: 'Quanto cada live soma nos espectadores agora.' }))),
+  const donutCard = h('div', { class: 'card glow-card acc-fuchsia b-donut' },
+    h('div', { class: 'card-title' }, h('span', { class: 'title-row' }, 'Participação por live', infoTip('Quanto cada live soma nos espectadores agora. Toque numa fatia ou numa linha da lista para fixar o destaque.', { label: 'Sobre a participação por live' }))),
     h('div', { class: 'donut-wrap' }, R.donut), R.shareList);
 
-  // lives
+  // cartões pequenos
+  const goalCard = h('div', { class: 'card glow-card acc-emerald kpi', id: 'cardGoal' },
+    h('div', { class: 'card-title' }, h('span', null, 'Likes e meta (só YouTube)')),
+    h('div', { class: 'kpi-ring' }, R.ring.root,
+      h('div', null, h('div', { class: 'value' }, R.kLikes, ' ', R.kGoal), R.ringFoot)));
+  const onCard = h('div', { class: 'card glow-card acc-cyan kpi' },
+    h('div', { class: 'card-title' }, h('span', null, 'Lives ao vivo')),
+    h('div', { class: 'value' }, R.kOn, ' ', R.kOnOf), R.pills);
+  const peakCard = h('div', { class: 'card glow-card acc-amber kpi' },
+    h('div', { class: 'card-title' }, h('span', null, 'Pico de hoje')),
+    h('div', { class: 'value' }, R.kPeak), R.peakFoot);
+
+  // cartão largo: lives como chips (estilo "Tech stack")
+  R.chips = h('div', { class: 'chips', id: 'liveChips', role: 'group', 'aria-label': 'Lives do conjunto' });
+  R.chipDesc = h('p', { class: 'chip-desc', id: 'chipDesc', 'aria-live': 'polite', text: CHIP_HINT });
   R.list = h('div', { class: 'lives', id: 'livesList' });
   R.empty = h('p', { class: 'empty', text: 'Este conjunto ainda não tem lives.', hidden: true });
   R.btnAddRow = h('button', { type: 'button', class: 'add-row', id: 'btnAddRow' }, icon('plus', 16), 'Adicionar live: cole o link do YouTube, da Twitch ou do Kick');
   R.btnAddRow.addEventListener('click', () => { const s = setById(state.route.setId); if (s) openAddLive(s); });
-  R.cardLives = h('div', { class: 'card', id: 'cardLives' },
-    h('div', { class: 'card-h' }, h('div', null, h('h2', null, 'Lives'), h('p', { text: 'Clique numa live para abrir os links e as configurações dela.' }))),
-    h('div', { class: 'live-row hdr' }, h('span'), h('span', { text: 'Live' }), h('span', { class: 'c-status', text: 'Estado' }), h('span', { class: 'cell-num', text: 'Espectadores' }), h('span', { class: 'cell-num', text: 'Likes' }), h('span', { class: 'c-share', text: 'Parte do total' }), h('span')),
-    R.list, R.empty, R.btnAddRow);
+  R.cardLives = h('div', { class: 'card glow-card acc-amber b-wide', id: 'cardLives' },
+    h('div', { class: 'card-title' }, h('span', { class: 'title-row' }, 'Lives', infoTip('Toque ou clique numa live para abrir os links e as configurações dela. Passe o mouse ou use Tab para ver o título, os espectadores e os likes.', { label: 'Sobre as lives' }))),
+    R.chips, R.chipDesc, R.list, R.empty, R.btnAddRow);
 
   // links
   R.links = h('div', { class: 'links-grid', id: 'setLinks' });
-  R.cardLinks = h('div', { class: 'card', id: 'cardLinks' },
-    h('div', { class: 'card-h' }, h('div', null, h('h2', null, 'Links do conjunto'), h('p', { text: 'Somam todas as lives acima. Use no OBS, no vMix ou em artes próprias.' }))),
+  R.cardLinks = h('div', { class: 'card glow-card acc-indigo b-wide', id: 'cardLinks' },
+    h('div', { class: 'card-title' }, h('span', { class: 'title-row' }, 'Links do conjunto', infoTip('Somam todas as lives acima. Use no OBS, no vMix ou em artes próprias.', { label: 'Sobre os links do conjunto' }))),
     R.links);
 
+  R.crumbs = h('div', { class: 'crumbs-box', id: 'setCrumbs' });
+  R.picker = dropdown({ id: 'setPicker', label: 'Ir para outro conjunto', className: 'select picker' }).el;
+  R.picker.addEventListener('change', () => {
+    const id = Number(/** @type {HTMLButtonElement} */ (R.picker).value);
+    const owner = state.route.userId ?? null;
+    if (Number.isInteger(id) && id !== state.route.setId) navigateTo({ screen: 'conjunto', setId: id, focus: null, userId: owner });
+  });
   scr.replaceChildren(
-    h('div', { class: 'head' }, h('div', null, R.title, R.sub), h('div', { class: 'actions' }, R.btnConfig, R.btnAdd)),
-    kpis,
-    h('div', { class: 'grid-main' }, chartCard, donutCard),
-    R.cardLives, R.cardLinks);
+    h('div', { class: 'head' }, h('div', null, R.crumbs, R.title, h('div', { class: 'sub-row' }, R.sub, R.subTip)), h('div', { class: 'actions' }, R.btnConfig, R.btnAdd)),
+    h('div', { class: 'bento bento-210' }, chartCard, donutCard, h('div', { class: 'b-side' }, goalCard, onCard, peakCard), R.cardLives, R.cardLinks));
 }
 
 /** Descarta o conteúdo (sessão encerrada). */
@@ -160,7 +195,11 @@ export function resetConjunto() {
   donutKey = '';
   linksKey = '';
   focusKey = '';
+  crumbKey = '';
+  if (R.crumbs) R.crumbs.replaceChildren();
   if (R.list) R.list.replaceChildren();
+  if (R.chips) R.chips.replaceChildren();
+  if (R.chipDesc) R.chipDesc.textContent = CHIP_HINT;
   if (R.svg) R.svg.replaceChildren();
   if (R.donut) R.donut.replaceChildren();
   if (R.shareList) R.shareList.replaceChildren();
@@ -182,7 +221,7 @@ export async function fetchExtra() {
 }
 
 async function changeRange() {
-  const v = Number(/** @type {HTMLSelectElement} */ (R.range).value);
+  const v = Number(/** @type {HTMLButtonElement} */ (R.range).value);
   if (![5, 30, 60, 120].includes(v)) return;
   state.range = v;
   pendingAnimate = true;
@@ -208,10 +247,15 @@ function renderChart(first) {
   const animate = first || pendingAnimate;
   pendingAnimate = false;
   chartKey = key;
-  /** @type {HTMLSelectElement} */ (R.range).value = String(state.range);
+  /** @type {HTMLButtonElement} */ (R.range).value = String(state.range);
   const step = data && typeof data.step_s === 'number' ? data.step_s : 60;
-  setTxt(R.lineSub, `Soma das lives do conjunto, um ponto a cada ${STEP_TEXT[/** @type {10 | 30 | 60} */ (step)] || `${step} s`}.`);
+  const stepText = `Soma das lives do conjunto, um ponto a cada ${STEP_TEXT[/** @type {10 | 30 | 60} */ (step)] || `${step} s`}.`;
+  setTxt(R.lineSub, stepText);
+  setInfoTip(R.lineTip, stepText);
   setTrend(R.tChart, data ? data.change_15m_pct : null);
+  const vs = pts.map((/** @type {any} */ p) => (typeof p.viewers === 'number' ? p.viewers : 0));
+  setTxt(R.kAvg, vs.length ? fmt(vs.reduce((a, b) => a + b, 0) / vs.length) : '—');
+  setTxt(R.kMax, vs.length ? fmt(Math.max(...vs)) : '—');
   lineChart(R.svg, pts, { animate, stepS: step });
 }
 
@@ -232,7 +276,19 @@ function buildLive(live, set) {
   const lV = h('span', { class: 'num v' });
   const lSmall = h('small');
   const fill = h('i');
-  const expand = h('button', { type: 'button', class: 'expand', 'aria-expanded': 'false', 'aria-controls': `det-${id}` }, icon('down', 12));
+  const expand = h('button', { type: 'button', class: 'expand' }, icon('down', 12));
+  // chip da live (estilo "Tech stack"): ícone da plataforma, nome e estado
+  const chipIco = h('span', { class: `chip-ico ${PLATFORM_CLASS[live.platform] || ''}`.trim(), 'aria-hidden': 'true' }, platLogo(live.platform));
+  const chipName = h('span', { class: 'chip-name' });
+  const chipState = h('span', { class: 'chip-state' });
+  const chip = h('button', { type: 'button', class: 'chip', 'data-live': id }, chipIco, chipName, chipState);
+  let desc = '';
+  const showDesc = () => { R.chipDesc.textContent = desc; R.chipDesc.classList.add('on'); };
+  const hideDesc = () => { R.chipDesc.textContent = CHIP_HINT; R.chipDesc.classList.remove('on'); };
+  chip.addEventListener('pointerenter', showDesc);
+  chip.addEventListener('pointerleave', hideDesc);
+  chip.addEventListener('focus', showDesc);
+  chip.addEventListener('blur', hideDesc);
   const row = h('div', { class: 'live-row', 'data-live': id },
     plat,
     h('div', { class: 'live-name' }, heading, title),
@@ -249,8 +305,7 @@ function buildLive(live, set) {
   const urlIn = /** @type {HTMLInputElement} */ (h('input', { id: `lv${id}-url`, type: 'text', inputmode: 'url', maxlength: 2048, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' }));
   const nameIn = /** @type {HTMLInputElement} */ (h('input', { id: `lv${id}-name`, type: 'text', maxlength: 60, autocomplete: 'off' }));
   const goalIn = /** @type {HTMLInputElement} */ (h('input', { id: `lv${id}-goal`, type: 'text', inputmode: 'numeric', autocomplete: 'off', class: 'num' }));
-  const fontSel = /** @type {HTMLSelectElement} */ (h('select', { id: `lv${id}-font` }));
-  registerFontSelect(fontSel);
+  const fontSel = fontDropdown(`lv${id}-font`);
   const barField = colorField('Cor da live (barra e gráficos)', live.color, () => preview());
   const textField = colorField('Cor do texto', live.text_color, () => preview());
   const pv = overlayPreview();
@@ -268,8 +323,10 @@ function buildLive(live, set) {
     pv.root,
     h('div', { class: 'detail-actions' }, delBtn, okEl, saveBtn),
     errEl);
-  const detail = h('div', { class: 'live-detail', id: `det-${id}` }, linksBox, cfgBox);
-  const col = collapse(detail);
+  const detail = h('div', { class: 'live-detail' }, linksBox, cfgBox);
+  const col = collapse(h('div', { class: 'live-pane' }, row, detail), `det-${id}`);
+  col.bind(chip);
+  col.bind(expand);
 
   function preview() {
     const st = liveStats(cur);
@@ -287,12 +344,14 @@ function buildLive(live, set) {
   cfgBox.addEventListener('change', () => { dirty = true; preview(); });
   linksBox.addEventListener('input', () => { dirty = true; });
 
+  const item = h('div', { class: 'live-item', 'data-live': id }, col.root);
   const toggle = () => {
     const open = !col.isOpen();
-    col.set(open);
-    expand.setAttribute('aria-expanded', String(open));
+    col.set(open); // a altura anima de 0 até o conteúdo (e volta); aria-expanded dos gatilhos vem do collapse
+    chip.classList.toggle('open', open);
     row.classList.toggle('open', open);
   };
+  chip.addEventListener('click', toggle);
   expand.addEventListener('click', (ev) => { ev.stopPropagation(); toggle(); });
   row.addEventListener('click', (ev) => { if (!(/** @type {HTMLElement} */ (ev.target)).closest('button')) toggle(); });
 
@@ -325,7 +384,8 @@ function buildLive(live, set) {
   });
 
   return {
-    root: h('div', { class: 'live-item', 'data-live': id }, row, col.root),
+    root: item,
+    chip,
     row,
     expand,
     open: () => { if (!col.isOpen()) toggle(); },
@@ -340,6 +400,14 @@ function buildLive(live, set) {
       const st = liveStats(l);
       const color = safeColor(l.color);
       setTxt(heading, `${index + 1}. ${liveName(l)}`);
+      setTxt(chipName, liveName(l));
+      chipName.title = liveName(l);
+      setTxt(chipState, st ? (STATE_TEXT[st.status] || st.status) : 'aguardando');
+      chip.dataset.state = st ? String(st.status) : 'aguardando';
+      setAccent(chip, color);
+      setStyle(chip, { '--c': color });
+      desc = `${liveName(l)}: ${(st && !st.error_code && st.title) || (st && st.error_code ? 'com erro de leitura' : 'aguardando dados')} · ${st ? fmt(st.viewers) : '—'} espectadores · ${st && st.likes !== null ? `${fmt(st.likes)} likes` : 'sem likes'}`;
+      if (chip.matches(':hover, :focus')) showDesc();
       const detailText = st ? (st.error_code ? `Erro: ${/** @type {Record<string, string>} */ (ERROR_TEXTS)[st.error_code] || st.error_code}` : st.title) : 'Aguardando dados...';
       setTxt(title, detailText || '');
       title.title = detailText || '';
@@ -379,16 +447,18 @@ export function render(first) {
     builtFor = set.id;
     items = new Map();
     R.list.replaceChildren();
+    R.chips.replaceChildren();
     chartKey = '';
     donutKey = '';
     linksKey = '';
   }
   const animate = first || changedSet;
+  renderCrumbs(set);
   const lives = sortedLives(set);
   const tot = setTotals(set);
   const platforms = new Set(lives.map((l) => l.platform));
   setTxt(R.title, set.name);
-  setTxt(R.sub, `${lives.length} ${lives.length === 1 ? 'live' : 'lives'} em ${platforms.size} ${platforms.size === 1 ? 'plataforma' : 'plataformas'}${typeof set.goal === 'number' ? ` · meta de ${fmt(set.goal)} likes` : ''} · leitura a cada 10 s`);
+  setTxt(R.sub, `${lives.length} ${lives.length === 1 ? 'live' : 'lives'} em ${platforms.size} ${platforms.size === 1 ? 'plataforma' : 'plataformas'}${typeof set.goal === 'number' ? ` · meta de ${fmt(set.goal)} likes` : ''}`);
 
   // números
   const hs = state.hist.get(set.id);
@@ -398,8 +468,9 @@ export function render(first) {
   setText(R.kLikes, tot.likes === null ? '—' : fmt(tot.likes), animate);
   setText(R.kGoal, typeof set.goal === 'number' ? `/ ${fmt(set.goal)}` : '', animate);
   const pct = typeof set.goal === 'number' && tot.likes !== null ? Math.min(100, (tot.likes / set.goal) * 100) : 0;
-  R.meterFill.style.width = `${pct.toFixed(1)}%`;
-  R.meter.hidden = typeof set.goal !== 'number';
+  const hasGoal = typeof set.goal === 'number';
+  R.ring.set(hasGoal ? pct : null, '#34D399', hasGoal ? `${Math.round(pct)}%` : '—');
+  setTxt(R.ringFoot, hasGoal ? (pct >= 100 ? 'meta batida' : `${fmtDec(pct)}% da meta`) : 'sem meta definida');
   setText(R.kOn, String(tot.on), animate);
   setText(R.kOnOf, `de ${tot.total}`, animate);
   R.pills.replaceChildren(...lives.slice(0, 6).map((l) => {
@@ -435,11 +506,14 @@ export function render(first) {
     it.update(l, i, tot.viewers, animate);
   });
   for (const [id, it] of items) {
-    if (!seen.has(id)) { it.root.remove(); items.delete(id); }
+    if (!seen.has(id)) { it.root.remove(); it.chip.remove(); items.delete(id); }
   }
   const want = lives.map((l) => /** @type {LiveItem} */ (items.get(l.id)).root);
   const have = [...R.list.children];
   if (want.length !== have.length || want.some((n, i) => n !== have[i])) R.list.replaceChildren(...want);
+  const wantChips = lives.map((l) => /** @type {LiveItem} */ (items.get(l.id)).chip);
+  const haveChips = [...R.chips.children];
+  if (wantChips.length !== haveChips.length || wantChips.some((n, i) => n !== haveChips[i])) R.chips.replaceChildren(...wantChips);
   R.empty.hidden = lives.length > 0;
 
   // links do conjunto
@@ -452,7 +526,42 @@ export function render(first) {
   applyFocus();
 }
 
-/** Rola até a live/links pedidos pelo menu lateral (uma vez por pedido). */
+/** Conjuntos que o seletor oferece: os do próprio usuário, ou os do usuário cujos dados o mestre está vendo. */
+function pickerSets() {
+  const uid = state.route.userId;
+  if (uid !== undefined && uid !== null && state.master.data && state.master.data.user && state.master.data.user.id === uid) {
+    return Array.isArray(state.master.data.sets) ? state.master.data.sets : [];
+  }
+  return state.sets;
+}
+
+/**
+ * Caminho `Conjuntos › Nome` (o nome é um seletor suspenso para pular para outro conjunto).
+ * @param {any} set
+ */
+function renderCrumbs(set) {
+  const uid = state.route.userId ?? null;
+  const list = pickerSets();
+  const owner = uid !== null && state.master.data && state.master.data.user ? state.master.data.user : null;
+  const key = JSON.stringify([set.id, uid, owner && owner.username, list.map((x) => [x.id, x.name])]);
+  if (key === crumbKey) return;
+  crumbKey = key;
+  const sel = /** @type {HTMLButtonElement} */ (R.picker);
+  setDropdownOptions(sel, list.map((x) => ({ value: String(x.id), text: String(x.name) })));
+  sel.value = String(set.id);
+  /** @type {(string | {text: string, go: () => void})[]} */
+  const items = uid === null
+    ? [{ text: 'Conjuntos', go: () => navigateTo({ screen: 'conjuntos', setId: null, focus: null }) }]
+    : [
+      { text: 'Mestre', go: () => navigateTo({ screen: 'mestre', setId: null, focus: null, seg: 'usuarios' }) },
+      { text: owner ? (owner.display_name || owner.username) : 'Usuário', go: () => navigateTo({ screen: 'mestre', setId: null, focus: null, seg: 'dados', userId: uid }) },
+    ];
+  const nav = crumbs(items);
+  nav.append(h('span', { class: 'crumb-sep', 'aria-hidden': 'true', text: '›' }), sel);
+  R.crumbs.replaceChildren(nav);
+}
+
+/** Rola até a live/links pedidos pela navegação (uma vez por pedido). */
 function applyFocus() {
   const r = state.route;
   const key = JSON.stringify([r.setId, r.focus]);
@@ -461,7 +570,7 @@ function applyFocus() {
   const behavior = reduced() ? 'auto' : 'smooth';
   if (r.focus && r.focus.live !== undefined) {
     const it = items.get(r.focus.live);
-    if (it) { it.open(); it.row.scrollIntoView({ behavior, block: 'center' }); }
+    if (it) { it.open(); it.root.scrollIntoView({ behavior, block: 'center' }); }
   } else if (r.focus && r.focus.links) {
     R.cardLinks.scrollIntoView({ behavior, block: 'start' });
   } else {

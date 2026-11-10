@@ -2,7 +2,8 @@
 
 Portado de `main()` do scraper original, com estas diferencas (contrato):
 - cookies vem de `cookie_sets` (cifrados) e a troca e detectada por `cookie_sets.id`, nao por `mtime` (F6);
-- a leitura vai para `subscriber_reading` (linha unica) e o estado para `worker_status` (D14/D20);
+- a leitura vai para `subscriber_reading` (uma linha por contador) e o estado para `worker_status` e `counter_status` (D14/D20/D51);
+- este modulo e o contador do MESTRE (pagina persistente); os contadores de usuario ficam em `pool.py` (D51);
 - erros viram codigos de enum fechado + mensagem constante: nunca texto de excecao, URL ou cookie.
 """
 
@@ -12,6 +13,7 @@ import logging
 import sqlite3
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
@@ -20,7 +22,7 @@ from nacl.public import PrivateKey, PublicKey
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from . import __version__
+from . import __version__, memoria
 from .browser import BrowserSession, Timings, is_login_url
 from .config import Config
 from .cookies import (
@@ -31,8 +33,9 @@ from .cookies import (
     impressao,
     key_id,
 )
-from .numero import filtrar_numero, valor_aceito
-from .store import StatusRow, Store, connect, iso_utc
+from .numero import filtrar_numero, valor_aceito, valor_inteiro
+from .saude import Saude
+from .store import CounterStatusRow, StatusRow, Store, connect, iso_utc
 
 log = logging.getLogger("worker_inscritos")
 
@@ -47,6 +50,8 @@ MSG_DECRYPT = "Os cookies nao puderam ser decifrados (chave diferente ou dado co
 MSG_NO_PERMISSION = (
     "Sem permissao para este canal no YouTube Studio: confira se a conta dos cookies tem acesso"
 )
+CODE_NO_ACCESS = "channel_no_access"  # D54: so em counter_status (worker_status guarda o equivalente fechado, config_error)
+MSG_NO_ACCESS = "A conta dos cookies nao tem acesso a este canal"
 MSG_COUNTER = "Contador nao encontrado na pagina"
 MSG_INVALID = "Valor invalido lido na pagina"
 MSG_BROWSER = "Erro no navegador"
@@ -67,6 +72,8 @@ class Worker:
         session: BrowserSession,
         clock: Callable[[], float] = time.time,
         stop: threading.Event | None = None,
+        saude: Saude | None = None,
+        counter_id: int | None = None,
     ):
         self.config = config
         self.private_key = private_key
@@ -75,8 +82,17 @@ class Worker:
         self.session = session
         self.clock = clock
         self.stop = stop or threading.Event()
+        self.saude = saude or Saude(clock)
+        if counter_id is None:  # D51: o contador do dono com papel master (id 1)
+            try:
+                counter_id = store.master_counter_id()
+            except sqlite3.Error:
+                counter_id = 1
+        self.counter_id = counter_id
+        self._cargas: deque[float] = deque()  # D51: instantes das aberturas do Studio (loads_last_hour)
 
         self.channel: tuple[str, str] | None = None  # D38: (id, nome) ja gravados em channel_info
+        self._channel_reset_pending = False
         self.applied_id: int | None = None  # cookie_sets.id aplicado no navegador
         self.failed_id: int | None = None  # cookie_sets.id que nao pode ser decifrado
         self.applied_hash: str | None = None  # D37: hash (so em memoria) do conjunto aplicado/renovado
@@ -90,6 +106,7 @@ class Worker:
         self.consecutive_failures = 0  # idem, mas so zera no sucesso (vai ao worker_status)
         self.last_value: str | None = None
         self.last_success_at: int | None = None
+        self.last_open_at: float | None = None  # D47: ultima abertura do Studio (carga ou reabertura)
 
         self._saude: dict[int, list[int]] = {}  # D43: minuto -> [leituras, soma_ms, max_ms, ok, erros]
         self.state = "starting"
@@ -105,19 +122,42 @@ class Worker:
             last_success_at=self.last_success_at,
             consecutive_failures=self.consecutive_failures,
             interval_seconds=self.config.scrape_interval,
-            last_error_code=self.error_code,
+            last_error_code="config_error" if self.error_code == CODE_NO_ACCESS else self.error_code,
             last_error_message=self.error_message,
             auth_state=self.auth_state,
             cookies_applied_id=self.applied_id,
             version=__version__,
+            mem_bytes=memoria.container_memory_bytes(),
         )
 
+    def _counter_row(self) -> CounterStatusRow:
+        agora = self.clock()
+        while self._cargas and agora - self._cargas[0] > 3600:
+            self._cargas.popleft()
+        return CounterStatusRow(
+            state="paused" if self.state == "stopped" else self.state,
+            auth_state=self.auth_state,
+            last_success_at=self.last_success_at,
+            last_attempt_at=int(agora),
+            next_read_at=int(agora) + self.config.scrape_interval,
+            consecutive_failures=self.consecutive_failures,
+            last_error_code=self.error_code,
+            last_error_message=self.error_message,
+            cookies_applied_id=self.applied_id,
+            loads_last_hour=len(self._cargas),
+        )
+
+    def _write_statuses(self) -> None:
+        self.store.write_status(self._status_row())
+        self.store.write_counter_status(self.counter_id, self._counter_row())
+
     def publish(self) -> None:
-        """Grava o heartbeat/estado atual. Falha de banco e registrada e nao derruba o worker."""
+        """Grava o heartbeat geral e o estado do contador do mestre. Falha de banco e registrada e nao derruba o worker."""
         try:
-            self.store.write_status(self._status_row())
+            with self.store.transaction():
+                self._write_statuses()
         except sqlite3.Error as exc:
-            log.error("[DB] nao foi possivel gravar worker_status (%s)", type(exc).__name__)
+            log.error("[DB] nao foi possivel gravar o status (%s)", type(exc).__name__)
 
     def _set(self, state: str, code: str | None, message: str | None, auth_state: str | None = None) -> None:
         self.state = state
@@ -135,27 +175,16 @@ class Worker:
             log.warning("[DB] nao foi possivel gravar o evento (%s)", type(exc).__name__)
 
     def _saude_leitura(self, inicio: float, ok: bool) -> None:
-        """Soma a leitura no agregado do minuto e regrava a linha de `health_minutes`."""
-        ms = max(0, round((time.monotonic() - inicio) * 1000))
-        minuto = int(self.clock()) // 60 * 60
-        agregado = self._saude.setdefault(minuto, [0, 0, 0, 0, 0])
-        agregado[0] += 1
-        agregado[1] += ms
-        agregado[2] = max(agregado[2], ms)
-        agregado[3 if ok else 4] += 1
-        for velho in [m for m in self._saude if m < minuto - 60]:
-            del self._saude[velho]
-        try:
-            self.store.save_health_minute(minuto, round(agregado[1] / agregado[0]), agregado[2], agregado[3], agregado[4])
-        except sqlite3.Error as exc:
-            log.warning("[DB] nao foi possivel gravar a saude do minuto (%s)", type(exc).__name__)
+        """Soma a leitura no agregado do minuto do worker inteiro (compartilhado com o pool)."""
+        self.saude.registrar(self.store, max(0, round((time.monotonic() - inicio) * 1000)), ok)
 
-    def _amostra(self, valor: str, agora: float) -> None:
-        """Uma amostra por minuto do numero inteiro do contador (valores com ponto nao entram)."""
-        if not valor.isdigit():
+    def _amostra(self, valor: str, raw: str, agora: float) -> None:
+        """Persiste o valor inteiro por canal, inclusive contagens formatadas com separadores."""
+        inteiro = valor_inteiro(raw)
+        if inteiro is None or self.channel is None:
             return
         try:
-            self.store.save_subscriber_sample(int(agora), int(valor))
+            self.store.save_subscriber_sample(self.counter_id, self.channel[0], int(agora), inteiro)
         except sqlite3.Error as exc:
             log.warning("[DB] nao foi possivel gravar a amostra de inscritos (%s)", type(exc).__name__)
 
@@ -168,7 +197,7 @@ class Worker:
     # ------------------------------------------------------------------ cookies / carga
     def _apply_cookie_set(self, set_id: int) -> bool:
         """Decifra o conjunto `set_id`, reinjeta no navegador e recarrega o Studio. False se nao deu."""
-        row = self.store.get_cookie_set(set_id)
+        row = self.store.get_cookie_set(self.counter_id, set_id)
         if row is None:  # apagado por um upload novo entre a consulta do id e a leitura
             self.applied_id = None
             return False
@@ -187,6 +216,7 @@ class Worker:
         log.info("[COOKIES] %d cookies carregados.", len(cookies))
 
         self.publish()  # heartbeat antes da carga, que pode levar dezenas de segundos
+        self._channel_reset_pending = True
         try:
             if not self.session.started:
                 self.session.start()
@@ -201,7 +231,9 @@ class Worker:
             self._set("degraded", code, msg)
             self.publish()
             return False
-        self._gravar_canal()
+        self._gravar_canal()  # sem identidade, o ciclo abaixo reporta login/permissao sem ler dado antigo
+        self.last_open_at = self.clock()
+        self._cargas.append(self.last_open_at)
         self.applied_id = set_id
         self.applied_hash = impressao(filtrar_sessao(cookies, self.hosts_sessao))
         self.last_renewal_at = _epoch(row.created_at) if row.source == "worker" else None
@@ -221,6 +253,20 @@ class Worker:
             self._reopen_studio(self.applied_id)
         self.falhas = 0  # como no original, zera mesmo se a recarga falhar
 
+    def _recarga_periodica(self, set_id: int) -> None:
+        """D47: o `yta-smooth-counter` do Studio so anima para cima; uma queda de inscritos (ou a troca para um canal
+        com menos inscritos) nao aparece numa pagina ja aberta. Reabre o Studio a cada `reload_interval` s (cookies
+        vivos, D37) e a leitura seguinte pega o numero real."""
+        intervalo = self.config.reload_interval
+        agora = self.clock()
+        if self.last_open_at is None:
+            self.last_open_at = agora
+            return
+        if intervalo <= 0 or agora - self.last_open_at < intervalo:
+            return
+        log.info("[RELOAD] %d s desde a ultima abertura - reabrindo o Studio para ler o valor real", intervalo)
+        self._reopen_studio(set_id)
+
     def _reopen_studio(self, set_id: int) -> None:
         """D37: reabre o Studio mantendo os cookies VIVOS do contexto (nunca reinjeta o conjunto colado).
 
@@ -228,6 +274,8 @@ class Worker:
         e injetado de novo.
         """
         self.publish()  # heartbeat antes da carga, que pode levar dezenas de segundos
+        self.last_open_at = self.clock()
+        self._cargas.append(self.last_open_at)
         try:
             if self.session.reload_studio():
                 self.studio_stale = False
@@ -240,7 +288,7 @@ class Worker:
             self.publish()
             return
         log.warning("[BROWSER] contexto recriado - reinjetando os cookies do banco")
-        latest = self.store.latest_cookie_set_id()
+        latest = self.store.latest_cookie_set_id(self.counter_id)
         self._apply_cookie_set(latest if latest is not None else set_id)
 
     # ------------------------------------------------------------------ um ciclo
@@ -253,21 +301,28 @@ class Worker:
             self._set("degraded", "db_error", MSG_DB)
             self.publish()
 
-    def _gravar_canal(self) -> None:
-        """D38: grava em `channel_info` o canal detectado pelo redirect do Studio (UPSERT, so se mudou)."""
+    def _gravar_canal(self) -> bool:
+        """Identifica primeiro o canal; só então limpa o estado anterior e restaura o histórico correspondente."""
         detectado = self.session.channel
-        if detectado is None or detectado == self.channel:
-            return
+        if detectado is None:
+            return False
+        mudou = detectado[0] != (self.channel[0] if self.channel else None)
+        if not mudou and not self._channel_reset_pending:
+            return True
         try:
-            self.store.save_channel_info(detectado[0], detectado[1], iso_utc(self.clock()))
+            restaurado = self.store.activate_channel(self.counter_id, detectado[0], detectado[1], iso_utc(self.clock()))
         except sqlite3.Error as exc:
             log.error("[DB] nao foi possivel gravar o canal detectado (%s)", type(exc).__name__)
-            return
+            return False
         self.channel = detectado
-        log.info("[CANAL] canal gravado em channel_info")
+        self.last_value = None if restaurado is None else str(restaurado[1])
+        self.last_success_at = None if restaurado is None else restaurado[0]
+        self._channel_reset_pending = False
+        log.info("[CANAL] %s; estado anterior limpo e historico do canal restaurado", "canal atualizado" if mudou else "cookies reaplicados")
+        return True
 
     def _step(self) -> None:
-        set_id = self.store.latest_cookie_set_id()
+        set_id = self.store.latest_cookie_set_id(self.counter_id)
         if set_id is None:
             self.applied_id = None
             self.failed_id = None
@@ -275,6 +330,12 @@ class Worker:
             self.publish()
             log.warning("[COOKIES] nenhum conjunto de cookies no banco")
             return
+
+        override = self.store.get_channel_override(self.counter_id)
+        if override != self.session.channel_override:  # D54: o dono escolheu (ou soltou) o canal: reabre o Studio nele
+            self.session.channel_override = override
+            if self.applied_id is not None:
+                self.studio_stale = True
 
         if set_id == self.failed_id:
             self.publish()  # mesmo conjunto que ja falhou: o estado de erro segue valendo
@@ -289,6 +350,17 @@ class Worker:
             if self.studio_stale or self.applied_id != set_id:  # falhou ou reinjetou outro conjunto: proximo ciclo
                 return
 
+        self._recarga_periodica(set_id)
+        if self.studio_stale or self.applied_id != set_id:
+            return
+
+        if self.session.channel is None and is_login_url(self.session.current_url()):
+            self._read_and_store()  # preserva o estado login_required e nunca grava a pagina de login
+            return
+        if self.session.channel is None or self.channel is None:
+            self._set("degraded", "config_error", MSG_NO_PERMISSION, "ok")
+            self.publish()
+            return
         self._read_and_store()
 
         if self.falhas >= MAX_FALHAS:
@@ -321,7 +393,10 @@ class Worker:
             self.falhas += 1
             self.consecutive_failures += 1
             self._saude_leitura(inicio, ok=False)
-            self._set("error", "config_error", MSG_NO_PERMISSION, "ok")
+            if self.session.channel_override is not None:  # D54: o canal foi escolhido pelo dono e a conta nao tem acesso a ele
+                self._set("error", CODE_NO_ACCESS, MSG_NO_ACCESS, "ok")
+            else:
+                self._set("error", "config_error", MSG_NO_PERMISSION, "ok")
             self.publish()
             return
 
@@ -347,8 +422,8 @@ class Worker:
         self._set("ok", None, None, "ok")
         try:
             with self.store.transaction():
-                self.store.save_reading(valor, raw, iso_utc(agora))
-                self.store.write_status(self._status_row())
+                self.store.save_reading(self.counter_id, valor, raw, iso_utc(agora))
+                self._write_statuses()
         except sqlite3.Error:
             self.last_success_at = anterior
             raise
@@ -356,7 +431,7 @@ class Worker:
             log.info("[MUDANCA] %s -> %s", self.last_value, valor)
             self.last_value = valor
         self._saude_leitura(inicio, ok=True)
-        self._amostra(valor, agora)
+        self._amostra(valor, raw, agora)
         if voltou:
             self._evento("ok", "recovered", MSG_EV_VOLTOU)
         self._maybe_renew()
@@ -385,7 +460,12 @@ class Worker:
             return
         try:
             novo_id = self.store.renew_cookie_set(
-                cifrar_cookies(atuais, self.public_key), key_id(self.private_key), len(atuais), self.applied_id, iso_utc(agora)
+                self.counter_id,
+                cifrar_cookies(atuais, self.public_key),
+                key_id(self.private_key),
+                len(atuais),
+                self.applied_id,
+                iso_utc(agora),
             )
         except sqlite3.Error as exc:
             log.error("[DB] nao foi possivel gravar a sessao renovada (%s)", type(exc).__name__)
@@ -433,6 +513,7 @@ def criar_worker(
     stop: threading.Event | None = None,
     timings: Timings | None = None,
     clock: Callable[[], float] = time.time,
+    saude: Saude | None = None,
 ) -> Worker:
     """Monta o worker (conexao ao banco + navegador ainda nao lancado). Usado por `__main__`.
 
@@ -448,4 +529,4 @@ def criar_worker(
         stop=stop,
         debug_dir=config.debug_dir if config.debug_screenshot else None,
     )
-    return Worker(config, private_key, public_key, store, session, clock=clock, stop=stop)
+    return Worker(config, private_key, public_key, store, session, clock=clock, stop=stop, saude=saude)

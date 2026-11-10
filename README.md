@@ -16,11 +16,13 @@ Estatísticas de lives do **YouTube**, da **Twitch** e do **Kick** reunidas em c
 2. [Instalação](#instalação)
 3. [Primeiro acesso](#primeiro-acesso)
 4. [Telas do painel](#telas-do-painel)
-5. [Endereços públicos](#endereços-públicos)
-6. [Usar no OBS e no vMix](#usar-no-obs-e-no-vmix)
-7. [Atualizar, backup e voltar versão](#atualizar-backup-e-voltar-versão)
-8. [Problemas comuns](#problemas-comuns)
-9. [Segurança](#segurança)
+5. [Usuários e painel mestre](#usuários-e-painel-mestre)
+6. [Acessar o painel de fora da rede](#acessar-o-painel-de-fora-da-rede)
+7. [Endereços públicos](#endereços-públicos)
+8. [Usar no OBS e no vMix](#usar-no-obs-e-no-vmix)
+9. [Atualizar, backup e voltar versão](#atualizar-backup-e-voltar-versão)
+10. [Problemas comuns](#problemas-comuns)
+11. [Segurança](#segurança)
 
 ## Requisitos
 
@@ -47,7 +49,7 @@ Troque `192.168.0.10` pelo IP do servidor e `meu-usuario-ssh` pelo usuário com 
 1. **Usuário com acesso ao Docker.** O usuário do SSH precisa falar com o Docker. Se o instalador reclamar disso, rode uma vez no servidor `sudo usermod -aG docker SEU-USUARIO` e entre de novo.
 2. **(Opcional) Preflight.** `bash deploy/enviar.sh preflight --host IP --user USUARIO` só faz leitura: confere Docker, espaço em disco, portas 8080/8081 livres e se há Nginx Proxy Manager ou cloudflared no servidor. O próprio `instalar` já roda essa checagem antes de mudar qualquer coisa.
 3. **Instalar.** Rode o comando acima. Ele pergunta, sem mostrar na tela:
-   - a **senha do painel** (mínimo de 12 caracteres, digitada duas vezes). Ela nunca é gravada: o servidor guarda só o hash;
+   - a **senha do painel** (mínimo de 8 caracteres, digitada duas vezes). Ela nunca é gravada: o servidor guarda só o hash;
    - a **senha do SSH** do servidor (uma única vez).
 
    O instalador então cria a pasta `/DATA/AppData/livestats` no servidor, escreve o `.env`, constrói as imagens (a primeira vez leva alguns minutos), gera os segredos (chaves dos cookies, hash da senha e certificado HTTPS autoassinado do painel) e sobe os quatro serviços, esperando todos ficarem saudáveis. No fim ele testa os endereços e mostra o endereço do painel.
@@ -61,6 +63,10 @@ Opções do `instalar`:
 | `--admin-user NOME` | Usuário do painel (padrão `admin`) |
 | `--admin-allow "REDES"` | Quem pode abrir o painel na porta 8081, em IPv4/CIDR separados por espaço (padrão `192.168.0.0/16 100.64.0.0/10`: rede local e Tailscale) |
 | `--public-base-url URL` | Endereço público usado nos links que o painel mostra e copia (ex.: `https://live.exemplo.com`) |
+| `--admin-externo` | Liga o acesso ao painel de fora da rede (veja [Acessar o painel de fora da rede](#acessar-o-painel-de-fora-da-rede)). Exige `--admin-trusted-proxy` (ou o IP já gravado pelo `conectar-npm`); sem ele o instalador recusa. `--admin-interno` desliga |
+| `--admin-trusted-proxy IP` | IP fixo do Nginx Proxy Manager na rede do LiveStats (ex.: `172.29.80.11`) |
+| `--public-admin-url URL` | Endereço externo do painel, mostrado na tela Conta (ex.: `https://painel.exemplo.com`) |
+| `--master-allow "REDES"` | Só estas redes (IPv4/CIDR) podem entrar como mestre e usar as telas do mestre. Vazio = sem filtro |
 | `--extra-san IP` | Inclui outro IP (por exemplo o do Tailscale) no certificado do painel; pode repetir |
 | `--conectar-npm [NOME]` | Já liga o Nginx Proxy Manager à rede do LiveStats (veja a opção A abaixo) |
 | `--sem-segredos` | Reinstalar ou atualizar sem pedir a senha de novo (os segredos já existem) |
@@ -155,6 +161,7 @@ A tela **Contador e cookies** controla o contador de inscritos do canal do YouTu
 
 - o cartão do canal mostra o nome (descoberto sozinho pelos cookies), o número atual, o ganho dos últimos 7 dias e o de hoje;
 - em **Cookies do Studio**, cole o JSON exportado do seu navegador (extensão EditThisCookie, logado no YouTube Studio do canal) e clique em **Salvar cookies**. Eles ficam cifrados e só o serviço que lê o contador consegue abri-los; o painel nunca os mostra de volta. Quando a sessão é renovada pelo próprio serviço, o painel avisa. Só YouTube, um canal;
+- em **Canal para ler (opcional)**, escolha qual canal da conta o contador acompanha. Por padrão é o canal que o YouTube Studio abre sozinho com os seus cookies; se a conta tem mais de um canal (por exemplo um pessoal e outro da marca), cole o link do Studio do canal desejado (`studio.youtube.com/channel/UC...`) ou só o ID (`UC...`) e clique em **Salvar canal**. O painel mostra o canal que está sendo lido e o selo **canal escolhido**; **Usar o canal automático** volta ao padrão. A conta dos cookies precisa ter acesso ao canal: senão o contador mostra o erro "A conta dos cookies não tem acesso a este canal". Trocar de canal não apaga o histórico do canal anterior. Canais com menos de 10 inscritos ainda não aparecem (o formato público exige 2 dígitos ou mais);
 - em **Aparência do contador**, escolha a fonte e a cor do texto, com prévia, e clique em **Salvar aparência**;
 - os **links do contador** (overlay `/contador`, JSON de inscritos e JSON com a aparência) ficam no fim da tela, com **Copiar**.
 
@@ -166,9 +173,48 @@ Mostra se está tudo funcionando: o estado de cada serviço (leitura das lives, 
 
 ### No celular
 
-<img src="docs/imagens/menu-celular.png" alt="Menu lateral no celular" width="300">
+No celular, as abas ficam numa barra fixa embaixo da tela; no computador, no cabeçalho. Todas as telas funcionam no celular, desde que ele esteja na rede local, na VPN ou (com o acesso externo ligado) no endereço do painel.
 
-Em telas estreitas a barra lateral vira uma gaveta, aberta pelo botão de menu no canto superior. Todas as telas funcionam no celular, desde que ele esteja na rede local ou na VPN.
+## Usuários e painel mestre
+
+O painel aceita vários usuários, cada um com seus próprios conjuntos, lives e contador de inscritos. Não existe cadastro aberto: só o **mestre** (o usuário criado na instalação) cria contas.
+
+- **Criar um usuário:** no painel, aba **Mestre › Usuários**, **Novo usuário**. O LiveStats gera uma **senha provisória** de 16 caracteres, mostrada uma única vez (use **Copiar** e envie por um canal seguro). No primeiro acesso a pessoa é obrigada a trocar a senha (mínimo de 8 caracteres).
+- **Limites por usuário:** quantidade de conjuntos e de lives e se ele tem contador de inscritos. Existe ainda um teto geral (`MAX_SETS_TOTAL`, padrão 200, e `MAX_LIVES_TOTAL`, padrão 1000, no `.env`).
+- **Cada um enxerga só o que é seu.** O mestre vê o uso de cada conta, a atividade recente (entradas, trocas de senha, contas e conjuntos criados ou apagados), pode redefinir a senha, suspender, limpar os dados ou apagar a conta (digitando o nome dela para confirmar) e abrir os dados de qualquer usuário para editar. A tela **Saúde** é só do mestre.
+- **Limpar meus dados:** na aba **Conta**, em **Zona de risco**, **Limpar meus dados** apaga os seus conjuntos, lives, contador, cookies e leituras (você digita o seu nome de usuário para confirmar). A conta, a senha e os limites continuam. O mestre pode fazer o mesmo com os próprios dados.
+- **Contador por usuário:** cada conta com contador tem os próprios cookies do Studio, aparência e links. O do mestre continua em `/contador`, `/inscritos.json` e `/api/public/subscribers`; o dos outros usuários é lido por id (veja [Endereços públicos](#endereços-públicos)).
+- **Restringir o mestre:** com `MASTER_ALLOW_CIDRS` no `.env` (ou `--master-allow` no `instalar`), o login do mestre e as telas do mestre só funcionam a partir dessas redes.
+
+## Acessar o painel de fora da rede
+
+Por padrão o painel só abre na rede local ou na VPN. Para abri-lo de qualquer lugar, em `https://painel.seudominio.com`, use o mesmo Nginx Proxy Manager (NPM) e o mesmo túnel do Cloudflare que já publicam os overlays. O painel continua protegido por HTTPS, senha, token CSRF e limite de tentativas; o que muda é que a lista de IPs deixa de valer.
+
+1. **Ligue o NPM à rede do LiveStats e ligue o acesso externo.** Um comando só (o IP fixo do NPM aqui é um exemplo):
+
+   ```sh
+   bash deploy/enviar.sh instalar --host 192.168.0.10 --user meu-usuario-ssh --sem-segredos --skip-build \
+     --admin-externo --admin-trusted-proxy 172.29.80.11 --public-admin-url https://painel.seudominio.com --conectar-npm
+   ```
+
+   Sem `--admin-trusted-proxy` (ou um IP já gravado por `conectar-npm`) o instalador **recusa** a opção, e o servidor do painel também não sobe: sem saber qual é o proxy, o LiveStats não conhece o IP real de quem entra e o limite de tentativas valeria para todos juntos. Se o ZimaOS recriar o container do NPM, rode `bash deploy/enviar.sh conectar-npm --host IP --user USUARIO` de novo.
+2. **Crie o *Proxy Host* no NPM.** O `conectar-npm` imprime estes passos com os seus valores reais:
+   - *Domain Names:* `painel.seudominio.com`;
+   - *Scheme:* **https**; *Forward Hostname / IP:* **`172.29.80.2`** (o IP fixo do web na rede do LiveStats, variável `WEB_EDGE_IP`; **não use o nome `livestats-web`**: o Nginx do NPM não resolve nomes do Docker e responde 502; também **não use o IP do servidor** (`192.168.x.x`), pois assim a conexão não vem do NPM e o limite de logins vira um só para todos); *Forward Port:* **8081**;
+   - o certificado interno do painel é autoassinado e o NPM não o valida, então não há nada a configurar nesse ponto;
+   - *Websockets Support:* não é necessário;
+   - aba **SSL:** escolha o certificado do domínio (ou emita um com a Let’s Encrypt) e ligue *Force SSL*;
+   - cabeçalhos: o NPM já envia `X-Forwarded-For`; não o desligue. O painel só confia no cabeçalho do IP quando a conexão vem do IP fixo do NPM. Pelo túnel do Cloudflare o último salto de `X-Forwarded-For` é só o do túnel; use então `--admin-real-ip-header CF-Connecting-IP` (variável `ADMIN_REAL_IP_HEADER`; aceita `X-Forwarded-For`, o padrão, `CF-Connecting-IP` ou `X-Real-IP`; outro valor impede o painel de subir), para o limite de login e o bloqueio por tentativas valerem por visitante.
+3. **Túnel do Cloudflare:** em *Zero Trust › Tunnels*, no mesmo túnel do site, adicione o *Public Hostname* `painel.seudominio.com` com o mesmo serviço do hostname do site (o NPM). Para o limite de login valer por pessoa (e não pelo túnel inteiro), na aba **Advanced** do *Proxy Host* cole `real_ip_header CF-Connecting-IP;` e `set_real_ip_from IP-DO-CLOUDFLARED;` (o `conectar-npm` imprime o IP quando encontra o container).
+4. **Confira:** `bash deploy/enviar.sh status --host IP --user USUARIO` mostra se o acesso externo está ligado e avisa se falta o IP do proxy.
+
+Cuidados ao abrir o painel para a internet:
+
+- **Use uma senha forte e única** (8 caracteres no mínimo, mas prefira uma frase longa). É ela que protege o painel agora, não a lista de IPs.
+- **Só o mestre cria usuários:** não há cadastro aberto. Dê senhas provisórias por um canal seguro e apague ou suspenda contas que não usa mais.
+- **Limite do mestre:** defina `MASTER_ALLOW_CIDRS` (por exemplo só a sua rede e a VPN) para que o login do mestre e as telas do mestre não funcionem de fora, mesmo com o painel aberto.
+- O login tem limite de **5 tentativas por minuto por IP**, e o bloqueio por tentativas erradas vale por IP e por usuário.
+- Para voltar ao modo só-rede-local: `instalar --admin-interno --sem-segredos --skip-build` (a lista `--admin-allow` volta a valer).
 
 ## Endereços públicos
 
@@ -182,9 +228,11 @@ Estes endereços **não pedem login**, podem ser usados direto no OBS, no vMix o
 | `/overlay/live.html?live={id}&metrica=views` | Overlay de espectadores de uma live |
 | `/overlay/live.html?conjunto={id}&metrica=likes` | Overlay de likes e meta do conjunto |
 | `/overlay/live.html?conjunto={id}&metrica=views` | Overlay de espectadores do conjunto |
-| `/inscritos.json` | Inscritos do canal (formato fixo, simples de usar) |
+| `/inscritos.json` | Inscritos do canal do mestre (formato fixo, simples de usar) |
 | `/api/public/subscribers` | O mesmo, acrescido de `font` e `text_color` do contador |
-| `/contador` | Overlay animado do contador de inscritos |
+| `/contador` | Overlay animado do contador de inscritos do mestre |
+| `/inscritos/{id}.json` | Inscritos do contador de um usuário (também em `/api/public/subscribers/{id}`); `{id}` é o número do contador, que aparece nos links da tela Contador |
+| `/contador?contador={id}` | Overlay animado do contador de um usuário (sem o parâmetro, o do mestre) |
 | `/health` | Estado resumido do servidor |
 
 O `{id}` de cada live e conjunto aparece nos links do painel (use o botão **Copiar**).
@@ -307,6 +355,7 @@ Guarde o `secrets-backup.tgz` em lugar protegido: ele tem as chaves dos cookies.
 | O painel dá **403** na porta 8081 | O IP do seu computador não está em `--admin-allow` (variável `ADMIN_ALLOW_CIDRS` do `.env`). Ajuste e rode `docker compose up -d web` na pasta de instalação |
 | O navegador não confia no certificado do painel | É esperado (autoassinado). Aceite uma vez. Se o IP do servidor mudou, rode `instalar --renew-tls --sem-segredos` com o IP novo |
 | O `web` não sobe e o registro fala em certificado ou chave | Falta ou há permissão errada em `secrets/admin_tls_*.pem` (devem ser `644`). Rode `instalar --renew-tls --sem-segredos` |
+| O contador lê o canal errado (por exemplo o pessoal, e mostra "Contador nao encontrado na pagina") | Em **Contador**, preencha **Canal para ler** com o link do Studio ou o ID do canal certo e salve |
 | O contador de inscritos não atualiza e a tela mostra aviso de cookies | A sessão do Studio venceu ou os cookies são de outra conta. Exporte os cookies de novo, logado no canal certo, e cole em **Contador e cookies** |
 | A live fica "aguardando" ou "erro" | Confira o link (deve ser da transmissão ao vivo, não do canal) e a tela **Saúde**: ela mostra o motivo e o tempo de resposta. O Kick às vezes exige o navegador interno (`KICK_BROWSER=1`, o padrão) |
 | O endereço público dá **502** logo depois de `conectar-npm` | O NPM guardou o DNS de antes de entrar na rede do LiveStats. Reinicie o container do NPM (`docker restart nginxproxymanager`) |
@@ -319,7 +368,8 @@ Para ver o que está acontecendo: `bash deploy/enviar.sh status --host IP --user
 
 ## Segurança
 
-- O painel só responde na porta 8081, com HTTPS próprio, e só para as redes da lista `--admin-allow`. Nunca o publique na internet.
+- O painel só responde na porta 8081, com HTTPS próprio, e só para as redes da lista `--admin-allow`. Nunca publique a porta 8081 diretamente na internet; para acessar de fora use o Nginx Proxy Manager, como descrito em [Acessar o painel de fora da rede](#acessar-o-painel-de-fora-da-rede) (que exige senha forte e um proxy confiável).
+- Só o mestre cria contas; cada usuário enxerga apenas os próprios dados, e o login do mestre pode ser restrito a certas redes (`MASTER_ALLOW_CIDRS`).
 - A senha do painel nunca é gravada, só o hash (argon2id). O login limita tentativas e protege as ações com token CSRF.
 - Os cookies do YouTube Studio são cifrados com uma chave pública; só o serviço do contador tem a chave privada. Trate esses cookies como uma senha da sua conta.
 - Os segredos ficam em arquivos na pasta `secrets/` do servidor, montados como Docker secrets só no serviço que precisa, e nunca em variáveis de ambiente nem no Git.

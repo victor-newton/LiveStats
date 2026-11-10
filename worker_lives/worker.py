@@ -22,7 +22,7 @@ from dataclasses import dataclass, replace
 
 import httpx
 
-from worker_lives import __version__, db
+from worker_lives import __version__, db, memoria
 from worker_lives.clock import Clock
 from worker_lives.config import Config
 from worker_lives.leitores import Leitura, LeituraErro, NavegadorKick, ler, novo_cliente
@@ -338,6 +338,7 @@ class Worker:
             last_error_code=erro.code if erro else None,
             last_error_message=erro.message if erro else None,
             version=__version__,
+            mem_bytes=memoria.container_memory_bytes(),
         )
 
     def _on_db_error(self, exc: sqlite3.OperationalError) -> None:

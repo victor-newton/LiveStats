@@ -71,6 +71,13 @@ services:
       # Lista de permissao da 8081 (D33): IPv4 ou IPv4/N (N de 8 a 32) separados por espaco; o resto recebe 403.
       # Padrao 127.0.0.1/32. A 8081 nao confia em nenhum cabecalho de IP. 0.0.0.0/0, texto e IPv6 abortam a subida.
       ADMIN_ALLOW_CIDRS: ${ADMIN_ALLOW_CIDRS:-127.0.0.1/32}
+      # Acesso externo ao painel (D49), padrao 0. Com 1 a 8081 NAO aplica ADMIN_ALLOW_CIDRS, exige ADMIN_TRUSTED_PROXY_IP
+      # (IP fixo /32 do Nginx Proxy Manager na rede edge; sem ele o web nao sobe), usa o ultimo salto de X-Forwarded-For
+      # como IP do cliente e limita o login a 5/min por IP. Nao e segredo.
+      ADMIN_EXTERNAL_ACCESS: ${ADMIN_EXTERNAL_ACCESS:-0}
+      ADMIN_TRUSTED_PROXY_IP: ${ADMIN_TRUSTED_PROXY_IP:-}
+      # Cabecalho com o IP do cliente, valido so vindo de ADMIN_TRUSTED_PROXY_IP: X-Forwarded-For (padrao), CF-Connecting-IP (tunel Cloudflare) ou X-Real-IP.
+      ADMIN_REAL_IP_HEADER: ${ADMIN_REAL_IP_HEADER:-X-Forwarded-For}
     ports:
       - "8080:8080"                     # publica (Cloudflare Tunnel aponta aqui). Sem rota de admin.
       # admin (D33): HTTPS proprio na 8081 (certificado autoassinado nos secrets admin_tls_cert/admin_tls_key) e
@@ -86,6 +93,14 @@ services:
           description:
             en_us: Space-separated IPv4/CIDR allow list for the HTTPS admin port 8081 (default 127.0.0.1/32).
             pt_br: Lista de IPv4/CIDR (separados por espaco) permitidos na porta HTTPS do admin 8081 (padrao 127.0.0.1/32).
+        - container: ADMIN_EXTERNAL_ACCESS
+          description:
+            en_us: 1 = panel reachable from outside through a trusted proxy (needs ADMIN_TRUSTED_PROXY_IP); the IP allow list is not applied (default 0).
+            pt_br: 1 = painel acessivel de fora por um proxy confiavel (exige ADMIN_TRUSTED_PROXY_IP); a lista de IPs nao se aplica (padrao 0).
+        - container: ADMIN_TRUSTED_PROXY_IP
+          description:
+            en_us: Fixed /32 IP of the Nginx Proxy Manager on the edge network (required when ADMIN_EXTERNAL_ACCESS=1).
+            pt_br: IP fixo /32 do Nginx Proxy Manager na rede edge (obrigatorio com ADMIN_EXTERNAL_ACCESS=1).
       ports:
         - container: "8080"
           description:
@@ -99,8 +114,11 @@ services:
       - admin_tls_cert                  # certificado autoassinado da 8081 (so o web; sem ele o web nao sobe)
       - admin_tls_key
     networks:
-      - edge                            # onde as portas sao publicadas
-      - internal                        # fala com a api
+      edge:                             # onde as portas sao publicadas
+        # IP FIXO do web na rede edge: o nginx do NPM resolve nomes por DNS proprio (nao o do Docker), entao
+        # "livestats-web" nao funciona como destino do NPM; use este IP. Tem de ser livre e fora do .0/.1/.255.
+        ipv4_address: ${WEB_EDGE_IP:-172.29.80.2}
+      internal: {}                      # fala com a api
     tmpfs:
       - /tmp:size=16m,mode=1777
       - /var/cache/nginx:size=64m,uid=101,gid=101
@@ -126,8 +144,16 @@ services:
       ADMIN_DB_PATH: /admin-state/admin.db     # sessoes e tentativas de login: volume SO da api
       ADMIN_USERNAME: ${ADMIN_USERNAME:?defina ADMIN_USERNAME no .env}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}          # so para exibir as URLs no painel (ex.: https://live.exemplo.com)
+      PUBLIC_ADMIN_URL: ${PUBLIC_ADMIN_URL:-}        # endereco externo do painel, mostrado na tela Conta (D49)
+      MASTER_ALLOW_CIDRS: ${MASTER_ALLOW_CIDRS:-}    # opcional: IPv4/CIDR que podem logar como mestre e usar /api/admin/master (D48)
+      MAX_SETS_TOTAL: ${MAX_SETS_TOTAL:-200}         # tetos gerais do sistema (D50)
+      MAX_LIVES_TOTAL: ${MAX_LIVES_TOTAL:-1000}
+      USER_POOL_SIZE: ${USER_POOL_SIZE:-1}           # so para o painel mestre exibir o pool (o worker-inscritos usa o mesmo valor; D51)
+      USER_COUNTER_INTERVAL: ${USER_COUNTER_INTERVAL:-60}
+      LIVE_INTERVAL: ${LIVE_INTERVAL:-10}            # para estimar leituras por minuto no painel mestre
       COOKIE_PUBLIC_KEY_FILE: /run/secrets/cookie_public_key
       ADMIN_PASSWORD_HASH_FILE: /run/secrets/admin_password_hash
+      ADMIN_EXTERNAL_ACCESS: ${ADMIN_EXTERNAL_ACCESS:-0}   # D49: com 1 o bloqueio por tentativas vale por IP e por usuario
     secrets:
       - cookie_public_key               # SOMENTE a chave publica: a api cifra, nao decifra
       - admin_password_hash
@@ -197,6 +223,10 @@ services:
       COOKIE_PRIVATE_KEY_FILE: /run/secrets/cookie_private_key
       COOKIE_PUBLIC_KEY_FILE: /run/secrets/cookie_public_key   # D37: so cifra a sessao renovada
       SCRAPE_INTERVAL: ${SCRAPE_INTERVAL:-10}
+      STUDIO_RELOAD_INTERVAL: ${STUDIO_RELOAD_INTERVAL:-60}   # D47: reabre o Studio a cada N s (0 desliga) e le quedas
+      USER_POOL_SIZE: ${USER_POOL_SIZE:-1}                    # D51: paginas do pool dos contadores de usuario (0 desliga)
+      USER_COUNTER_INTERVAL: ${USER_COUNTER_INTERVAL:-60}     # D51: segundos entre leituras de cada contador de usuario (30 a 3600)
+      MAX_USER_COUNTERS: ${MAX_USER_COUNTERS:-20}             # D51: contadores de usuario ativos ao mesmo tempo
       DEBUG_SCREENSHOT: ${DEBUG_SCREENSHOT:-0}   # 1 grava print em /tmp/debug (tmpfs); nunca em /data
       HOME: /home/app
     secrets:

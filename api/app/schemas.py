@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from .fonts import FONTS
 from .platforms import detect
@@ -121,19 +132,127 @@ class LiveUpdate(_Partial):
         return self
 
 
-class SettingsWrite(BaseModel):
-    """Qualquer subconjunto (nao vazio) de fonte e cor do contador de inscritos. O canal e detectado (D38)."""
+_CHANNEL_ID_FULL = re.compile(r"UC[A-Za-z0-9_-]{22}")
+_CHANNEL_IN_PATH = re.compile(r"/channel/(UC[A-Za-z0-9_-]{22})(?:/|$)")
+_YOUTUBE_HOSTS = ("youtube.com", "www.youtube.com", "m.youtube.com", "studio.youtube.com")
+
+
+def channel_id_from_text(value: str) -> str | None:
+    """D54: ID ``UC...`` de um ID puro ou de uma URL do YouTube/Studio com ``/channel/UC...``; vazio -> None (limpa). Sem rede."""
+    text = value.strip()
+    if not text:
+        return None
+    if _CONTROL.search(text):
+        raise ValueError("Caracteres de controle nao sao permitidos")
+    if _CHANNEL_ID_FULL.fullmatch(text):
+        return text
+    try:
+        parts = urlsplit(text if "://" in text else f"//{text}")
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        raise ValueError("Canal invalido: informe o ID (UC...) ou o link do Studio do canal") from None
+    found = _CHANNEL_IN_PATH.search(parts.path) if host in _YOUTUBE_HOSTS else None
+    if found is None:
+        raise ValueError("Canal invalido: informe o ID (UC...) ou o link do Studio do canal")
+    return found.group(1)
+
+
+class CounterWrite(BaseModel):
+    """Qualquer subconjunto (nao vazio) de fonte, cor e canal do contador do usuario.
+
+    ``channel_id`` (D54) e o ID ``UC...`` ou um link do Studio/YouTube com ``/channel/UC...``; ``null`` ou vazio volta a
+    deteccao automatica pelos cookies. Nada e validado no YouTube.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    subs_font: Font = None  # type: ignore[assignment]
-    subs_text_color: TextColor = None  # type: ignore[assignment]
+    font: Font = None  # type: ignore[assignment]
+    text_color: TextColor = None  # type: ignore[assignment]
+    channel_id: Annotated[StrictStr, Field(max_length=2048)] | None = None
+
+    @field_validator("channel_id", mode="after")
+    @classmethod
+    def _channel(cls, value: str | None) -> str | None:
+        return None if value is None else channel_id_from_text(value)
 
     @model_validator(mode="after")
-    def _at_least_one(self) -> "SettingsWrite":
-        if all(getattr(self, name) is None for name in ("subs_font", "subs_text_color")):
+    def _at_least_one(self) -> "CounterWrite":
+        if not self.model_fields_set:
             raise ValueError("Informe ao menos um campo")
+        if any(getattr(self, name) is None for name in self.model_fields_set - {"channel_id"}):
+            raise ValueError("Valor nulo nao e permitido")
         return self
+
+
+# ---------------------------------------------------------------------------- v4: usuarios (D48, D52)
+def _check_username(value: str) -> str:
+    text = value.strip().lower()
+    if _USERNAME.fullmatch(text) is None:
+        raise ValueError("Use de 3 a 32 caracteres: letras minusculas, digitos, '.', '_' ou '-'")
+    return text
+
+
+def _check_display_name(value: str) -> str:
+    text = _check_text(value)
+    if len(text) > 60:
+        raise ValueError("Use no maximo 60 caracteres")
+    return text
+
+
+_USERNAME = re.compile(r"[a-z0-9._-]{3,32}")
+Username = Annotated[StrictStr, Field(max_length=64), AfterValidator(_check_username)]
+DisplayName = Annotated[StrictStr, Field(max_length=200), AfterValidator(_check_display_name)]
+MaxSets = Annotated[StrictInt, Field(ge=0, le=1000)]
+MaxLives = Annotated[StrictInt, Field(ge=0, le=10000)]
+
+
+class PasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current: Annotated[StrictStr, Field(min_length=1, max_length=1024)]
+    new: Annotated[StrictStr, Field(min_length=1, max_length=1024)]
+
+
+class MeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: DisplayName
+
+
+class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: Username
+    display_name: DisplayName = ""
+    max_sets: MaxSets = 5
+    max_lives: MaxLives = 20
+    has_counter: StrictBool = True
+
+
+class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: DisplayName = None  # type: ignore[assignment]
+    status: Literal["active", "suspended"] = None  # type: ignore[assignment]
+    max_sets: MaxSets = None  # type: ignore[assignment]
+    max_lives: MaxLives = None  # type: ignore[assignment]
+    has_counter: StrictBool = None  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "UserUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Informe ao menos um campo")
+        if any(getattr(self, name) is None for name in self.model_fields_set):
+            raise ValueError("Valor nulo nao e permitido")
+        return self
+
+
+class ConfirmBody(BaseModel):
+    """Purge e exclusao de conta: o nome de usuario digitado de novo."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: Annotated[StrictStr, Field(max_length=64)]
 
 
 def sanitize_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:

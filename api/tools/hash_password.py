@@ -15,7 +15,7 @@ import sys
 
 from argon2 import PasswordHasher
 
-MIN_LENGTH = 12
+MIN_LENGTH = 8
 
 
 def read_password() -> str:

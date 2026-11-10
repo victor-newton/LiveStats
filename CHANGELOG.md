@@ -2,6 +2,26 @@
 
 Todas as mudanças relevantes do LiveStats ficam neste arquivo. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [3.0.0] - 2026-11-10
+
+### Adicionado
+
+- **Vários usuários**: o mestre cria usuários (senha provisória com troca obrigatória no primeiro acesso), define limites de conjuntos e lives por usuário, suspende, redefine senha e apaga. Cada usuário vê só os próprios dados e tem o próprio contador de inscritos (`/inscritos/{id}.json`, `/api/public/subscribers/{id}`, `/overlay/contador.html?contador={id}`).
+- **Aba Mestre** (usuários, dados de cada usuário, atividade e uso) e **Saúde** com a memória usada por cada serviço; "Limpar meus dados" para todos.
+- **Acesso externo ao painel** opcional (`ADMIN_EXTERNAL_ACCESS`) atrás do Nginx Proxy Manager, com IP real do visitante (`ADMIN_REAL_IP_HEADER`) e limite de 5 logins por minuto por pessoa; o web tem IP fixo na rede de borda (`WEB_EDGE_IP`).
+- **Contador de inscritos**: escolha do canal a ler (ID ou link do Studio) quando a conta dos cookies tem mais de um canal, estatísticas (ganho, quedas) e cartão "Conectando" enquanto a sessão do Studio é reaberta.
+- **Painel novo**: navegação por abas (cabeçalho no desktop, barra inferior no celular), endereços próprios por tela (`/inicio`, `/conjuntos`, `/contador`…), seletor de cor e de fonte próprios, dicas por ícone, animações de abrir e fechar, sem zoom automático ao digitar no celular.
+
+### Alterado
+
+- Senha com no mínimo 8 caracteres (antes 12); argon2id e limite de tentativas mantidos.
+- O overlay do contador no endereço do painel passou a `/overlay/contador.html`; no endereço público `/contador` continua igual.
+
+### Corrigido
+
+- Lista de fontes e seletor de cor não apareciam dentro de pop-ups e a rolagem voltava ao topo.
+- O painel externo dava erro 429 ao abrir (muitos arquivos de uma vez): limite de rajada ajustado.
+
 ## [1.0.0] - 2026-11-04
 
 Primeira versão pública.

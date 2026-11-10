@@ -10,15 +10,18 @@ import logging
 import sqlite3
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from . import db
-from .auth import ABSOLUTE_TTL, SESSION_COOKIE, InvalidCredentials, LoginBlocked, SessionData
+from . import audit
+from . import counter as counters
+from .auth import ABSOLUTE_TTL, MIN_PASSWORD, SESSION_COOKIE, Ctx, InvalidCredentials, LoginBlocked
 from .clock import iso_seconds
 from .cookies import CookieBadRequest, CookieInvalid, normalize_cookies, store_cookie_set
 from .deps import (
+    ApiError,
     AppState,
     ValidationFailed,
     client_ip,
@@ -26,13 +29,15 @@ from .deps import (
     parse_json,
     read_body,
     require_csrf,
+    require_master_only,
     require_session,
     validate_body,
 )
-from . import history
-from .fonts import DEFAULT_FONT, DEFAULT_TEXT_COLOR, FONTS
+from . import history, memory
+from .fonts import DEFAULT_FONT, FONTS
 from .platforms import detect
-from .schemas import LiveCreate, LiveUpdate, LoginRequest, SetCreate, SetUpdate, SettingsWrite
+from .users import purge_owner_data
+from .schemas import ConfirmBody, CounterWrite, LiveCreate, LiveUpdate, LoginRequest, MeUpdate, PasswordChange, SetCreate, SetUpdate
 
 log = logging.getLogger("livestats.api")
 
@@ -60,7 +65,7 @@ def login(
     body = validate_body(LoginRequest, parse_json(raw))
     ip = client_ip(request)
     try:
-        session_id, session = state.auth.login(
+        session_id, session, user = state.auth.login(
             body.username, body.password, ip, request.cookies.get(SESSION_COOKIE)
         )
     except LoginBlocked as blocked:
@@ -75,7 +80,8 @@ def login(
     response = JSONResponse(
         {
             "ok": True,
-            "username": session.username,
+            "username": user.username,
+            "user": user.public(),
             "csrf_token": session.csrf_token,
             "expires_at": iso_seconds(session.expires_at),
         }
@@ -85,32 +91,101 @@ def login(
 
 
 @router.post("/logout")
-def logout(session: SessionData = Depends(require_csrf), state: AppState = Depends(get_state)) -> JSONResponse:
-    state.auth.logout(session)
+def logout(ctx: Ctx = Depends(require_csrf), state: AppState = Depends(get_state)) -> JSONResponse:
+    state.auth.logout(ctx.session)
     response = JSONResponse({"ok": True})
     response.headers.append("set-cookie", _session_cookie("", 0))
     return response
 
 
 @router.get("/session")
-def get_session(session: SessionData = Depends(require_session), state: AppState = Depends(get_state)) -> dict[str, Any]:
+def get_session(ctx: Ctx = Depends(require_session), state: AppState = Depends(get_state)) -> dict[str, Any]:
     return {
         "authenticated": True,
-        "username": session.username,
-        "csrf_token": session.csrf_token,
-        "expires_at": iso_seconds(session.expires_at),
-        "idle_expires_at": iso_seconds(session.idle_expires_at),
+        "username": ctx.user.username,
+        "user": ctx.user.public(),
+        "csrf_token": ctx.session.csrf_token,
+        "expires_at": iso_seconds(ctx.session.expires_at),
+        "idle_expires_at": iso_seconds(ctx.session.idle_expires_at),
         "public_base_url": state.settings.public_base_url,
+        "public_admin_url": state.settings.public_admin_url,
     }
 
 
-# ---------------------------------------------------------------------------- conjuntos e lives (D40)
-MAX_SETS = 50
-MAX_LIVES = 200
+def _field_error(field: str, message: str, kind: str = "value_error") -> ValidationFailed:
+    return ValidationFailed([{"loc": ["body", field], "msg": message, "type": kind}])
+
+
+@router.post("/me/password", status_code=204)
+def post_my_password(
+    request: Request,
+    ctx: Ctx = Depends(require_csrf),
+    raw: bytes = Depends(read_body),
+    state: AppState = Depends(get_state),
+) -> Response:
+    body = validate_body(PasswordChange, parse_json(raw))
+    if len(body.new) < MIN_PASSWORD:
+        raise _field_error("new", f"A nova senha deve ter ao menos {MIN_PASSWORD} caracteres", "too_short")
+    if body.new.strip().lower() == ctx.user.username:
+        raise _field_error("new", "A nova senha não pode ser igual ao nome de usuário", "same_as_username")
+    if body.new == body.current:
+        raise _field_error("new", "A nova senha deve ser diferente da atual", "same_as_current")
+    ip = client_ip(request)
+    try:
+        state.auth.change_password(ctx, body.current, body.new, ip)
+    except LoginBlocked as blocked:
+        return JSONResponse(  # type: ignore[return-value]
+            {"detail": TOO_MANY}, status_code=429, headers={"Retry-After": str(blocked.retry_after)}
+        )
+    except InvalidCredentials:
+        raise _field_error("current", "Senha atual incorreta", "wrong_password") from None
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        audit.record_now(conn, state.clock.now(), ctx.user.id, ctx.user.username, "password_changed", ctx.user.username)
+    return Response(status_code=204)
+
+
+@router.post("/account/clear-data")
+def post_clear_my_data(
+    ctx: Ctx = Depends(require_csrf),
+    raw: bytes = Depends(read_body),
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Autoatendimento: apaga SO os dados do usuario logado (conjuntos, lives, contador, cookies, amostras) e mantem a conta.
+
+    O corpo ``{"confirm": "<username>"}`` precisa ser o proprio nome de usuario. Quem e o dono vem da sessao, nunca do corpo.
+    """
+    body = validate_body(ConfirmBody, parse_json(raw))
+    if body.confirm != ctx.user.username:
+        raise _field_error("confirm", "Digite o nome de usuário para confirmar", "confirm_mismatch")
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        with db.transaction(conn, immediate=True):
+            cleared = purge_owner_data(conn, ctx.user.id)
+            audit.record(
+                conn, state.clock.now(), ctx.user.id, ctx.user.username, "clear_data", ctx.user.username,
+                f"{cleared['sets']} conjuntos, {cleared['lives']} lives",
+            )
+    log.info("dados da conta limpos (%d conjuntos, %d lives)", cleared["sets"], cleared["lives"])
+    return {"ok": True, "cleared": cleared}
+
+
+@router.put("/me")
+def put_me(
+    ctx: Ctx = Depends(require_csrf),
+    raw: bytes = Depends(read_body),
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    body = validate_body(MeUpdate, parse_json(raw))
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        with db.transaction(conn, immediate=True):
+            conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (body.display_name, ctx.user.id))
+    return {"ok": True, "user": {**ctx.user.public(), "display_name": body.display_name}}
+
+
+# ---------------------------------------------------------------------------- conjuntos e lives (D40, D50)
 _ID_MAX = 2_147_483_647
 
-_SET_COLUMNS = "id, name, goal, color, font, text_color, position"
-_LIVE_COLUMNS = "id, set_id, url, platform, ref, label, goal, color, font, text_color, position"
+_SET_COLUMNS = "s.id, s.name, s.goal, s.color, s.font, s.text_color, s.position, s.owner_id, u.username AS owner_username"
+_LIVE_COLUMNS = "l.id, l.set_id, l.url, l.platform, l.ref, l.label, l.goal, l.color, l.font, l.text_color, l.position"
 _STATS_COLUMNS = "live_id, status, title, viewers, likes, updated_at, error_code"
 
 
@@ -133,46 +208,99 @@ def _live_admin(row: sqlite3.Row, stats: sqlite3.Row | None) -> dict[str, Any]:
     }
 
 
-def read_sets(conn: sqlite3.Connection, only: int | None = None) -> list[dict[str, Any]]:
-    where, args = ("WHERE id = ?", (only,)) if only is not None else ("", ())
-    set_rows = conn.execute(f"SELECT {_SET_COLUMNS} FROM sets {where} ORDER BY position, id", args).fetchall()  # noqa: S608
-    live_rows = conn.execute(f"SELECT {_LIVE_COLUMNS} FROM lives ORDER BY position, id").fetchall()  # noqa: S608
+def _set_object(row: sqlite3.Row, lives: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "goal": row["goal"],
+        "color": row["color"],
+        "font": row["font"],
+        "text_color": row["text_color"],
+        "position": row["position"],
+        "owner": {"id": row["owner_id"], "username": row["owner_username"]},
+        "lives": lives,
+    }
+
+
+def read_sets(conn: sqlite3.Connection, owner: int | None = None, only: int | None = None) -> list[dict[str, Any]]:
+    """Conjuntos com as lives. ``owner`` = so os desse dono (``None`` = de todos: so o mestre chega aqui sem filtro)."""
+    where, args = [], []
+    if owner is not None:
+        where.append("s.owner_id = ?")
+        args.append(owner)
+    if only is not None:
+        where.append("s.id = ?")
+        args.append(only)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    set_rows = conn.execute(  # noqa: S608 (colunas e filtros fixos)
+        f"SELECT {_SET_COLUMNS} FROM sets s JOIN users u ON u.id = s.owner_id {clause} ORDER BY s.owner_id, s.position, s.id", args
+    ).fetchall()
+    live_rows = conn.execute(  # noqa: S608
+        f"SELECT {_LIVE_COLUMNS} FROM lives l JOIN sets s ON s.id = l.set_id {clause} ORDER BY l.position, l.id", args
+    ).fetchall()
     stats = {row["live_id"]: row for row in conn.execute(f"SELECT {_STATS_COLUMNS} FROM live_stats").fetchall()}  # noqa: S608
     by_set: dict[int, list[dict[str, Any]]] = {}
     for row in live_rows:
         by_set.setdefault(row["set_id"], []).append(_live_admin(row, stats.get(row["id"])))
-    return [
-        {**{key: row[key] for key in row.keys()}, "lives": by_set.get(row["id"], [])}
-        for row in set_rows
-    ]
+    return [_set_object(row, by_set.get(row["id"], [])) for row in set_rows]
 
 
-def _one_set(conn: sqlite3.Connection, set_id: int) -> dict[str, Any]:
-    found = read_sets(conn, set_id)
+def _scope(ctx: Ctx) -> int | None:
+    """Dono que o usuario enxerga: o proprio; o mestre acessa qualquer id (``None`` = sem filtro)."""
+    return None if ctx.is_master else ctx.user.id
+
+
+def _one_set(conn: sqlite3.Connection, ctx: Ctx, set_id: int) -> dict[str, Any]:
+    found = read_sets(conn, _scope(ctx), set_id)
     if not found:
-        raise HTTPException(status_code=404, detail="Conjunto não encontrado")
+        raise HTTPException(status_code=404, detail="Conjunto não encontrado")  # id de outro usuario = 404, nunca 403 (D50)
     return found[0]
 
 
-def _one_live(conn: sqlite3.Connection, live_id: int) -> dict[str, Any]:
-    row = conn.execute(f"SELECT {_LIVE_COLUMNS} FROM lives WHERE id = ?", (live_id,)).fetchone()  # noqa: S608
+def _one_live(conn: sqlite3.Connection, ctx: Ctx, live_id: int) -> dict[str, Any]:
+    owner = _scope(ctx)
+    row = conn.execute(  # noqa: S608 (constantes)
+        f"SELECT {_LIVE_COLUMNS} FROM lives l JOIN sets s ON s.id = l.set_id WHERE l.id = ? AND (? IS NULL OR s.owner_id = ?)",
+        (live_id, owner, owner),
+    ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Live não encontrada")
     stats = conn.execute(f"SELECT {_STATS_COLUMNS} FROM live_stats WHERE live_id = ?", (live_id,)).fetchone()  # noqa: S608
     return _live_admin(row, stats)
 
 
+def _effective_limits(ctx: Ctx, state: AppState) -> dict[str, int]:
+    """Limites mostrados no painel: os do usuario; o mestre nao tem limite proprio (vale so o teto geral)."""
+    if ctx.is_master:
+        return {"max_sets": state.settings.max_sets_total, "max_lives": state.settings.max_lives_total}
+    return {"max_sets": ctx.user.max_sets, "max_lives": ctx.user.max_lives}
+
+
 @router.get("/sets")
-def get_sets(state: AppState = Depends(get_state)) -> dict[str, Any]:
+def get_sets(
+    ctx: Ctx = Depends(require_session),
+    owner: str | None = Query(default=None, max_length=12),
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    scope: int | None = ctx.user.id
+    if ctx.is_master and owner is not None:  # so o mestre usa ?owner=<id>|all; para os demais o parametro e ignorado
+        if owner == "all":
+            scope = None
+        elif owner.isascii() and owner.isdigit() and 1 <= int(owner) <= _ID_MAX:
+            scope = int(owner)
+        else:
+            raise ValidationFailed([{"loc": ["query", "owner"], "msg": "Use o id de um usuário ou all", "type": "enum"}])
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        sets = read_sets(conn)
-    return {"sets": sets, "limits": {"max_sets": MAX_SETS, "max_lives": MAX_LIVES}}
+        sets = read_sets(conn, scope)
+    return {"sets": sets, "limits": _effective_limits(ctx, state)}
 
 
 @router.get("/sets/{set_id}")
-def get_set(set_id: int = Path(ge=1, le=_ID_MAX), state: AppState = Depends(get_state)) -> dict[str, Any]:
+def get_set(
+    set_id: int = Path(ge=1, le=_ID_MAX), ctx: Ctx = Depends(require_session), state: AppState = Depends(get_state)
+) -> dict[str, Any]:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        return _one_set(conn, set_id)
+        return _one_set(conn, ctx, set_id)
 
 
 def _range_param(value: str | None) -> int:
@@ -185,46 +313,56 @@ def _range_param(value: str | None) -> int:
 def get_set_history(
     set_id: int = Path(ge=1, le=_ID_MAX),
     range: str | None = Query(default=None, max_length=8),  # noqa: A002 (nome do parametro na URL)
+    ctx: Ctx = Depends(require_session),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
     range_min = _range_param(range)
+    owner = _scope(ctx)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        if conn.execute("SELECT 1 FROM sets WHERE id = ?", (set_id,)).fetchone() is None:
+        if conn.execute(
+            "SELECT 1 FROM sets WHERE id = ? AND (? IS NULL OR owner_id = ?)", (set_id, owner, owner)
+        ).fetchone() is None:
             raise HTTPException(status_code=404, detail="Conjunto não encontrado")
         return history.set_history(conn, set_id, range_min, state.clock.now())
 
 
 @router.get("/subscribers/history")
-def get_subscribers_history(state: AppState = Depends(get_state)) -> dict[str, Any]:
+def get_subscribers_history(ctx: Ctx = Depends(require_session), state: AppState = Depends(get_state)) -> dict[str, Any]:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        return history.subscribers_history(conn, state.clock.now())
+        row = _my_counter(conn, ctx)
+        return history.subscribers_history(conn, row["id"], state.clock.now())
 
 
-@router.get("/health/detail")
+@router.get("/health/detail", dependencies=[Depends(require_master_only)])
 def get_health_detail(state: AppState = Depends(get_state)) -> dict[str, Any]:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        return history.health_detail(conn, state.clock.now())
+        now = state.clock.now()
+        return {**history.health_detail(conn, now), "memory": memory.memory_block(conn, now)}
 
 
 @router.post("/sets", status_code=201)
 def post_set(
-    session: SessionData = Depends(require_csrf),
+    ctx: Ctx = Depends(require_csrf),
     raw: bytes = Depends(read_body),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
     body = validate_body(SetCreate, parse_json(raw))
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         with db.transaction(conn, immediate=True):
-            if conn.execute("SELECT count(*) FROM sets").fetchone()[0] >= MAX_SETS:
-                raise _limit_error(f"Limite de {MAX_SETS} conjuntos atingido")
+            own = conn.execute("SELECT count(*) FROM sets WHERE owner_id = ?", (ctx.user.id,)).fetchone()[0]
+            if not ctx.is_master and own >= ctx.user.max_sets:
+                raise _limit_error(f"Limite de {ctx.user.max_sets} conjuntos atingido")
+            if conn.execute("SELECT count(*) FROM sets").fetchone()[0] >= state.settings.max_sets_total:
+                raise _limit_error(f"Limite geral de {state.settings.max_sets_total} conjuntos do sistema atingido")
             cur = conn.execute(
-                "INSERT INTO sets (name, goal, color, font, text_color, position, created_at) VALUES "
-                "(?, ?, COALESCE(?, '#FF0033'), COALESCE(?, 'Roboto'), COALESCE(?, '#FFFFFF'), "
-                "(SELECT COALESCE(MAX(position), -1) + 1 FROM sets), ?)",
-                (body.name, body.goal, body.color, body.font, body.text_color, iso_seconds(state.clock.now())),
+                "INSERT INTO sets (owner_id, name, goal, color, font, text_color, position, created_at) VALUES "
+                "(?, ?, ?, COALESCE(?, '#FF0033'), COALESCE(?, 'Roboto'), COALESCE(?, '#FFFFFF'), "
+                "(SELECT COALESCE(MAX(position), -1) + 1 FROM sets WHERE owner_id = ?), ?)",
+                (ctx.user.id, body.name, body.goal, body.color, body.font, body.text_color, ctx.user.id, iso_seconds(state.clock.now())),
             )
             history.record_event(conn, state.clock.now(), "info", "set_created", f"Conjunto criado: {body.name}")
-        created = _one_set(conn, cur.lastrowid)
+            audit.record(conn, state.clock.now(), ctx.user.id, ctx.user.username, "set_created", body.name, f"id {cur.lastrowid}")
+        created = _one_set(conn, ctx, cur.lastrowid)
     return {"ok": True, "set": created}
 
 
@@ -237,53 +375,70 @@ def _updates(body: BaseModel, columns: tuple[str, ...]) -> tuple[list[str], list
 @router.put("/sets/{set_id}")
 def put_set(
     set_id: int = Path(ge=1, le=_ID_MAX),
-    session: SessionData = Depends(require_csrf),
+    ctx: Ctx = Depends(require_csrf),
     raw: bytes = Depends(read_body),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
     body = validate_body(SetUpdate, parse_json(raw))
     sets, values = _updates(body, ("name", "goal", "color", "font", "text_color"))
+    owner = _scope(ctx)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         with db.transaction(conn, immediate=True):
-            cur = conn.execute(f"UPDATE sets SET {', '.join(sets)} WHERE id = ?", (*values, set_id))  # noqa: S608 (colunas fixas)
+            cur = conn.execute(  # noqa: S608 (colunas fixas)
+                f"UPDATE sets SET {', '.join(sets)} WHERE id = ? AND (? IS NULL OR owner_id = ?)", (*values, set_id, owner, owner)
+            )
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Conjunto não encontrado")
-        updated = _one_set(conn, set_id)
+        updated = _one_set(conn, ctx, set_id)
     return {"ok": True, "set": updated}
 
 
 @router.delete("/sets/{set_id}")
 def delete_set(
     set_id: int = Path(ge=1, le=_ID_MAX),
-    session: SessionData = Depends(require_csrf),
+    ctx: Ctx = Depends(require_csrf),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
+    owner = _scope(ctx)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         with db.transaction(conn, immediate=True):
-            found = conn.execute("SELECT name FROM sets WHERE id = ?", (set_id,)).fetchone()
+            found = conn.execute(
+                "SELECT name FROM sets WHERE id = ? AND (? IS NULL OR owner_id = ?)", (set_id, owner, owner)
+            ).fetchone()
             if found is None:
                 raise HTTPException(status_code=404, detail="Conjunto não encontrado")
             conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))  # as lives, leituras e amostras saem em CASCADE
             history.record_event(conn, state.clock.now(), "info", "set_deleted", f"Conjunto apagado: {found['name']}")
+            audit.record(conn, state.clock.now(), ctx.user.id, ctx.user.username, "set_deleted", found["name"], f"id {set_id}")
     return {"ok": True}
 
 
 @router.post("/sets/{set_id}/lives", status_code=201)
 def post_live(
     set_id: int = Path(ge=1, le=_ID_MAX),
-    session: SessionData = Depends(require_csrf),
+    ctx: Ctx = Depends(require_csrf),
     raw: bytes = Depends(read_body),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
     body = validate_body(LiveCreate, parse_json(raw))
     platform, ref = detect(body.url)  # type: ignore[misc]  # o validador do modelo ja garantiu que detecta
+    owner = _scope(ctx)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         with db.transaction(conn, immediate=True):
-            parent = conn.execute("SELECT color, font, text_color FROM sets WHERE id = ?", (set_id,)).fetchone()
+            parent = conn.execute(
+                "SELECT color, font, text_color, owner_id FROM sets WHERE id = ? AND (? IS NULL OR owner_id = ?)",
+                (set_id, owner, owner),
+            ).fetchone()
             if parent is None:
                 raise HTTPException(status_code=404, detail="Conjunto não encontrado")
-            if conn.execute("SELECT count(*) FROM lives").fetchone()[0] >= MAX_LIVES:
-                raise _limit_error(f"Limite de {MAX_LIVES} lives atingido")
+            if not ctx.is_master:
+                own = conn.execute(
+                    "SELECT count(*) FROM lives l JOIN sets s ON s.id = l.set_id WHERE s.owner_id = ?", (ctx.user.id,)
+                ).fetchone()[0]
+                if own >= ctx.user.max_lives:
+                    raise _limit_error(f"Limite de {ctx.user.max_lives} lives atingido")
+            if conn.execute("SELECT count(*) FROM lives").fetchone()[0] >= state.settings.max_lives_total:
+                raise _limit_error(f"Limite geral de {state.settings.max_lives_total} lives do sistema atingido")
             # Sem fonte/cor do texto informadas, a live nasce com as do conjunto; sem cor, pega o proximo tom livre da
             # paleta da plataforma (D44). A posicao e 1..n dentro do conjunto.
             used = [r[0] for r in conn.execute("SELECT color FROM lives WHERE set_id = ?", (set_id,))]
@@ -301,14 +456,15 @@ def post_live(
             history.record_event(
                 conn, state.clock.now(), "info", "live_created", f"Live adicionada: {name}", live_id=cur.lastrowid
             )
-        created = _one_live(conn, cur.lastrowid)
+            audit.record(conn, state.clock.now(), ctx.user.id, ctx.user.username, "live_created", name, f"id {cur.lastrowid}, conjunto {set_id}")
+        created = _one_live(conn, ctx, cur.lastrowid)
     return {"ok": True, "live": created}
 
 
 @router.put("/lives/{live_id}")
 def put_live(
     live_id: int = Path(ge=1, le=_ID_MAX),
-    session: SessionData = Depends(require_csrf),
+    ctx: Ctx = Depends(require_csrf),
     raw: bytes = Depends(read_body),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
@@ -319,74 +475,91 @@ def put_live(
         new_target = detect(body.url)  # type: ignore[assignment]
         columns += ["platform = ?", "ref = ?"]
         values += list(new_target)  # type: ignore[arg-type]
+    owner = _scope(ctx)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         with db.transaction(conn, immediate=True):
-            current = conn.execute("SELECT platform, ref FROM lives WHERE id = ?", (live_id,)).fetchone()
+            current = conn.execute(
+                "SELECT l.platform, l.ref FROM lives l JOIN sets s ON s.id = l.set_id "
+                "WHERE l.id = ? AND (? IS NULL OR s.owner_id = ?)",
+                (live_id, owner, owner),
+            ).fetchone()
             if current is None:
                 raise HTTPException(status_code=404, detail="Live não encontrada")
             conn.execute(f"UPDATE lives SET {', '.join(columns)} WHERE id = ?", (*values, live_id))  # noqa: S608 (colunas fixas)
             if new_target is not None and new_target != (current["platform"], current["ref"]):
                 conn.execute("DELETE FROM live_stats WHERE live_id = ?", (live_id,))  # leitura da URL antiga
-        updated = _one_live(conn, live_id)
+        updated = _one_live(conn, ctx, live_id)
     return {"ok": True, "live": updated}
 
 
 @router.delete("/lives/{live_id}")
 def delete_live(
     live_id: int = Path(ge=1, le=_ID_MAX),
-    session: SessionData = Depends(require_csrf),
+    ctx: Ctx = Depends(require_csrf),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
+    owner = _scope(ctx)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         with db.transaction(conn, immediate=True):
-            found = conn.execute("SELECT set_id, platform, ref, label FROM lives WHERE id = ?", (live_id,)).fetchone()
+            found = conn.execute(
+                "SELECT l.set_id, l.platform, l.ref, l.label FROM lives l JOIN sets s ON s.id = l.set_id "
+                "WHERE l.id = ? AND (? IS NULL OR s.owner_id = ?)",
+                (live_id, owner, owner),
+            ).fetchone()
             if found is None:
                 raise HTTPException(status_code=404, detail="Live não encontrada")
             conn.execute("DELETE FROM lives WHERE id = ?", (live_id,))
             db.compact_live_positions(conn, found["set_id"])  # D44: 1..n sem buracos
             name = history.display_name(found["platform"], found["ref"], found["label"], None)
             history.record_event(conn, state.clock.now(), "info", "live_deleted", f"Live apagada: {name}", live_id=live_id)
+            audit.record(conn, state.clock.now(), ctx.user.id, ctx.user.username, "live_deleted", name, f"id {live_id}")
     return {"ok": True}
 
 
-# ---------------------------------------------------------------------------- configuracoes (D35) e canal detectado (D38)
-def read_settings(conn: sqlite3.Connection) -> dict[str, Any]:
-    stored = {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM settings")}
-    channel = conn.execute("SELECT channel_id, channel_name, detected_at FROM channel_info WHERE id = 1").fetchone()
-    return {
-        "channel": (
-            {"id": channel["channel_id"], "name": channel["channel_name"], "detected_at": channel["detected_at"]}
-            if channel
-            else None
-        ),
-        "subs_font": stored.get("subs_font", DEFAULT_FONT),
-        "subs_text_color": stored.get("subs_text_color", DEFAULT_TEXT_COLOR),
-    }
+# ---------------------------------------------------------------------------- contador do dono (D51) e canal detectado (D38)
+def _my_counter(conn: sqlite3.Connection, ctx: Ctx) -> sqlite3.Row:
+    """O contador do usuario logado (cada usuario so enxerga o proprio). ``has_counter = 0`` -> 403 ``counter_disabled``."""
+    if not ctx.user.has_counter:
+        raise ApiError(403, "O contador de inscritos não está habilitado para esta conta", "counter_disabled")
+    row = counters.counter_of_owner(conn, ctx.user.id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Contador não encontrado")
+    return row
 
 
-@router.get("/settings")
-def get_settings(state: AppState = Depends(get_state)) -> dict[str, Any]:
+@router.get("/counter")
+def get_counter(ctx: Ctx = Depends(require_session), state: AppState = Depends(get_state)) -> dict[str, Any]:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        return read_settings(conn)
+        return counters.read_counter(conn, _my_counter(conn, ctx), state.settings)
 
 
-@router.put("/settings")
-def put_settings(
-    session: SessionData = Depends(require_csrf),
+@router.put("/counter")
+def put_counter(
+    ctx: Ctx = Depends(require_csrf),
     raw: bytes = Depends(read_body),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
-    body = validate_body(SettingsWrite, parse_json(raw))
-    changed = [key for key in ("subs_font", "subs_text_color") if getattr(body, key) is not None]
+    body = validate_body(CounterWrite, parse_json(raw))
+    columns, values = _updates(body, ("font", "text_color"))
+    if "channel_id" in body.model_fields_set:  # D54: None volta a deteccao automatica
+        columns.append("channel_override = ?")
+        values.append(body.channel_id)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
+        row = _my_counter(conn, ctx)
         with db.transaction(conn, immediate=True):
-            for key in changed:
-                conn.execute(
-                    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (key, getattr(body, key)),
+            conn.execute(f"UPDATE counters SET {', '.join(columns)} WHERE id = ?", (*values, row["id"]))  # noqa: S608 (colunas fixas)
+            if "channel_id" in body.model_fields_set and body.channel_id != row["channel_override"]:
+                audit.record(
+                    conn,
+                    state.clock.now(),
+                    ctx.user.id,
+                    ctx.user.username,
+                    "counter_channel_set" if body.channel_id else "counter_channel_cleared",
+                    ctx.user.username,
+                    body.channel_id or "",
                 )
-        result = read_settings(conn)
-    log.info("configuracoes salvas (%s)", ",".join(changed))
+        result = counters.read_counter(conn, _my_counter(conn, ctx), state.settings)
+    log.info("contador salvo (%s)", ",".join(sorted(body.model_fields_set)))
     return {"ok": True, **result}
 
 
@@ -395,13 +568,15 @@ def get_fonts() -> dict[str, Any]:
     return {"fonts": list(FONTS), "default": DEFAULT_FONT}
 
 
-# ---------------------------------------------------------------------------- cookies
+# ---------------------------------------------------------------------------- cookies (do contador do usuario logado)
 @router.post("/cookies")
 def post_cookies(
-    session: SessionData = Depends(require_csrf),
+    ctx: Ctx = Depends(require_csrf),
     raw: bytes = Depends(read_body),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        counter_id = _my_counter(conn, ctx)["id"]  # 403 counter_disabled antes de qualquer processamento do corpo
     payload = parse_json(raw)
     try:
         cookies = normalize_cookies(payload)
@@ -411,10 +586,11 @@ def post_cookies(
         raise ValidationFailed(invalid.errors) from None
     ciphertext = state.sealer.seal(cookies)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        store_cookie_set(conn, ciphertext, state.sealer.key_id, len(cookies), session.username, state.clock.now())
+        store_cookie_set(conn, counter_id, ciphertext, state.sealer.key_id, len(cookies), ctx.user.username, state.clock.now())
         try:
             with db.transaction(conn, immediate=True):
                 history.record_event(conn, state.clock.now(), "info", "cookies_sent", f"Cookies enviados ({len(cookies)})")
+                audit.record(conn, state.clock.now(), ctx.user.id, ctx.user.username, "cookies_sent", ctx.user.username, f"{len(cookies)} cookies")
         except sqlite3.Error as exc:  # o evento e informativo: os cookies ja foram salvos
             log.warning("nao foi possivel gravar o evento de cookies (%s)", type(exc).__name__)
     count = len(cookies)
@@ -454,7 +630,7 @@ def _worker_state(row: sqlite3.Row | None) -> dict[str, Any]:
     }
 
 
-@router.get("/workers/status")
+@router.get("/workers/status", dependencies=[Depends(require_master_only)])
 def workers_status(state: AppState = Depends(get_state)) -> dict[str, Any]:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         workers = {
@@ -465,9 +641,9 @@ def workers_status(state: AppState = Depends(get_state)) -> dict[str, Any]:
             ).fetchall()
         }
         cookie_row = conn.execute(
-            "SELECT id, cookie_count, created_at, source, renewed_from FROM cookie_sets ORDER BY id DESC LIMIT 1"
+            "SELECT id, cookie_count, created_at, source, renewed_from FROM cookie_sets WHERE counter_id = 1 ORDER BY id DESC LIMIT 1"
         ).fetchone()
-        reading = conn.execute("SELECT value, raw, read_at FROM subscriber_reading WHERE id = 1").fetchone()
+        reading = conn.execute("SELECT value, raw, read_at FROM subscriber_reading WHERE counter_id = 1").fetchone()
 
     inscritos = _worker_state(workers.get("inscritos"))
     inscritos["auth_state"] = (workers["inscritos"]["auth_state"] if "inscritos" in workers else None) or "unknown"

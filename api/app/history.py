@@ -163,12 +163,17 @@ def set_history(conn: sqlite3.Connection, set_id: int, range_min: int, now: floa
 
 
 # ---------------------------------------------------------------------------- D45: historico de inscritos
-def subscribers_history(conn: sqlite3.Connection, now: float) -> dict[str, Any]:
+def subscribers_history(conn: sqlite3.Connection, counter_id: int, now: float) -> dict[str, Any]:
     now_i = int(now)
     today_start = _day_start(now_i)
     first_day_start = _day_start(today_start - 6 * 86400 + 3600)  # meia-noite local de 6 dias atras
+    channel = conn.execute("SELECT channel_id FROM channel_info WHERE counter_id = ?", (counter_id,)).fetchone()
+    if channel is None:
+        return {"days": [], "today_gain": None, "last_hour_gain": None}
+    channel_id = channel[0]
     rows = conn.execute(
-        "SELECT at, value FROM subscriber_samples WHERE at >= ? AND at <= ? ORDER BY at", (first_day_start, now_i)
+        "SELECT at, value FROM subscriber_samples WHERE counter_id = ? AND channel_id = ? AND at >= ? AND at <= ? ORDER BY at",
+        (counter_id, channel_id, first_day_start, now_i),
     ).fetchall()
     last_by_day: dict[str, int] = {}
     for at, value in rows:
@@ -179,14 +184,16 @@ def subscribers_history(conn: sqlite3.Connection, now: float) -> dict[str, Any]:
     if rows and rows[-1][0] >= today_start:
         latest = rows[-1][1]
         before_today = conn.execute(
-            "SELECT value FROM subscriber_samples WHERE at < ? ORDER BY at DESC LIMIT 1", (today_start,)
+            "SELECT value FROM subscriber_samples WHERE counter_id = ? AND channel_id = ? AND at < ? ORDER BY at DESC LIMIT 1",
+            (counter_id, channel_id, today_start),
         ).fetchone()
         first_today = next((value for at, value in rows if at >= today_start), latest)
         today_gain = latest - (before_today[0] if before_today else first_today)
     if rows and rows[-1][0] >= now_i - 3600:
         latest = rows[-1][1]
         at_or_before = conn.execute(
-            "SELECT value FROM subscriber_samples WHERE at <= ? ORDER BY at DESC LIMIT 1", (now_i - 3600,)
+            "SELECT value FROM subscriber_samples WHERE counter_id = ? AND channel_id = ? AND at <= ? ORDER BY at DESC LIMIT 1",
+            (counter_id, channel_id, now_i - 3600),
         ).fetchone()
         first_hour = next((value for at, value in rows if at > now_i - 3600), latest)
         last_hour_gain = latest - (at_or_before[0] if at_or_before else first_hour)

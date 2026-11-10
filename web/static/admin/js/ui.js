@@ -1,11 +1,12 @@
 // @ts-check
-// Peças de interface reutilizadas: avisos rápidos, Copiar, seletor de cor exato, prévia do overlay,
-// área que abre/fecha animando a altura, pílulas de estado e botão de duas etapas.
+// Peças de interface reutilizadas: avisos rápidos, Copiar, prévia do overlay, pílulas de estado e botão de duas
+// etapas. O seletor de cor (colorpicker.js) e a área recolhível (collapse.js) moram em arquivos próprios e são
+// reexportados aqui.
 
-import { h, setStyle } from './h.js';
+import { h, s, setStyle } from './h.js';
 import { fontStack } from './fonts.js';
 import {
-  COLOR_RE, SUGGESTED_COLORS, PLATFORM_CLASS, PLATFORM_LETTER, fmt, safeColor,
+  PLATFORM_CLASS, PLATFORM_LOGO, fmt, safeColor,
 } from './util.js';
 
 const COPIED_MS = 1500;
@@ -64,26 +65,8 @@ export function linkItem(label, url, cls = 'link-item') {
   return h('div', { class: `${cls} ep` }, h('span', { class: 'link-text' }, h('b', { class: 'ep-label', text: label }), code), btn);
 }
 
-/**
- * Área que abre e fecha animando a altura (grid 0fr -> 1fr). O conteúdo fechado não recebe foco (inert).
- * @param {Node} content
- * @param {string} [id]
- * @returns {{root: HTMLElement, set: (open: boolean) => void, isOpen: () => boolean}}
- */
-export function collapse(content, id) {
-  const inner = h('div', { class: 'collapse-in' }, content);
-  const root = h('div', { class: 'collapse', id }, inner);
-  inner.setAttribute('inert', '');
-  return {
-    root,
-    set(open) {
-      root.classList.toggle('open', open);
-      if (open) inner.removeAttribute('inert');
-      else inner.setAttribute('inert', '');
-    },
-    isOpen: () => root.classList.contains('open'),
-  };
-}
+export { collapse } from './collapse.js';
+export { colorField } from './colorpicker.js';
 
 /** @type {Record<string, [string, string]>} */
 const STATUS = {
@@ -132,13 +115,24 @@ export function levelPill(level, text) {
 }
 
 /**
- * Selo da plataforma (letra na cor padrão da plataforma).
+ * Logotipo oficial da plataforma (SVG desenhado pelo JS; a cor vem do `fill` herdado, `currentColor`).
+ * @param {string} platform
+ * @returns {SVGElement | Text}
+ */
+export function platLogo(platform) {
+  const d = PLATFORM_LOGO[platform];
+  if (!d) return document.createTextNode('?');
+  return s('svg', { viewBox: '0 0 24 24', class: 'plat-logo', 'aria-hidden': 'true', focusable: 'false' }, s('path', { d, fill: 'currentColor' }));
+}
+
+/**
+ * Selo da plataforma: logotipo oficial sobre a cor da plataforma.
  * @param {string} platform
  * @param {string} [extra]
  * @returns {HTMLElement}
  */
 export function platBadge(platform, extra = '') {
-  return h('span', { class: `plat ${PLATFORM_CLASS[platform] || ''} ${extra}`.trim(), 'aria-hidden': 'true', text: PLATFORM_LETTER[platform] || '?' });
+  return h('span', { class: `plat ${PLATFORM_CLASS[platform] || ''} ${extra}`.trim(), 'aria-hidden': 'true' }, platLogo(platform));
 }
 
 /**
@@ -169,68 +163,6 @@ export function armedButton(button, confirmText, action) {
     reset();
     action();
   });
-}
-
-/**
- * @typedef {object} ColorField
- * @property {HTMLElement} root
- * @property {() => string | null} get cor `#RRGGBB` maiúscula, ou null se o campo de texto está inválido
- * @property {() => string} last última cor válida (a prévia a mantém enquanto o texto está inválido)
- * @property {(hex: string) => void} set
- * @property {HTMLInputElement} picker
- * @property {HTMLInputElement} text
- */
-
-/**
- * Seletor de cor exato: `input type=color`, campo `#RRGGBB` e sugestões.
- * @param {string} label
- * @param {string} value
- * @param {(hex: string) => void} [onChange] chamado a cada cor válida
- * @returns {ColorField}
- */
-export function colorField(label, value, onChange) {
-  const start = safeColor(value, '#FFFFFF');
-  const picker = /** @type {HTMLInputElement} */ (h('input', { type: 'color', value: start.toLowerCase(), 'aria-label': `${label}: escolher` }));
-  const text = /** @type {HTMLInputElement} */ (h('input', {
-    type: 'text', value: start, maxlength: 9, spellcheck: 'false', autocomplete: 'off', class: 'hex', 'aria-label': `${label}: código #RRGGBB`,
-  }));
-  const sw = h('div', { class: 'swatches', role: 'group', 'aria-label': 'Sugestões' });
-  /** @param {string} hex */
-  let lastValid = start;
-  const apply = (hex) => {
-    const up = hex.toUpperCase();
-    lastValid = up;
-    picker.value = up.toLowerCase();
-    text.value = up;
-    text.removeAttribute('aria-invalid');
-    if (onChange) onChange(up);
-  };
-  for (const c of SUGGESTED_COLORS) {
-    const b = h('button', { type: 'button', class: 'sw', 'aria-label': `${label}: ${c}`, 'data-sw': c });
-    setStyle(b, { background: c });
-    b.addEventListener('click', () => apply(c));
-    sw.appendChild(b);
-  }
-  picker.addEventListener('input', () => apply(picker.value));
-  text.addEventListener('input', () => {
-    let v = text.value.trim();
-    if (/^[0-9a-f]{6}$/i.test(v)) v = `#${v}`;
-    if (COLOR_RE.test(v)) apply(v);
-    else text.setAttribute('aria-invalid', 'true');
-  });
-  const root = h('div', { class: 'field' }, h('span', { class: 'field-label', text: label }), h('div', { class: 'color-field' }, picker, text, sw));
-  return {
-    root,
-    picker,
-    text,
-    get: () => {
-      const v = text.value.trim();
-      const f = /^[0-9a-f]{6}$/i.test(v) ? `#${v}` : v;
-      return COLOR_RE.test(f) ? f.toUpperCase() : null;
-    },
-    last: () => lastValid,
-    set: (hex) => { lastValid = hex.toUpperCase(); picker.value = hex.toLowerCase(); text.value = hex.toUpperCase(); text.removeAttribute('aria-invalid'); },
-  };
 }
 
 /**

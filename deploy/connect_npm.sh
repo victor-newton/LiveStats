@@ -1,7 +1,8 @@
 #!/bin/sh
 # LiveStats - opcao A: conecta o Nginx Proxy Manager (NPM) a rede livestats-edge com IP fixo e grava esse IP (/32)
-# em TRUSTED_PROXY_CIDR, para o web aceitar o CF-Connecting-IP vindo dele na 8080 (D29/D33).
-# Depois disso o proxy host live.exemplo.com pode apontar para livestats-web:8080.
+# em TRUSTED_PROXY_CIDR, para o web aceitar o CF-Connecting-IP vindo dele na 8080 (D29/D33), e em ADMIN_TRUSTED_PROXY_IP
+# (acesso externo ao painel, D49). Depois disso o proxy host live.exemplo.com pode apontar para 172.29.80.2:8080 e,
+# com ADMIN_EXTERNAL_ACCESS=1, o painel para https://172.29.80.2:8081 (IP fixo do web, WEB_EDGE_IP; o nginx do NPM nao resolve o nome livestats-web) (o fim da execucao imprime os passos).
 #
 # ATENCAO: o `docker network connect` feito a mao NAO sobrevive se o ZimaOS RECRIAR o container do NPM
 # (atualizacao do app, reinstalacao). Nesse caso rode este script de novo. Veja o README.
@@ -21,7 +22,7 @@ while [ $# -gt 0 ]; do
     --dir) DIR=$2; shift 2 ;;
     --npm) NPM=$2; shift 2 ;;
     --ip) IP=$2; shift 2 ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) die "Argumento desconhecido: $1" ;;
   esac
 done
@@ -44,6 +45,7 @@ fi
 docker_ inspect "$NPM" >/dev/null 2>&1 || die "Container '$NPM' nao existe."
 
 SUBREDE=$(docker_ network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "$REDE_EDGE")
+[ -n "$IP" ] || IP=$(env_get "$DIR/.env" ADMIN_TRUSTED_PROXY_IP)   # mantem o IP ja escolhido para o painel
 if [ -z "$IP" ]; then
   case $SUBREDE in
     *.0/24) IP="$(printf '%s' "$SUBREDE" | sed 's/\.0\/24$//').11" ;;
@@ -68,6 +70,8 @@ fi
 
 env_set "$DIR/.env" TRUSTED_PROXY_CIDR "$IP/32"
 ok "TRUSTED_PROXY_CIDR=$IP/32 gravado no .env."
+env_set "$DIR/.env" ADMIN_TRUSTED_PROXY_IP "$IP"
+ok "ADMIN_TRUSTED_PROXY_IP=$IP gravado no .env (so vale com ADMIN_EXTERNAL_ACCESS=1)."
 
 if zimaos_registrado; then
   info "Registrado no painel do ZimaOS: regerando o arquivo registrado e recriando o web a partir dele ..."
@@ -89,5 +93,16 @@ fi
 
 msg ""
 msg "No painel do NPM, edite o proxy host live.exemplo.com:"
-msg "  Forward Hostname/IP: livestats-web   Forward Port: 8080   (esquema http)"
+msg "  Forward Hostname/IP: ${WEB_EDGE_IP:-172.29.80.2}   Forward Port: 8080   (esquema http)"
+EXTERNO=$(env_get "$DIR/.env" ADMIN_EXTERNAL_ACCESS)
+PAINEL=$(env_get "$DIR/.env" PUBLIC_ADMIN_URL | sed 's|^[a-z]*://||; s|[/:].*$||')
+SITE=$(env_get "$DIR/.env" PUBLIC_BASE_URL)
+CF=$(achar_container 'cloudflared')
+CF_IP=""
+if [ -n "$CF" ]; then
+  CF_IP=$(docker_ inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' "$CF" | awk '{print $1}')
+fi
+passos_npm_painel "$PAINEL" "$IP" "${EXTERNO:-0}" "$CF_IP" "$SITE" "$(env_get "$DIR/.env" ADMIN_REAL_IP_HEADER)"
+msg ""
 msg "Lembrete: se o ZimaOS recriar o container do NPM, rode este script de novo."
+

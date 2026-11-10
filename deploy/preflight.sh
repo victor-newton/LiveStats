@@ -135,6 +135,22 @@ if [ "$DOCKER_OK" = 1 ]; then
   fi
 fi
 
+titulo "Acesso externo ao painel"
+if [ -f "$DIR/.env" ]; then
+  if [ "$(env_get "$DIR/.env" ADMIN_EXTERNAL_ACCESS)" = 1 ]; then
+    info "Acesso externo ao painel LIGADO (ADMIN_EXTERNAL_ACCESS=1): a lista ADMIN_ALLOW_CIDRS nao se aplica."
+    if [ -z "$(env_get "$DIR/.env" ADMIN_TRUSTED_PROXY_IP)" ]; then
+      aviso "ADMIN_TRUSTED_PROXY_IP esta vazio: com o acesso externo ligado o web NAO sobe. Informe o IP fixo do NPM (connect_npm.sh ou --admin-trusted-proxy)."
+    else
+      ok "Proxy confiavel do painel: $(env_get "$DIR/.env" ADMIN_TRUSTED_PROXY_IP)"
+    fi
+  else
+    info "Acesso externo ao painel desligado (ADMIN_EXTERNAL_ACCESS=0)."
+  fi
+else
+  info "Sem .env ainda: acesso externo ao painel desligado por padrao."
+fi
+
 titulo "Resultado"
 if [ "$ERROS" -eq 0 ]; then
   ok "Nenhum bloqueio encontrado."

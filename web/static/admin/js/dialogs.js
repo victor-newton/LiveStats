@@ -4,12 +4,12 @@
 
 import { byId, inputById, buttonById, showMessage, clearMessage } from './dom.js';
 import { h } from './h.js';
-import { registerFontSelect, setFontValue } from './fonts.js';
+import { fontDropdown, setFontValue } from './fonts.js';
 import { write, readGoal, requestRefresh } from './net.js';
 import {
   colorField, overlayPreview, armedButton, platBadge, toast,
 } from './ui.js';
-import { setTotals } from './store.js';
+import { setTotals, state } from './store.js';
 import { PLATFORM_CLASS, PLATFORM_NAME, safeColor } from './util.js';
 
 /** @typedef {import('./store.js').Route} Route */
@@ -27,8 +27,8 @@ let preview;
 /** @type {{likes: number | null, viewers: number | null}} */
 let sample = { likes: null, viewers: null };
 
-/** @returns {HTMLSelectElement} */
-const fontSel = () => /** @type {HTMLSelectElement} */ (byId('stFont'));
+/** @returns {HTMLButtonElement} */
+const fontSel = () => /** @type {HTMLButtonElement} */ (byId('stFont'));
 /** @returns {HTMLDialogElement} */
 const dlg = (/** @type {string} */ id) => /** @type {HTMLDialogElement} */ (byId(id));
 
@@ -56,7 +56,7 @@ export function initDialogs(navigate) {
   byId('setColors').append(barField.root, textField.root);
   preview = overlayPreview();
   byId('setPreview').appendChild(preview.root);
-  registerFontSelect(fontSel());
+  fontDropdown('stFont', fontSel());
   fontSel().addEventListener('change', refreshPreview);
   inputById('stGoal').addEventListener('input', refreshPreview);
   byId('setForm').addEventListener('submit', (ev) => { ev.preventDefault(); void saveSet(); });
@@ -135,7 +135,9 @@ async function deleteSet() {
   if (!resp) return;
   dlg('dlgSet').close();
   toast('Conjunto apagado');
-  go({ screen: 'visao', setId: null, focus: null });
+  const uid = state.route.userId ?? null;
+  state.foreign.delete(editing.id);
+  go(uid === null ? { screen: 'conjuntos', setId: null, focus: null } : { screen: 'mestre', setId: null, focus: null, seg: 'dados', userId: uid });
   await requestRefresh();
 }
 
@@ -207,7 +209,7 @@ async function addLive() {
   dlg('dlgAdd').close();
   toast('Live adicionada');
   await requestRefresh();
-  if (typeof liveId === 'number') go({ screen: 'conjunto', setId: id, focus: { live: liveId } });
+  if (typeof liveId === 'number') go({ screen: 'conjunto', setId: id, focus: { live: liveId }, userId: state.route.userId ?? null });
 }
 
 /** Fecha pop-ups abertos e limpa os campos (saída da sessão). */

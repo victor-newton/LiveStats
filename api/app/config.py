@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +20,7 @@ from urllib.parse import urlsplit
 
 import argon2
 
+_USERNAME_RE = re.compile(r"[a-z0-9._-]{3,32}")
 MIN_SQLITE = (3, 37, 0)  # tabelas STRICT
 _DEFAULT_SCHEMA_DIRS = (Path("/app/db"), Path(__file__).resolve().parents[2] / "db")
 
@@ -36,6 +39,14 @@ class Settings:
     password_hash: str
     cookie_public_key: bytes
     public_base_url: str | None
+    # v4 (D48-D52)
+    master_allow_cidrs: tuple = ()          # ip_network IPv4; vazio = sem restricao
+    max_sets_total: int = 200
+    max_lives_total: int = 1000
+    user_pool_size: int = 1
+    user_counter_interval: int = 60
+    live_interval: int = 10
+    public_admin_url: str | None = None
 
     def __repr__(self) -> str:  # nunca imprimir segredos
         return "Settings(...)"
@@ -82,14 +93,48 @@ def _load_public_key(env: Mapping[str, str]) -> bytes:
     return raw
 
 
-def _load_public_base_url(env: Mapping[str, str]) -> str | None:
-    value = env.get("PUBLIC_BASE_URL", "").strip()
+def _load_url(env: Mapping[str, str], name: str) -> str | None:
+    value = env.get(name, "").strip()
     if not value:
         return None
     parts = urlsplit(value)
     if parts.scheme not in ("http", "https") or not parts.netloc or any(c.isspace() or ord(c) < 32 for c in value):
-        raise ConfigError("PUBLIC_BASE_URL deve ser uma URL http(s) valida")
+        raise ConfigError(f"{name} deve ser uma URL http(s) valida")
     return value.rstrip("/")
+
+
+def _load_public_base_url(env: Mapping[str, str]) -> str | None:
+    return _load_url(env, "PUBLIC_BASE_URL")
+
+
+def _load_int(env: Mapping[str, str], name: str, default: int, low: int, high: int) -> int:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ConfigError(f"{name} deve ser um numero inteiro") from None
+    if not low <= value <= high:
+        raise ConfigError(f"{name} deve estar entre {low} e {high}")
+    return value
+
+
+def _load_cidrs(env: Mapping[str, str]) -> tuple:
+    """``MASTER_ALLOW_CIDRS``: lista (virgula/espaco) de IPv4 ou CIDR IPv4. ``0.0.0.0/0`` e recusado (nao restringiria nada)."""
+    raw = env.get("MASTER_ALLOW_CIDRS", "").strip()
+    nets = []
+    for item in re.split(r"[,\s]+", raw):
+        if not item:
+            continue
+        try:
+            net = ipaddress.ip_network(item, strict=False)
+        except ValueError:
+            raise ConfigError("MASTER_ALLOW_CIDRS: valor invalido (use IPv4 ou CIDR)") from None
+        if net.version != 4 or net.prefixlen == 0:
+            raise ConfigError("MASTER_ALLOW_CIDRS: use IPv4/CIDR e nunca 0.0.0.0/0")
+        nets.append(net)
+    return tuple(nets)
 
 
 def _find_schema(env: Mapping[str, str], var: str, filename: str) -> str:
@@ -120,9 +165,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if _same_file(db_path, admin_db_path):
         raise ConfigError("ADMIN_DB_PATH deve ser um arquivo diferente de DB_PATH (estado de admin isolado)")
 
-    username = _require(env, "ADMIN_USERNAME")
-    if len(username) > 64 or any(ord(c) < 32 for c in username):
-        raise ConfigError("ADMIN_USERNAME invalido (1 a 64 caracteres, sem controle)")
+    username = _require(env, "ADMIN_USERNAME").lower()
+    if _USERNAME_RE.fullmatch(username) is None:
+        raise ConfigError("ADMIN_USERNAME invalido (3 a 32 caracteres: letras, digitos, '.', '_' ou '-')")
 
     return Settings(
         db_path=db_path,
@@ -133,4 +178,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         password_hash=_load_password_hash(env),
         cookie_public_key=_load_public_key(env),
         public_base_url=_load_public_base_url(env),
+        master_allow_cidrs=_load_cidrs(env),
+        max_sets_total=_load_int(env, "MAX_SETS_TOTAL", 200, 1, 100_000),
+        max_lives_total=_load_int(env, "MAX_LIVES_TOTAL", 1000, 1, 1_000_000),
+        user_pool_size=_load_int(env, "USER_POOL_SIZE", 1, 0, 64),
+        user_counter_interval=_load_int(env, "USER_COUNTER_INTERVAL", 60, 30, 3600),
+        live_interval=_load_int(env, "LIVE_INTERVAL", 10, 1, 3600),
+        public_admin_url=_load_url(env, "PUBLIC_ADMIN_URL"),
     )

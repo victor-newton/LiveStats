@@ -22,9 +22,10 @@ from .auth import AdminAuth
 from .clock import Clock, SystemClock
 from .config import load_settings
 from .cookies import CookieSealer
-from .deps import AppState, ValidationFailed
+from .deps import ApiError, AppState, ValidationFailed
 from .routes_admin import login_router
 from .routes_admin import router as admin_router
+from .routes_master import router as master_router
 from .routes_public import router as public_router
 from .schemas import sanitize_errors
 
@@ -61,6 +62,7 @@ def create_app(environ: Mapping[str, str] | None = None, clock: Clock | None = N
         db.bootstrap_schema(settings.db_path, settings.schema_sql)
         db.bootstrap_schema(settings.admin_db_path, settings.admin_schema_sql)
         clk = clock or SystemClock()
+        db.bootstrap_master(settings.db_path, settings.admin_db_path, settings.admin_username, settings.password_hash, int(clk.now()))
         app.state.ls = AppState(
             settings=settings,
             clock=clk,
@@ -72,7 +74,7 @@ def create_app(environ: Mapping[str, str] | None = None, clock: Clock | None = N
 
     app = FastAPI(
         title="LiveStats API",
-        version="1.0.0",
+        version="4.0.0",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
@@ -89,6 +91,10 @@ def create_app(environ: Mapping[str, str] | None = None, clock: Clock | None = N
     async def _validation_failed(_: Request, exc: ValidationFailed) -> JSONResponse:
         return JSONResponse({"detail": exc.errors}, status_code=422)
 
+    @app.exception_handler(ApiError)
+    async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
+        return JSONResponse({"detail": exc.detail, "code": exc.code}, status_code=exc.status_code)
+
     @app.exception_handler(sqlite3.Error)
     async def _database(_: Request, exc: sqlite3.Error) -> JSONResponse:
         # Registra so o tipo: a mensagem de erro do SQLite nunca leva dados de requisicao.
@@ -97,7 +103,8 @@ def create_app(environ: Mapping[str, str] | None = None, clock: Clock | None = N
 
     app.include_router(public_router)
     app.include_router(login_router)
-    app.include_router(admin_router)  # a rota pega-tudo e a ultima
+    app.include_router(master_router)  # antes do admin: a rota pega-tudo do admin e a ultima
+    app.include_router(admin_router)
     return app
 
 

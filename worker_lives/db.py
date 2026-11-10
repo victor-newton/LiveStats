@@ -208,6 +208,7 @@ class StatusRow:
     last_error_code: str | None
     last_error_message: str | None
     version: str
+    mem_bytes: int | None = None  # D56: memoria do container no batimento
 
 
 _UPSERT_LIVE = (
@@ -227,8 +228,8 @@ _UPSERT_ERROR = (
 _UPSERT_STATUS = (
     "INSERT OR REPLACE INTO worker_status (worker, state, last_heartbeat_at, last_success_at,"
     " consecutive_failures, interval_seconds, next_attempt_at, last_error_code,"
-    " last_error_message, auth_state, cookies_applied_id, version)"
-    " VALUES ('lives', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)"
+    " last_error_message, auth_state, cookies_applied_id, version, mem_bytes)"
+    " VALUES ('lives', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)"
 )
 
 
@@ -278,5 +279,6 @@ def write_status_na_transacao(conn: sqlite3.Connection, status: StatusRow) -> No
             status.last_error_code,
             status.last_error_message,
             status.version,
+            status.mem_bytes,
         ),
     )

@@ -6,7 +6,12 @@
 
 import { aplicarAparencia } from './aparencia.js';
 
-const URL_JSON = '/api/public/subscribers';
+// v4 (D51): `?contador={id}` (só dígitos) escolhe o contador de um usuário; ausente (ou inválido) = o contador 1, do mestre.
+const PARAM_CONTADOR = new URLSearchParams(location.search).get('contador');
+const URL_JSON =
+  PARAM_CONTADOR !== null && /^[0-9]{1,9}$/.test(PARAM_CONTADOR)
+    ? `/api/public/subscribers/${PARAM_CONTADOR}`
+    : '/api/public/subscribers';
 const INTERVALO_MS = 3000;
 const CURVA = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
 

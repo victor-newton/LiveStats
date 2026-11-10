@@ -1,7 +1,7 @@
 // @ts-check
 // Estado do painel em memória (nada vai para storage) e leituras derivadas dos dados do servidor.
 
-import { PLATFORM_NAME, parseSubs } from './util.js';
+import { PLATFORM_NAME } from './util.js';
 
 /**
  * @typedef {object} LiveStats
@@ -14,24 +14,37 @@ import { PLATFORM_NAME, parseSubs } from './util.js';
 
 /**
  * @typedef {object} Route
- * @property {'visao' | 'conjunto' | 'inscritos' | 'saude'} screen
+ * @property {'visao' | 'conjuntos' | 'conjunto' | 'inscritos' | 'conta' | 'saude' | 'mestre'} screen
  * @property {number | null} setId
  * @property {{live?: number, links?: boolean} | null} focus
+ * @property {'usuarios' | 'atividade' | 'uso' | 'dados'} [seg] segmento da aba Mestre
+ * @property {number | null} [userId] usuário em "Dados do usuário" (também o dono do conjunto aberto pelo mestre)
  */
 
 export const state = {
   /** @type {any[]} */
   sets: [],
   limits: { max_sets: 50, max_lives: 200 },
+  /** usuário da sessão (D48): {id, username, display_name, role, must_change_password, has_counter, max_sets, max_lives} */
   /** @type {any} */
-  settings: null,
+  user: null,
+  /** o servidor negou (404) uma rota do mestre: a interface esconde Saúde e Mestre */
+  masterDenied: false,
+  /** contador do usuário logado (GET /api/admin/counter, D51) */
+  /** @type {any} */
+  counter: null,
+  /** o contador está desativado para a conta (403 counter_disabled) */
+  counterOff: false,
   /** @type {any} */
   status: null,
-  /** leitura atual do contador (/api/public/subscribers, a cada 2 s na tela Inscritos) */
-  /** @type {any} */
-  subscribers: null,
   /** @type {any} */
   subHist: null,
+  /** dados do painel mestre (D52) */
+  /** @type {{users: any[] | null, usage: any, activity: any[] | null, data: any, filter: string}} */
+  master: { users: null, usage: null, activity: null, data: null, filter: '' },
+  /** conjuntos de OUTRO usuário abertos pelo mestre (id -> conjunto) */
+  /** @type {Map<number, any>} */
+  foreign: new Map(),
   /** @type {any} */
   health: null,
   /** setId -> {range, data} (histórico do conjunto no período em uso) */
@@ -42,11 +55,11 @@ export const state = {
   sparks: new Map(),
   range: 60,
   publicBase: '',
+  /** endereço do painel mostrado na Conta (PUBLIC_ADMIN_URL, se o servidor o informar; senão a origem atual) */
+  adminUrl: '',
   apiOk: true,
   /** @type {number | null} */
   apiMs: null,
-  /** @type {Set<number>} */
-  navOpen: new Set(),
   /** @type {Route} */
   route: { screen: 'visao', setId: null, focus: null },
 };
@@ -54,23 +67,32 @@ export const state = {
 /** Descarta TODO dado de sessão. */
 export function resetState() {
   state.sets = [];
-  state.settings = null;
+  state.user = null;
+  state.masterDenied = false;
+  state.counter = null;
+  state.counterOff = false;
   state.status = null;
-  state.subscribers = null;
   state.subHist = null;
+  state.master = { users: null, usage: null, activity: null, data: null, filter: '' };
+  state.foreign.clear();
   state.health = null;
   state.hist.clear();
   state.sparks.clear();
   state.range = 60;
   state.publicBase = '';
+  state.adminUrl = '';
   state.apiOk = true;
-  state.navOpen.clear();
   state.route = { screen: 'visao', setId: null, focus: null };
+}
+
+/** O usuário logado é o mestre (e o servidor não negou as rotas dele). */
+export function isMaster() {
+  return !!state.user && state.user.role === 'master' && !state.masterDenied;
 }
 
 /** @param {number | null} id @returns {any} */
 export function setById(id) {
-  return state.sets.find((x) => x.id === id) || null;
+  return state.sets.find((x) => x.id === id) || (id !== null ? state.foreign.get(id) : null) || null;
 }
 
 /**
@@ -179,8 +201,31 @@ export function services() {
   ];
 }
 
-/** @returns {number | null} inscritos atuais (número) */
-export function subsNow() {
-  const s = state.subscribers || (state.status && state.status.subscribers);
-  return s ? parseSubs(s.inscritos) : null;
+/**
+ * Inscritos atuais (número), da leitura do contador do usuário (D51). A api manda `reading.value` como TEXTO do
+ * com separador de milhar ("460600" ou "460.600"): só os dígitos valem.
+ * @param {{value?: unknown} | null | undefined} [reading] leitura (padrão: a do contador do usuário logado)
+ * @returns {number | null}
+ */
+export function subsNow(reading = state.counter && state.counter.reading) {
+  const digits = reading && typeof reading.value === 'string' ? reading.value.replace(/\D/g, '') : '';
+  return digits ? Number(digits) : null;
+}
+
+/**
+ * Estado do contador do usuário (para o chip do cabeçalho e para o selo do cartão).
+ * @returns {{level: Level, label: string}}
+ */
+export function counterService() {
+  const c = state.counter;
+  if (state.counterOff) return { level: 'off', label: 'desativado' };
+  if (!c) return { level: 'off', label: 'sem dados' };
+  if (c.auth_state === 'login_required') return { level: 'bad', label: 'pediu login' };
+  if (c.auth_state === 'decrypt_failed') return { level: 'bad', label: 'não decifra' };
+  if (!c.cookies || !c.cookies.configured) return { level: 'bad', label: 'sem cookies' };
+  if (c.state === 'ok') return { level: 'ok', label: 'lendo' };
+  if (c.state === 'degraded') return { level: 'warn', label: 'degradado' };
+  if (c.error_code === 'channel_no_access') return { level: 'bad', label: 'sem acesso ao canal' };
+  if (c.state === 'error') return { level: 'bad', label: 'erro' };
+  return { level: 'warn', label: 'aguardando' };
 }

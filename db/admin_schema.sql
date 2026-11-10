@@ -24,6 +24,7 @@ INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '1');
 CREATE TABLE IF NOT EXISTS admin_sessions (
     id_hash      TEXT    PRIMARY KEY CHECK (length(id_hash) = 64),
     csrf_token   TEXT    NOT NULL CHECK (length(csrf_token) BETWEEN 32 AND 128),
+    user_id      INTEGER NOT NULL DEFAULT 1,                         -- v8 (D48)
     username     TEXT    NOT NULL CHECK (length(username) <= 64),
     client_ip    TEXT    NOT NULL DEFAULT '' CHECK (length(client_ip) <= 64),
     created_at   INTEGER NOT NULL,
@@ -47,3 +48,11 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_login_attempts_ip   ON login_attempts (ip, attempted_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts (username, attempted_at);
+
+-- v8 (D48): credenciais por usuario. So a api le/escreve. must_change = 1 forca a troca de senha no proximo acesso.
+CREATE TABLE IF NOT EXISTS credentials (
+    user_id       INTEGER PRIMARY KEY,
+    password_hash TEXT    NOT NULL CHECK (length(password_hash) BETWEEN 20 AND 300),
+    must_change   INTEGER NOT NULL DEFAULT 0 CHECK (must_change IN (0, 1)),
+    updated_at    INTEGER NOT NULL
+) STRICT;

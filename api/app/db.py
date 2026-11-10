@@ -16,8 +16,10 @@ from typing import Iterator
 
 # Tabelas que a api pode ler (e, em alguns casos, escrever) em livestats.db.
 _SHARED_READ = {
-    "schema_meta", "settings", "sets", "lives", "live_stats", "channel_info",
+    "schema_meta", "sets", "lives", "live_stats", "channel_info",
     "subscriber_reading", "worker_status", "cookie_sets",
+    # v8, D48-D52: usuarios, contadores, estado por contador (escrito pelo worker) e trilha de auditoria
+    "users", "counters", "counter_status", "audit_log",
     # v6, D43: a api le tudo do historico e da saude
     "live_samples", "set_peaks", "subscriber_samples", "live_reads", "health_minutes", "events",
 }
@@ -26,7 +28,14 @@ _SHARED_WRITE = {
     "sets": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
     "lives": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
     "live_stats": {sqlite3.SQLITE_DELETE},  # so apaga (URL da live mudou); quem grava e o worker-lives
-    "settings": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE},
+    "users": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
+    "counters": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
+    "audit_log": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE},  # poda das 5000 mais recentes
+    # apagar/limpar um usuario leva junto, em CASCADE, o que o contador dele gravou (o SQLite exige DELETE autorizado)
+    "channel_info": {sqlite3.SQLITE_DELETE},
+    "subscriber_reading": {sqlite3.SQLITE_DELETE},
+    "subscriber_samples": {sqlite3.SQLITE_DELETE},
+    "counter_status": {sqlite3.SQLITE_DELETE},
     "cookie_sets": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE},
     # D43: apagar uma live/conjunto leva junto, em CASCADE, as amostras, leituras e picos (o SQLite exige DELETE autorizado nelas)
     "live_samples": {sqlite3.SQLITE_DELETE},
@@ -37,7 +46,7 @@ _SHARED_WRITE = {
 # A api so GRAVA o texto cifrado; nunca le de volta.
 _DENIED_COLUMNS = {("cookie_sets", "ciphertext")}
 
-_ADMIN_TABLES = {"admin_sessions", "login_attempts"}
+_ADMIN_TABLES = {"admin_sessions", "login_attempts", "credentials"}
 _ADMIN_READ = _ADMIN_TABLES | {"schema_meta"}
 
 _ALWAYS_OK = {
@@ -131,13 +140,13 @@ _COOKIE_SETS_ADDED_COLUMNS = (  # versao 4 (D37)
     ("source", "TEXT NOT NULL DEFAULT 'admin' CHECK (source IN ('admin', 'worker'))"),
     ("renewed_from", "INTEGER CHECK (renewed_from IS NULL OR renewed_from >= 1)"),
 )
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "9"
 
 
 
 def _ddl_from_schema(schema_sql: str, table: str) -> str:
     """O ``CREATE TABLE`` de ``table`` como escrito em db/schema.sql (fonte unica), sem o ``IF NOT EXISTS``."""
-    match = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \(.*?\) STRICT;", schema_sql, re.DOTALL)
+    match = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \(.*?\) STRICT(?:, WITHOUT ROWID)?;", schema_sql, re.DOTALL)
     if match is None:
         raise RuntimeError(f"tabela {table} nao encontrada no esquema")
     return match.group(0).replace("IF NOT EXISTS ", "", 1).rstrip(";")
@@ -199,11 +208,108 @@ def compact_live_positions(conn: sqlite3.Connection, set_id: int | None = None) 
     )
 
 
-def _migrate_shared(conn: sqlite3.Connection, schema_sql: str) -> None:
-    """Leva um banco compartilhado v1..v5 a v6 (idempotente; nada se perde). Roda so no banco compartilhado.
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}  # noqa: S608 (nome fixo)
 
-    As tabelas novas (sets, lives, channel_info; v6: historico, saude e eventos) ja foram criadas por ``CREATE TABLE IF NOT EXISTS`` no esquema.
-    O ``live_stats`` de formato anterior (coluna ``slot``) bloqueou o ``IF NOT EXISTS``: e apagado aqui e recriado no formato novo.
+
+def _pre_migrate_v8(conn: sqlite3.Connection) -> None:
+    """Antes de aplicar o esquema v8: ``sets`` antigo ganha ``owner_id`` (o indice novo depende dele).
+
+    Roda com as chaves estrangeiras DESLIGADAS (``users`` ainda nao existe): o SQLite so aceita ``ADD COLUMN ... REFERENCES``
+    com default nao nulo nesse modo. Tudo que existe passa a ser do mestre (id 1).
+    """
+    cols = _columns(conn, "sets")
+    if cols and "owner_id" not in cols:
+        conn.execute(
+            "ALTER TABLE sets ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE"
+        )
+
+
+def _migrate_counter_tables(conn: sqlite3.Connection, schema_sql: str) -> None:
+    """v7 -> v8 (D51): channel_info, subscriber_reading, subscriber_samples e cookie_sets passam a ser por ``counter_id`` (tudo no contador 1)."""
+    if _columns(conn, "channel_info") and "counter_id" not in _columns(conn, "channel_info"):
+        conn.execute("ALTER TABLE channel_info RENAME TO channel_info_v7")
+        conn.execute(_ddl_from_schema(schema_sql, "channel_info"))
+        conn.execute(
+            "INSERT INTO channel_info (counter_id, channel_id, channel_name, detected_at) "
+            "SELECT 1, channel_id, channel_name, detected_at FROM channel_info_v7"
+        )
+        conn.execute("DROP TABLE channel_info_v7")
+    if _columns(conn, "subscriber_reading") and "counter_id" not in _columns(conn, "subscriber_reading"):
+        conn.execute("ALTER TABLE subscriber_reading RENAME TO subscriber_reading_v7")
+        conn.execute(_ddl_from_schema(schema_sql, "subscriber_reading"))
+        conn.execute(
+            "INSERT INTO subscriber_reading (counter_id, value, raw, read_at) SELECT 1, value, raw, read_at FROM subscriber_reading_v7"
+        )
+        conn.execute("DROP TABLE subscriber_reading_v7")
+    sample_columns = _columns(conn, "subscriber_samples")
+    if sample_columns and "counter_id" not in sample_columns:
+        conn.execute("ALTER TABLE subscriber_samples RENAME TO subscriber_samples_old")
+        conn.execute(_ddl_from_schema(schema_sql, "subscriber_samples"))
+        if "channel_id" in sample_columns:  # v7
+            conn.execute(
+                "INSERT OR IGNORE INTO subscriber_samples (counter_id, channel_id, at, value) "
+                "SELECT 1, channel_id, at, value FROM subscriber_samples_old"
+            )
+        else:  # v6: sem canal; usa o canal detectado (ou 'sem-canal') e alinha ao minuto
+            conn.execute(
+                "INSERT OR IGNORE INTO subscriber_samples (counter_id, channel_id, at, value) "
+                "SELECT 1, COALESCE((SELECT channel_id FROM channel_info WHERE counter_id = 1), 'sem-canal'), "
+                "(at / 60) * 60, value FROM subscriber_samples_old ORDER BY at"
+            )
+        conn.execute("DROP TABLE subscriber_samples_old")
+    if _columns(conn, "cookie_sets") and "counter_id" not in _columns(conn, "cookie_sets"):
+        conn.execute("ALTER TABLE cookie_sets RENAME TO cookie_sets_v7")
+        conn.execute(_ddl_from_schema(schema_sql, "cookie_sets"))
+        conn.execute(
+            "INSERT INTO cookie_sets (id, counter_id, ciphertext, key_id, cookie_count, uploaded_by, created_at, source, renewed_from) "
+            "SELECT id, 1, ciphertext, key_id, cookie_count, uploaded_by, created_at, source, renewed_from FROM cookie_sets_v7"
+        )
+        conn.execute("DROP TABLE cookie_sets_v7")
+
+
+_HEX_RE = re.compile(r"#[0-9A-F]{6}")
+
+
+_CHANNEL_OVERRIDE_DDL = (
+    "channel_override TEXT CHECK (channel_override IS NULL OR ("
+    "length(channel_override) = 24 AND channel_override GLOB 'UC*' AND channel_override NOT GLOB '*[^A-Za-z0-9_-]*'))"
+)
+
+
+def _migrate_channel_override(conn: sqlite3.Connection) -> None:
+    """v8 -> v9 (D54): ``counters`` ganha ``channel_override`` (ALTER TABLE ADD COLUMN so se a coluna faltar; idempotente)."""
+    cols = _columns(conn, "counters")
+    if cols and "channel_override" not in cols:
+        conn.execute(f"ALTER TABLE counters ADD COLUMN {_CHANNEL_OVERRIDE_DDL}")  # noqa: S608 (constante)
+
+
+def _migrate_worker_memory(conn: sqlite3.Connection) -> None:
+    """v8 -> v9 (D56): ``worker_status`` ganha ``mem_bytes`` (ALTER TABLE ADD COLUMN so se a coluna faltar; idempotente)."""
+    cols = _columns(conn, "worker_status")
+    if cols and "mem_bytes" not in cols:
+        conn.execute("ALTER TABLE worker_status ADD COLUMN mem_bytes INTEGER CHECK (mem_bytes IS NULL OR mem_bytes >= 0)")
+
+
+def _migrate_settings_to_counter(conn: sqlite3.Connection) -> None:
+    """A aparencia do contador (``settings.subs_font/subs_text_color``) vai para ``counters(1)``; ``settings`` deixa de existir."""
+    if _table_sql(conn, "settings") is None:
+        return
+    stored = {row[0]: row[1] for row in conn.execute("SELECT key, value FROM settings")}
+    font, color = stored.get("subs_font"), stored.get("subs_text_color")
+    if font and 1 <= len(font) <= 40:
+        conn.execute("UPDATE counters SET font = ? WHERE id = 1", (font,))
+    if color and _HEX_RE.fullmatch(color):
+        conn.execute("UPDATE counters SET text_color = ? WHERE id = 1", (color,))
+    conn.execute("DROP TABLE settings")
+
+
+def _migrate_shared(conn: sqlite3.Connection, schema_sql: str) -> None:
+    """Leva um banco compartilhado v1..v8 a v9 (idempotente; nada se perde). Roda so no banco compartilhado.
+
+    As tabelas novas (sets, lives, channel_info; v6: historico, saude e eventos; v8: users, counters, counter_status, audit_log) ja foram
+    criadas por ``CREATE TABLE IF NOT EXISTS`` no esquema. O ``live_stats`` de formato anterior (coluna ``slot``) bloqueou o
+    ``IF NOT EXISTS``: e apagado aqui e recriado no formato novo. As tabelas do contador de formato v7 sao reconstruidas por ``counter_id``.
     """
     if _table_sql(conn, "schema_meta") is None or _table_sql(conn, "worker_status") is None:
         return  # banco que nao e o compartilhado (admin.db)
@@ -230,11 +336,13 @@ def _migrate_shared(conn: sqlite3.Connection, schema_sql: str) -> None:
                 "worker, state, last_heartbeat_at, last_success_at, consecutive_failures, interval_seconds, "
                 "next_attempt_at, last_error_code, last_error_message, auth_state, cookies_applied_id, version",
             )
-        if "'channel_id'" in (_table_sql(conn, "settings") or ""):
-            _rebuild(conn, "settings", _ddl_from_schema(schema_sql, "settings"), "key, value", "WHERE key <> 'channel_id'")
+        _migrate_counter_tables(conn, schema_sql)
+        _migrate_channel_override(conn)
+        _migrate_worker_memory(conn)
+        _migrate_settings_to_counter(conn)
         version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
         if version is not None and version[0] != SCHEMA_VERSION:
-            compact_live_positions(conn)  # v6 (D44): so na passagem de versao
+            compact_live_positions(conn)  # D44: so na passagem de versao
         conn.execute(
             "UPDATE schema_meta SET value = ? WHERE key = 'schema_version' AND value <> ?",
             (SCHEMA_VERSION, SCHEMA_VERSION),
@@ -245,13 +353,57 @@ def _migrate_shared(conn: sqlite3.Connection, schema_sql: str) -> None:
     conn.execute("COMMIT")
 
 
+def _migrate_admin(conn: sqlite3.Connection) -> None:
+    """admin.db v1 -> v8 (D48): ``admin_sessions`` ganha ``user_id`` e as sessoes abertas sao apagadas. ``credentials`` vem do esquema."""
+    cols = _columns(conn, "admin_sessions")
+    if cols and "user_id" not in cols:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("ALTER TABLE admin_sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+            conn.execute("DELETE FROM admin_sessions")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+
+
 def bootstrap_schema(db_path: str, schema_file: str) -> None:
     """Aplica o esquema (idempotente) e migra bancos de versoes anteriores. Quem cria os bancos e SOMENTE a api, na subida."""
     sql = Path(schema_file).read_text(encoding="utf-8")
     conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=None)
     try:
-        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA foreign_keys=OFF")  # so durante a pre-migracao; o esquema liga de novo
+        _pre_migrate_v8(conn)
         conn.executescript(sql)
+        conn.execute("PRAGMA foreign_keys=ON")
         _migrate_shared(conn, sql)
+        _migrate_admin(conn)
     finally:
         conn.close()
+
+
+_USERNAME_RE = re.compile(r"[a-z0-9._-]{3,32}")
+
+
+def valid_username(value: str) -> bool:
+    return _USERNAME_RE.fullmatch(value) is not None
+
+
+def bootstrap_master(db_path: str, admin_db_path: str, username: str, password_hash: str, now: int) -> None:
+    """D48: o mestre (id 1) recebe ``ADMIN_USERNAME`` (minusculo) e, so se ainda nao houver credencial, o hash do secret como semente."""
+    shared = sqlite3.connect(db_path, timeout=5.0, isolation_level=None)
+    try:
+        shared.execute("PRAGMA foreign_keys=ON")
+        current = shared.execute("SELECT username FROM users WHERE id = 1").fetchone()
+        if current is not None and current[0] != username:
+            shared.execute("UPDATE users SET username = ? WHERE id = 1", (username,))
+    finally:
+        shared.close()
+    admin = sqlite3.connect(admin_db_path, timeout=5.0, isolation_level=None)
+    try:
+        admin.execute(
+            "INSERT OR IGNORE INTO credentials (user_id, password_hash, must_change, updated_at) VALUES (1, ?, 0, ?)",
+            (password_hash, now),
+        )
+    finally:
+        admin.close()

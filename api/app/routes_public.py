@@ -16,7 +16,6 @@ from . import db
 from .clock import timestamp_publico
 from .deps import AppState, get_state
 from .formato_publico import dumps, subscribers_object
-from .routes_admin import read_settings
 
 router = APIRouter()
 
@@ -24,6 +23,7 @@ NOT_READY_LIVE = "Dados ainda não disponíveis"
 NOT_READY_SUBSCRIBERS = "Dados ainda não disponíveis. Scraper inicializando..."
 LIVE_NOT_FOUND = "Live não encontrada"
 SET_NOT_FOUND = "Conjunto não encontrado"
+COUNTER_NOT_FOUND = "Contador não encontrado"
 _ID_MAX = 2_147_483_647
 
 
@@ -69,22 +69,31 @@ _LIVE_SELECT = (
 )
 
 
-def _subscribers_object_or_error(state: AppState) -> dict:
+MASTER_COUNTER_ID = 1  # /inscritos.json e /api/public/subscribers sao o contador do mestre
+
+
+def _subscribers_object_or_error(state: AppState, counter_id: int = MASTER_COUNTER_ID) -> tuple[dict, sqlite3.Row]:
+    """(objeto de ``/inscritos.json``, linha do contador). 404 se o contador nao existe; 503 se ainda nao ha leitura."""
+    if not _valid_id(counter_id):
+        raise HTTPException(status_code=404, detail=COUNTER_NOT_FOUND)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        row = conn.execute("SELECT value, raw, read_at FROM subscriber_reading WHERE id = 1").fetchone()
+        counter = conn.execute("SELECT id, font, text_color FROM counters WHERE id = ?", (counter_id,)).fetchone()
+        if counter is None:
+            raise HTTPException(status_code=404, detail=COUNTER_NOT_FOUND)
+        row = conn.execute("SELECT value, raw, read_at FROM subscriber_reading WHERE counter_id = ?", (counter_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=503, detail=NOT_READY_SUBSCRIBERS)
-    return subscribers_object(row)
+    return subscribers_object(row), counter
 
 
-def _subscribers_body(state: AppState) -> bytes:
-    return dumps(_subscribers_object_or_error(state))
+def _subscribers_body(state: AppState, counter_id: int = MASTER_COUNTER_ID) -> bytes:
+    return dumps(_subscribers_object_or_error(state, counter_id)[0])
 
 
 @router.get("/health")
 def health(state: AppState = Depends(get_state)) -> Response:
     with db.connection(db.open_shared, state.settings.db_path) as conn:
-        row = conn.execute("SELECT value, read_at FROM subscriber_reading WHERE id = 1").fetchone()
+        row = conn.execute("SELECT value, read_at FROM subscriber_reading WHERE counter_id = 1").fetchone()
     with db.connection(db.open_admin, state.settings.admin_db_path) as admin_conn:
         admin_conn.execute("SELECT key FROM schema_meta LIMIT 1").fetchall()
     body = {
@@ -155,13 +164,21 @@ def public_set(set_id: int, state: AppState = Depends(get_state)) -> Response:
     return _json(_set_body(state, set_id))
 
 
+def _subscribers_extended(state: AppState, counter_id: int) -> Response:
+    obj, counter = _subscribers_object_or_error(state, counter_id)
+    return _json(dumps({**obj, "font": counter["font"], "text_color": counter["text_color"]}))
+
+
 @router.get("/api/public/subscribers")
 def public_subscribers(state: AppState = Depends(get_state)) -> Response:
-    """Formato estendido: o de ``/inscritos.json`` acrescido de ``font`` e ``text_color`` do contador (D35). ``/inscritos.json`` nao muda."""
-    obj = _subscribers_object_or_error(state)
-    with db.connection(db.open_shared, state.settings.db_path) as conn:
-        look = read_settings(conn)
-    return _json(dumps({**obj, "font": look["subs_font"], "text_color": look["subs_text_color"]}))
+    """Formato estendido: o de ``/inscritos.json`` acrescido de ``font`` e ``text_color`` do contador (D35). Contador 1 (mestre)."""
+    return _subscribers_extended(state, MASTER_COUNTER_ID)
+
+
+@router.get("/api/public/subscribers/{counter_id:int}")
+def public_subscribers_of(counter_id: int, state: AppState = Depends(get_state)) -> Response:
+    """D51: o mesmo formato estendido, do contador ``counter_id`` (404 se nao existe; 503 sem leitura)."""
+    return _subscribers_extended(state, counter_id)
 
 
 # Atalhos de URL curta (o Nginx so deixa passar ids com digitos).
@@ -178,3 +195,8 @@ def shortcut_set(set_id: int, state: AppState = Depends(get_state)) -> Response:
 @router.get("/inscritos.json")
 def inscritos_json(state: AppState = Depends(get_state)) -> Response:
     return _json(_subscribers_body(state))
+
+
+@router.get("/inscritos/{counter_id:int}.json")
+def shortcut_subscribers(counter_id: int, state: AppState = Depends(get_state)) -> Response:
+    return _json(_subscribers_body(state, counter_id))
