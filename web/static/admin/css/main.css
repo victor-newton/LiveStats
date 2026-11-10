@@ -845,7 +845,7 @@ button, [role="button"], [role="tab"], .dd, .cp-trigger, .info-tip, .chip, .shar
 }
 
 /* Conectando: cartão com roda girando e barra indeterminada, enquanto o contador reabre a sessão do Studio. */
-.connecting { display: flex; align-items: center; gap: 14px; padding: 16px 18px; margin-bottom: 14px; position: relative; overflow: hidden; border: 1px solid var(--line-2); }
+.connecting { display: flex; flex-direction: row; text-align: left; align-items: center; gap: 14px; padding: 16px 18px; margin-bottom: 14px; position: relative; overflow: hidden; border: 1px solid var(--line-2); }
 .connecting[hidden] { display: none; }
 .connecting-text { display: grid; gap: 2px; min-width: 0; }
 .connecting-text strong { font-size: 1rem; }

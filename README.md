@@ -7,7 +7,9 @@ Estatísticas de lives do **YouTube**, da **Twitch** e do **Kick** reunidas em c
 - **Conjuntos de lives:** agrupe lives de qualquer plataforma. O LiveStats soma os espectadores, acompanha os likes (YouTube) contra uma meta e guarda o histórico para o gráfico.
 - **Sem chave de API:** as lives são lidas das páginas públicas das plataformas, no intervalo que você escolher (de 5 a 15 segundos).
 - **JSON e overlays:** cada live e cada conjunto tem um endereço JSON e overlays de likes e de espectadores, com a cor e a fonte que você escolher.
-- **Contador de inscritos:** lê o número de inscritos do seu canal no YouTube Studio e entrega em JSON e num overlay animado.
+- **Contador de inscritos:** lê o número de inscritos do seu canal no YouTube Studio (você escolhe qual canal da conta) e entrega em JSON e num overlay animado.
+- **Vários usuários:** o administrador (mestre) cria contas; cada pessoa tem os próprios conjuntos, lives e contador, sem ver os dos outros.
+- **Painel de qualquer lugar (opcional):** além da rede local, dá para abrir o painel pela internet atrás do Nginx Proxy Manager, com senha, HTTPS e limite de tentativas por pessoa.
 - **Seguro por padrão:** painel só na rede local (ou VPN), HTTPS próprio, senha com hash, cookies do Studio cifrados e containers sem privilégios.
 
 ## Sumário
@@ -15,14 +17,15 @@ Estatísticas de lives do **YouTube**, da **Twitch** e do **Kick** reunidas em c
 1. [Requisitos](#requisitos)
 2. [Instalação](#instalação)
 3. [Primeiro acesso](#primeiro-acesso)
-4. [Telas do painel](#telas-do-painel)
-5. [Usuários e painel mestre](#usuários-e-painel-mestre)
-6. [Acessar o painel de fora da rede](#acessar-o-painel-de-fora-da-rede)
-7. [Endereços públicos](#endereços-públicos)
-8. [Usar no OBS e no vMix](#usar-no-obs-e-no-vmix)
-9. [Atualizar, backup e voltar versão](#atualizar-backup-e-voltar-versão)
-10. [Problemas comuns](#problemas-comuns)
-11. [Segurança](#segurança)
+4. [Tutorial: do zero ao OBS](#tutorial-do-zero-ao-obs)
+5. [Telas do painel](#telas-do-painel)
+6. [Usuários e painel mestre](#usuários-e-painel-mestre)
+7. [Acessar o painel de fora da rede](#acessar-o-painel-de-fora-da-rede)
+8. [Endereços públicos](#endereços-públicos)
+9. [Usar no OBS e no vMix](#usar-no-obs-e-no-vmix)
+10. [Atualizar, backup e voltar versão](#atualizar-backup-e-voltar-versão)
+11. [Problemas comuns](#problemas-comuns)
+12. [Segurança](#segurança)
 
 ## Requisitos
 
@@ -38,7 +41,7 @@ A instalação é feita do seu computador, com um único comando. Baixe o códig
 
 ```sh
 git clone https://github.com/victor-newton/LiveStats.git
-cd livestats
+cd LiveStats
 bash deploy/enviar.sh instalar --host 192.168.0.10 --user meu-usuario-ssh
 ```
 
@@ -96,7 +99,7 @@ bash deploy/enviar.sh instalar --host 192.168.0.10 --user meu-usuario-ssh \
 Para usar os endereços fora da sua rede, aponte o Nginx Proxy Manager (que o Cloudflare Tunnel já alcança) para o LiveStats. Há dois jeitos:
 
 - **Opção B, a mais simples:** no Nginx Proxy Manager, crie um *Proxy Host* para o seu domínio com destino `http://IP-DO-SERVIDOR:8080` e SSL habilitado. Não mexe em nada no container do NPM. O limite de requisições por visitante passa a contar o IP do NPM.
-- **Opção A:** rode `bash deploy/enviar.sh conectar-npm --host IP --user USUARIO` (ou use `--conectar-npm` no `instalar`). O NPM entra na rede interna do LiveStats com IP fixo, o *Proxy Host* aponta para `livestats-web` na porta `8080` e cada visitante é contado pelo IP real (via `CF-Connecting-IP`). Reinicie o container do NPM uma vez depois de conectá-lo. Se o ZimaOS recriar o container do NPM, rode `conectar-npm` de novo.
+- **Opção A:** rode `bash deploy/enviar.sh conectar-npm --host IP --user USUARIO` (ou use `--conectar-npm` no `instalar`). O NPM entra na rede do LiveStats com IP fixo e o *Proxy Host* aponta para o IP fixo do web, **`172.29.80.2`**, na porta `8080` (**não** use o nome `livestats-web`: o Nginx do NPM não resolve nomes do Docker e responde 502). Cada visitante é contado pelo IP real (via `CF-Connecting-IP`). Reinicie o container do NPM uma vez depois de conectá-lo. Se o ZimaOS recriar o container do NPM, rode `conectar-npm` de novo.
 
 Em qualquer das duas, **nunca** publique a porta 8081 (o painel) na internet: ela fica só na rede local ou na VPN.
 
@@ -108,19 +111,39 @@ Em qualquer das duas, **nunca** publique a porta 8081 (o painel) na internet: el
 
 ![Tela de login](docs/imagens/login.png)
 
-Depois do login, crie o primeiro conjunto (botão **Novo conjunto**), adicione as lives e, se for usar o contador, cole os cookies na tela **Contador e cookies**.
+Depois do login, siga o tutorial abaixo: crie o primeiro conjunto, adicione as lives e, se for usar o contador, cole os cookies na aba **Contador**. No celular, as abas ficam numa barra fixa embaixo da tela.
+
+![Painel no celular](docs/imagens/celular-inicio.png)
+
+## Tutorial: do zero ao OBS
+
+Em dez minutos você tem uma live no ar dentro do OBS. Os nomes em **negrito** são botões e abas do painel.
+
+1. **Crie um conjunto.** Aba **Conjuntos › Novo conjunto**. Dê um nome (por exemplo "Maratona de Sábado"), uma meta de likes (opcional) e escolha a fonte e a cor do texto dos overlays. Clique em **Salvar**.
+2. **Adicione as lives.** Abra o conjunto e clique em **Adicionar live**. Cole o link da transmissão: YouTube (vídeo, `/live` ou `@canal/live`), Twitch (`twitch.tv/canal`) ou Kick (`kick.com/canal`). A plataforma é reconhecida sozinha. Se a live ainda não começou, ela fica "agendada" ou "offline" e passa a "ao vivo" sozinha.
+3. **Confira os números.** Em alguns segundos o conjunto mostra espectadores agora, likes contra a meta, o gráfico e a rosca de participação.
+4. **Copie o link do overlay.** Clique numa live (ou use os links do rodapé do conjunto, que somam todas) e use **Copiar** em *Overlay de likes / meta* ou *Overlay de espectadores*. Ajuste cor, fonte e meta na própria live e veja a **prévia**.
+5. **Coloque no OBS.** Em **Fontes › + › Navegador**, cole o link, use a largura e a altura do seu layout e marque *Atualizar navegador quando a cena ficar ativa*. O fundo é transparente. Detalhes em [Usar no OBS e no vMix](#usar-no-obs-e-no-vmix).
+6. **(Opcional) Ligue o contador de inscritos.** Aba **Contador**: logado no YouTube Studio do canal, exporte os cookies com o EditThisCookie, cole em **Cookies do Studio** e clique em **Salvar cookies**. Aparece o cartão **Conectando ao YouTube Studio…** (menos de 1 minuto) e depois o número. Se o canal que abriu não for o que você quer, preencha **Canal para ler** com o link do Studio ou o ID (`UC...`) e clique em **Salvar canal**. Depois copie o link do overlay do contador.
+7. **(Opcional) Convide outras pessoas.** Quem administra cria as contas em **Mestre › Novo usuário** e passa a senha provisória; cada um faz o próprio passo a passo acima. Veja [Usuários e painel mestre](#usuários-e-painel-mestre).
+
+Se algo não funcionar, a aba **Saúde** (só do mestre) mostra o motivo, e a tabela [Problemas comuns](#problemas-comuns) lista os casos mais frequentes.
 
 ## Telas do painel
 
-### Visão geral
+A navegação é por abas: no computador ficam no cabeçalho; no celular, numa barra fixa embaixo. O usuário comum vê **Início, Conjuntos, Contador** e a própria **Conta**; o mestre vê também **Saúde** e **Mestre**. Cada tela tem endereço próprio (`/inicio`, `/conjuntos`, `/contador`…), então recarregar a página ou guardar o link nos favoritos volta para a mesma tela.
+
+### Início
 
 ![Visão geral](docs/imagens/visao-geral.png)
 
-Resume tudo de uma vez: um cartão por conjunto (espectadores agora, likes contra a meta, mini gráfico e a lista de lives com o estado de cada uma), o contador de inscritos do canal e a atividade recente. Cada conjunto tem os seus próprios números; nada é somado entre conjuntos. Clique em **Abrir conjunto** para entrar no conjunto.
-
-Na barra lateral ficam os conjuntos (cada um abre um submenu com o painel, as lives e os links), o contador, a **Saúde** e, embaixo, o estado geral dos serviços.
+Resume tudo de uma vez: um cartão por conjunto (espectadores agora, likes contra a meta, mini gráfico e a lista de lives com o estado de cada uma), o contador de inscritos do canal e a atividade recente. Cada conjunto tem os seus próprios números; nada é somado entre conjuntos. Clique em **Abrir** para entrar no conjunto. No canto superior ficam o estado geral dos serviços e o menu da conta. Passe o mouse (ou toque) no ícone **ⓘ** ao lado dos títulos para ler a explicação de cada parte.
 
 ### Conjuntos e lives
+
+A aba **Conjuntos** lista os seus conjuntos em cartões (plataformas, espectadores agora, meta e mini gráfico), com o botão **Novo conjunto**.
+
+![Lista de conjuntos](docs/imagens/conjuntos.png)
 
 ![Conjunto](docs/imagens/conjunto.png)
 
@@ -131,7 +154,7 @@ Um **conjunto** reúne lives de qualquer plataforma que você quer mostrar junta
 - a **rosca** com a participação de cada live nos espectadores;
 - a lista de **lives** e os **links do conjunto**.
 
-**Novo conjunto** (barra lateral) cria um conjunto. **Configurar conjunto** edita o nome, a meta de likes, a fonte e a cor do texto; **Adicionar live** inclui uma transmissão.
+**Novo conjunto** cria um conjunto; dentro de um conjunto, o caminho **Conjuntos › Nome** no topo deixa pular direto para outro. **Configurar conjunto** edita o nome, a meta de likes, a fonte e a cor do texto; **Adicionar live** inclui uma transmissão.
 
 ![Configurar conjunto](docs/imagens/configurar-conjunto.png)
 
@@ -153,17 +176,19 @@ Ao lado ficam as **configurações**: nome no painel, meta de likes, **cor da li
 
 Os links usam o endereço informado em `--public-base-url`. Sem ele, o painel mostra o endereço pelo qual você abriu a página.
 
-### Inscritos, cookies e aparência
+### Contador de inscritos
 
-![Contador e cookies](docs/imagens/inscritos.png)
+![Contador](docs/imagens/inscritos.png)
 
-A tela **Contador e cookies** controla o contador de inscritos do canal do YouTube:
+A aba **Contador** controla o contador de inscritos do canal do YouTube:
 
 - o cartão do canal mostra o nome (descoberto sozinho pelos cookies), o número atual, o ganho dos últimos 7 dias e o de hoje;
-- em **Cookies do Studio**, cole o JSON exportado do seu navegador (extensão EditThisCookie, logado no YouTube Studio do canal) e clique em **Salvar cookies**. Eles ficam cifrados e só o serviço que lê o contador consegue abri-los; o painel nunca os mostra de volta. Quando a sessão é renovada pelo próprio serviço, o painel avisa. Só YouTube, um canal;
+- em **Cookies do Studio**, cole o JSON exportado do seu navegador (extensão EditThisCookie, logado no YouTube Studio do canal) e clique em **Salvar cookies**. Enquanto o serviço reabre a sessão do Studio, aparece o cartão **Conectando ao YouTube Studio…** (costuma levar menos de 1 minuto). Eles ficam cifrados e só o serviço que lê o contador consegue abri-los; o painel nunca os mostra de volta. Quando a sessão é renovada pelo próprio serviço, o painel avisa. Só YouTube, um canal;
 - em **Canal para ler (opcional)**, escolha qual canal da conta o contador acompanha. Por padrão é o canal que o YouTube Studio abre sozinho com os seus cookies; se a conta tem mais de um canal (por exemplo um pessoal e outro da marca), cole o link do Studio do canal desejado (`studio.youtube.com/channel/UC...`) ou só o ID (`UC...`) e clique em **Salvar canal**. O painel mostra o canal que está sendo lido e o selo **canal escolhido**; **Usar o canal automático** volta ao padrão. A conta dos cookies precisa ter acesso ao canal: senão o contador mostra o erro "A conta dos cookies não tem acesso a este canal". Trocar de canal não apaga o histórico do canal anterior. Canais com menos de 10 inscritos ainda não aparecem (o formato público exige 2 dígitos ou mais);
 - em **Aparência do contador**, escolha a fonte e a cor do texto, com prévia, e clique em **Salvar aparência**;
 - os **links do contador** (overlay `/contador`, JSON de inscritos e JSON com a aparência) ficam no fim da tela, com **Copiar**.
+
+![Conectando ao Studio](docs/imagens/contador-conectando.png)
 
 ### Saúde
 
@@ -171,7 +196,15 @@ A tela **Contador e cookies** controla o contador de inscritos do canal do YouTu
 
 Mostra se está tudo funcionando: o estado de cada serviço (leitura das lives, contador de inscritos, sessão do Studio, API e banco), o tempo de resposta por minuto na última hora (as faixas marcam incidentes), os eventos recentes (erros, renovações de sessão) e a leitura de cada live, com o tempo de resposta e quando será a próxima. Atualiza sozinha.
 
+### Conta
+
+![Conta](docs/imagens/conta.png)
+
+Nome, **trocar senha**, endereço externo do painel (se configurado), **Sair** e a **Zona de risco** com **Limpar meus dados**.
+
 ### No celular
+
+![Conjuntos no celular](docs/imagens/celular-conjuntos.png)
 
 No celular, as abas ficam numa barra fixa embaixo da tela; no computador, no cabeçalho. Todas as telas funcionam no celular, desde que ele esteja na rede local, na VPN ou (com o acesso externo ligado) no endereço do painel.
 
@@ -179,9 +212,17 @@ No celular, as abas ficam numa barra fixa embaixo da tela; no computador, no cab
 
 O painel aceita vários usuários, cada um com seus próprios conjuntos, lives e contador de inscritos. Não existe cadastro aberto: só o **mestre** (o usuário criado na instalação) cria contas.
 
+![Usuários do mestre](docs/imagens/mestre-usuarios.png)
+
 - **Criar um usuário:** no painel, aba **Mestre › Usuários**, **Novo usuário**. O LiveStats gera uma **senha provisória** de 16 caracteres, mostrada uma única vez (use **Copiar** e envie por um canal seguro). No primeiro acesso a pessoa é obrigada a trocar a senha (mínimo de 8 caracteres).
+![Novo usuário com senha provisória](docs/imagens/mestre-novo-usuario.png)
+
 - **Limites por usuário:** quantidade de conjuntos e de lives e se ele tem contador de inscritos. Existe ainda um teto geral (`MAX_SETS_TOTAL`, padrão 200, e `MAX_LIVES_TOTAL`, padrão 1000, no `.env`).
 - **Cada um enxerga só o que é seu.** O mestre vê o uso de cada conta, a atividade recente (entradas, trocas de senha, contas e conjuntos criados ou apagados), pode redefinir a senha, suspender, limpar os dados ou apagar a conta (digitando o nome dela para confirmar) e abrir os dados de qualquer usuário para editar. A tela **Saúde** é só do mestre.
+A aba **Mestre** tem ainda **Atividade** (terminal com o que aconteceu, filtrável por usuário) e **Uso do servidor**.
+
+![Atividade](docs/imagens/mestre-atividade.png)
+
 - **Limpar meus dados:** na aba **Conta**, em **Zona de risco**, **Limpar meus dados** apaga os seus conjuntos, lives, contador, cookies e leituras (você digita o seu nome de usuário para confirmar). A conta, a senha e os limites continuam. O mestre pode fazer o mesmo com os próprios dados.
 - **Contador por usuário:** cada conta com contador tem os próprios cookies do Studio, aparência e links. O do mestre continua em `/contador`, `/inscritos.json` e `/api/public/subscribers`; o dos outros usuários é lido por id (veja [Endereços públicos](#endereços-públicos)).
 - **Restringir o mestre:** com `MASTER_ALLOW_CIDRS` no `.env` (ou `--master-allow` no `instalar`), o login do mestre e as telas do mestre só funcionam a partir dessas redes.
@@ -340,7 +381,7 @@ Guarde o `secrets-backup.tgz` em lugar protegido: ele tem as chaves dos cookies.
 
 **Voltar versão.** Escolha a versão antiga no seu computador (`git checkout NOME-DA-VERSAO`) e rode o `instalar --sem-segredos` de novo. Os dados são mantidos.
 
-**Desligar sem perder nada.** `bash deploy/enviar.sh rollback --host IP --user USUARIO` desliga os serviços e solta o Nginx Proxy Manager da rede do LiveStats, sem apagar os volumes. Antes, no NPM, desative ou aponte para outro destino qualquer *Proxy Host* que use `livestats-web` (um destino que não resolve impede o NPM de recarregar). Para religar: `instalar --sem-segredos`. Só apague os dados se tiver certeza (`docker volume rm livestats-data livestats-admin`).
+**Desligar sem perder nada.** `bash deploy/enviar.sh rollback --host IP --user USUARIO` desliga os serviços e solta o Nginx Proxy Manager da rede do LiveStats, sem apagar os volumes. Antes, no NPM, desative ou aponte para outro destino qualquer *Proxy Host* que use `172.29.80.2` (um destino que não resolve impede o NPM de recarregar). Para religar: `instalar --sem-segredos`. Só apague os dados se tiver certeza (`docker volume rm livestats-data livestats-admin`).
 
 **Trocar a senha do painel.** No servidor, `sh /DATA/AppData/livestats/deploy/install.sh --lan-ip IP --reset-admin-password --skip-build` (rode por `ssh -t`, pois pergunta no terminal) e depois `docker compose up -d --force-recreate api`.
 
@@ -356,11 +397,11 @@ Guarde o `secrets-backup.tgz` em lugar protegido: ele tem as chaves dos cookies.
 | O navegador não confia no certificado do painel | É esperado (autoassinado). Aceite uma vez. Se o IP do servidor mudou, rode `instalar --renew-tls --sem-segredos` com o IP novo |
 | O `web` não sobe e o registro fala em certificado ou chave | Falta ou há permissão errada em `secrets/admin_tls_*.pem` (devem ser `644`). Rode `instalar --renew-tls --sem-segredos` |
 | O contador lê o canal errado (por exemplo o pessoal, e mostra "Contador nao encontrado na pagina") | Em **Contador**, preencha **Canal para ler** com o link do Studio ou o ID do canal certo e salve |
-| O contador de inscritos não atualiza e a tela mostra aviso de cookies | A sessão do Studio venceu ou os cookies são de outra conta. Exporte os cookies de novo, logado no canal certo, e cole em **Contador e cookies** |
+| O contador de inscritos não atualiza e a tela mostra aviso de cookies | A sessão do Studio venceu ou os cookies são de outra conta. Exporte os cookies de novo, logado no canal certo, e cole na aba **Contador** |
 | A live fica "aguardando" ou "erro" | Confira o link (deve ser da transmissão ao vivo, não do canal) e a tela **Saúde**: ela mostra o motivo e o tempo de resposta. O Kick às vezes exige o navegador interno (`KICK_BROWSER=1`, o padrão) |
 | O endereço público dá **502** logo depois de `conectar-npm` | O NPM guardou o DNS de antes de entrar na rede do LiveStats. Reinicie o container do NPM (`docker restart nginxproxymanager`) |
 | O endereço público dá **429** com muitos visitantes (opção B) | Todos dividem o limite do IP do NPM. Passe para a opção A |
-| O NPM não recarrega depois do `rollback` | Algum *Proxy Host* ainda aponta para `livestats-web`. Desative-o ou mude o destino |
+| O NPM não recarrega depois do `rollback` | Algum *Proxy Host* ainda aponta para o IP do LiveStats (`172.29.80.2`). Desative-o ou mude o destino |
 | No ZimaOS o LiveStats funciona mas não aparece na tela inicial | Rode `bash deploy/enviar.sh registrar-zimaos --host IP --user USUARIO` |
 | O `instalar` parou dizendo para rodar o `registrar-zimaos` | Com o app registrado no painel do ZimaOS, o código e as imagens são atualizados e a recriação dos containers é feita por esse comando |
 
