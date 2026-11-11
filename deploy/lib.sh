@@ -4,7 +4,7 @@
 
 DIR_PADRAO=/DATA/AppData/livestats
 REDE_EDGE=livestats-edge
-SERVICOS="livestats-api livestats-worker-lives livestats-worker-inscritos livestats-web"
+SERVICOS="livestats-api livestats-worker-lives livestats-worker-inscritos livestats-worker-chat livestats-web"
 export DIR_PADRAO REDE_EDGE SERVICOS
 
 # ZimaOS: a home do usuario (/DATA) tem um .docker do root (710) que o CLI nao consegue ler; assim o CLI nao

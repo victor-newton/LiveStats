@@ -59,6 +59,10 @@ export function initDialogs(navigate) {
   fontDropdown('stFont', fontSel());
   fontSel().addEventListener('change', refreshPreview);
   inputById('stGoal').addEventListener('input', refreshPreview);
+  byId('stChat').addEventListener('click', () => {
+    const sw = byId('stChat');
+    sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true'));
+  });
   byId('setForm').addEventListener('submit', (ev) => { ev.preventDefault(); void saveSet(); });
   armedButton(byId('setDelete'), 'Confirmar: apaga o conjunto e as lives', () => void deleteSet());
   // --- live
@@ -74,6 +78,7 @@ export function openNewSet() {
   byId('dlgSetT').textContent = 'Novo conjunto';
   byId('setDelete').hidden = true;
   byId('setSave').textContent = 'Criar conjunto';
+  byId('setChatBox').hidden = true; // a chave do chat é de um conjunto que já existe
   clearMessage(byId('setErr'));
   refreshPreview();
   dlg('dlgSet').showModal();
@@ -89,6 +94,8 @@ export function openConfigSet(set) {
   byId('dlgSetT').textContent = 'Configurar conjunto';
   byId('setDelete').hidden = false;
   byId('setSave').textContent = 'Salvar';
+  byId('setChatBox').hidden = false;
+  byId('stChat').setAttribute('aria-checked', String(!!(set.chat && set.chat.enabled)));
   clearMessage(byId('setErr'));
   refreshPreview();
   dlg('dlgSet').showModal();
@@ -119,8 +126,14 @@ async function saveSet() {
   const resp = editing
     ? await write('PUT', `/api/admin/sets/${editing.id}`, body, err)
     : await write('POST', '/api/admin/sets', body, err);
+  if (!resp) { btn.disabled = false; return; }
+  // D57: a chave "Chat do conjunto" só grava se mudou, e depois de o conjunto ter sido salvo
+  const chatOn = byId('stChat').getAttribute('aria-checked') === 'true';
+  if (editing && chatOn !== !!(editing.chat && editing.chat.enabled)) {
+    const chatResp = await write('PUT', `/api/admin/sets/${editing.id}/chat`, { enabled: chatOn }, err);
+    if (!chatResp) { btn.disabled = false; void requestRefresh(); return; }
+  }
   btn.disabled = false;
-  if (!resp) return;
   const wasNew = !editing;
   const newId = resp.data && resp.data.set ? resp.data.set.id : null;
   dlg('dlgSet').close();

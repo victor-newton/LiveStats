@@ -2,6 +2,20 @@
 
 Todas as mudanças relevantes do LiveStats ficam neste arquivo. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [3.1.0] - 2026-11-11
+
+### Adicionado
+
+- **Chat unificado em overlay**: junta num overlay só o chat das lives do YouTube, da Twitch e do Kick de um conjunto, no estilo dos widgets de chat para OBS, com o logo da plataforma ao lado do nome de quem escreveu e os emotes de cada plataforma. Endereço: `/overlay/chat.html?conjunto={id}` (com `&tema=` opcional para trocar o tema só naquela cena).
+- **11 temas**: Cartoon, Adesivo, Pixel, Post-it, Chiclete, Clássico, Balão, Vidro, Minimal, Terminal e Rodapé, com fontes hospedadas no próprio servidor.
+- **Painel**: chave "Chat do conjunto" em Configurar conjunto (desligada por padrão; conjunto sem chat não gasta processamento) e cartão "Chat do conjunto" no fim da página do conjunto, para escolher quais lives entram, o tema, o tamanho do texto, quanto tempo cada mensagem fica, o ícone da plataforma, a cor do nome, cargos, comandos, limite de mensagens por segundo e bots ignorados.
+- **Serviço `worker-chat`**: lê o chat só enquanto a live está ao vivo e o overlay está aberto; Twitch por conexão anônima, Kick pelo tempo real do próprio site e YouTube pela página do chat ao vivo, sem chave de API. Mensagens apagadas pela moderação somem do overlay; em chat muito rápido, moderadores, VIPs, inscritos e membros passam na frente.
+
+### Segurança
+
+- Nenhuma mensagem de chat é guardada (nem em banco, nem em log): ela passa pela memória do serviço, aparece no overlay e some.
+- O `worker-chat` fica numa rede própria com o web e não alcança a api; o overlay do chat libera imagens só dos servidores de emotes das três plataformas.
+
 ## [3.0.0] - 2026-11-10
 
 ### Adicionado

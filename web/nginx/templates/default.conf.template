@@ -27,6 +27,8 @@ server {
 
     include /etc/nginx/snippets/server_common.conf;
     include /etc/nginx/snippets/locations_public.conf;
+    # Chat (D57): o SSE do worker-chat existe SO na 8080.
+    include /etc/nginx/snippets/locations_chat.conf;
 
     # Overlay do contador: so na publica. Na 8081 o caminho /contador e uma rota do painel (abaixo).
     location = /contador {

@@ -25,6 +25,7 @@ import {
   fmt, fmtDec, hhmm, reduced, safeColor, setText, toEpoch, PLATFORM_NAME, PLATFORM_CLASS,
 } from './util.js';
 import { openAddLive, openConfigSet } from './dialogs.js';
+import { initChat, renderChat, resetChat } from './chat.js';
 
 const ERROR_TEXTS = {
   blocked: 'bloqueado pela plataforma',
@@ -184,7 +185,7 @@ export function initConjunto() {
   });
   scr.replaceChildren(
     h('div', { class: 'head' }, h('div', null, R.crumbs, R.title, h('div', { class: 'sub-row' }, R.sub, R.subTip)), h('div', { class: 'actions' }, R.btnConfig, R.btnAdd)),
-    h('div', { class: 'bento bento-210' }, chartCard, donutCard, h('div', { class: 'b-side' }, goalCard, onCard, peakCard), R.cardLives, R.cardLinks));
+    h('div', { class: 'bento bento-210' }, chartCard, donutCard, h('div', { class: 'b-side' }, goalCard, onCard, peakCard), R.cardLives, R.cardLinks, initChat()));
 }
 
 /** Descarta o conteúdo (sessão encerrada). */
@@ -206,6 +207,7 @@ export function resetConjunto() {
   if (R.links) R.links.replaceChildren();
   if (R.title) { R.title.textContent = ''; R.sub.textContent = ''; }
   if (R.tip) R.tip.hidden = true;
+  resetChat();
 }
 
 /** @returns {Promise<import('./api.js').ApiResponse[]>} */
@@ -523,6 +525,7 @@ export function render(first) {
     R.links.replaceChildren(...setEndpoints(set.id).map((ep) => linkItem(ep.label, `${state.publicBase}${ep.path}`, 'link-card')));
   }
 
+  renderChat(set);
   applyFocus();
 }
 

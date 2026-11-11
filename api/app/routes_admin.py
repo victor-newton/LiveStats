@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from . import db
 from . import audit
+from . import chat as chats
 from . import counter as counters
 from .auth import ABSOLUTE_TTL, MIN_PASSWORD, SESSION_COOKIE, Ctx, InvalidCredentials, LoginBlocked
 from .clock import iso_seconds
@@ -37,7 +38,7 @@ from . import history, memory
 from .fonts import DEFAULT_FONT, FONTS
 from .platforms import detect
 from .users import purge_owner_data
-from .schemas import ConfirmBody, CounterWrite, LiveCreate, LiveUpdate, LoginRequest, MeUpdate, PasswordChange, SetCreate, SetUpdate
+from .schemas import ChatWrite, ConfirmBody, CounterWrite, LiveCreate, LiveUpdate, LoginRequest, MeUpdate, PasswordChange, SetCreate, SetUpdate
 
 log = logging.getLogger("livestats.api")
 
@@ -185,7 +186,7 @@ def put_me(
 _ID_MAX = 2_147_483_647
 
 _SET_COLUMNS = "s.id, s.name, s.goal, s.color, s.font, s.text_color, s.position, s.owner_id, u.username AS owner_username"
-_LIVE_COLUMNS = "l.id, l.set_id, l.url, l.platform, l.ref, l.label, l.goal, l.color, l.font, l.text_color, l.position"
+_LIVE_COLUMNS = "l.id, l.set_id, l.url, l.platform, l.ref, l.label, l.goal, l.color, l.font, l.text_color, l.position, l.chat_enabled"
 _STATS_COLUMNS = "live_id, status, title, viewers, likes, updated_at, error_code"
 
 
@@ -203,12 +204,13 @@ def _live_admin(row: sqlite3.Row, stats: sqlite3.Row | None) -> dict[str, Any]:
     title = stats["title"] if stats is not None else None
     return {
         **{key: row[key] for key in row.keys()},
+        "chat_enabled": bool(row["chat_enabled"]),  # D57
         "display_name": history.display_name(row["platform"], row["ref"], row["label"], title),  # D44: calculado, nunca gravado
         "stats": _stats_object(stats),
     }
 
 
-def _set_object(row: sqlite3.Row, lives: list[dict[str, Any]]) -> dict[str, Any]:
+def _set_object(row: sqlite3.Row, lives: list[dict[str, Any]], chat_enabled: bool = False) -> dict[str, Any]:
     return {
         "id": row["id"],
         "name": row["name"],
@@ -219,6 +221,12 @@ def _set_object(row: sqlite3.Row, lives: list[dict[str, Any]]) -> dict[str, Any]
         "position": row["position"],
         "owner": {"id": row["owner_id"], "username": row["owner_username"]},
         "lives": lives,
+        # D57: chave "Chat do conjunto", quantas lives entram no chat e o endereco (relativo) do overlay
+        "chat": {
+            "enabled": chat_enabled,
+            "lives_enabled": sum(1 for live in lives if live["chat_enabled"]),
+            "overlay": chats.overlay_path(row["id"]),
+        },
     }
 
 
@@ -242,7 +250,8 @@ def read_sets(conn: sqlite3.Connection, owner: int | None = None, only: int | No
     by_set: dict[int, list[dict[str, Any]]] = {}
     for row in live_rows:
         by_set.setdefault(row["set_id"], []).append(_live_admin(row, stats.get(row["id"])))
-    return [_set_object(row, by_set.get(row["id"], [])) for row in set_rows]
+    chat_on = {row[0] for row in conn.execute("SELECT set_id FROM set_chat WHERE enabled = 1")}
+    return [_set_object(row, by_set.get(row["id"], []), row["id"] in chat_on) for row in set_rows]
 
 
 def _scope(ctx: Ctx) -> int | None:
@@ -413,6 +422,47 @@ def delete_set(
     return {"ok": True}
 
 
+def _chat_response(conn: sqlite3.Connection, set_id: int) -> dict[str, Any]:
+    return {**chats.read_config(conn, set_id), "public": {"overlay": chats.overlay_path(set_id)}}
+
+
+def _own_set_name(conn: sqlite3.Connection, ctx: Ctx, set_id: int) -> str:
+    owner = _scope(ctx)
+    found = conn.execute("SELECT name FROM sets WHERE id = ? AND (? IS NULL OR owner_id = ?)", (set_id, owner, owner)).fetchone()
+    if found is None:
+        raise HTTPException(status_code=404, detail="Conjunto não encontrado")  # id de outro usuario = 404, nunca 403 (D50)
+    return found["name"]
+
+
+@router.get("/sets/{set_id}/chat")
+def get_set_chat(
+    set_id: int = Path(ge=1, le=_ID_MAX), ctx: Ctx = Depends(require_session), state: AppState = Depends(get_state)
+) -> dict[str, Any]:
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        _own_set_name(conn, ctx, set_id)
+        return _chat_response(conn, set_id)
+
+
+@router.put("/sets/{set_id}/chat")
+def put_set_chat(
+    set_id: int = Path(ge=1, le=_ID_MAX),
+    ctx: Ctx = Depends(require_csrf),
+    raw: bytes = Depends(read_body),
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    body = validate_body(ChatWrite, parse_json(raw))
+    changes = {name: getattr(body, name) for name in body.model_fields_set}
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        with db.transaction(conn, immediate=True):
+            name = _own_set_name(conn, ctx, set_id)
+            chats.write_config(conn, set_id, changes, state.clock.now())
+            audit.record(  # so os nomes dos campos mudados, nunca a lista de ignorados
+                conn, state.clock.now(), ctx.user.id, ctx.user.username, "set_chat_updated", name,
+                f"conjunto {set_id}: {', '.join(sorted(changes))}",
+            )
+        return _chat_response(conn, set_id)
+
+
 @router.post("/sets/{set_id}/lives", status_code=201)
 def post_live(
     set_id: int = Path(ge=1, le=_ID_MAX),
@@ -469,7 +519,7 @@ def put_live(
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
     body = validate_body(LiveUpdate, parse_json(raw))
-    columns, values = _updates(body, ("url", "label", "goal", "color", "font", "text_color"))
+    columns, values = _updates(body, ("url", "label", "goal", "color", "font", "text_color", "chat_enabled"))
     new_target: tuple[str, str] | None = None
     if "url" in body.model_fields_set:
         new_target = detect(body.url)  # type: ignore[assignment]

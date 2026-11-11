@@ -1,11 +1,11 @@
--- LiveStats - esquema SQLite COMPARTILHADO (versao 9)
+-- LiveStats - esquema SQLite COMPARTILHADO (versao 10)
 -- Contrato T1 (revisado no V0, correcao C1; versao 2 = D34/C10: slots ganha goal e color; versao 3 = D35/C11: tabela settings e slots ganha font e text_color; versao 4 = D37/C14: cookie_sets ganha source e renewed_from; versao 5 = D38/D40: sets/lives/channel_info no lugar de slots, live_stats por live, settings sem channel_id, worker_status com blocked/parse_error/not_found; versao 6 = D43/D44: historico, saude e eventos, e position das lives 1..n). Somente leitura para T2-T7: qualquer mudanca passa por nova versao do contrato.
 -- Arquivo: /data/livestats.db (modo WAL), no volume livestats-data, montado em api, worker-lives e worker-inscritos.
 -- Este arquivo NAO contem estado de admin: sessoes e tentativas de login ficam em outro banco
 -- (db/admin_schema.sql -> /admin-state/admin.db), em volume montado SOMENTE na api.
 -- Quem aplica este arquivo: SOMENTE o container api, na subida, de forma idempotente
 -- (CREATE ... IF NOT EXISTS / INSERT OR IGNORE). Bancos criados na versao 1 sao migrados pela api na subida
--- (api/app/db.py: ALTER TABLE so se a coluna faltar; schema_version 1/2/3 -> 4 -> 5 -> 6 -> 7 -> 8 (D48-D51: usuarios, donos, contador por usuario) -> 9 (D54: counters.channel_override); slots com URL viram o conjunto Principal; settings e worker_status sao reconstruidas; nada se perde). Os workers esperam a tabela schema_meta existir
+-- (api/app/db.py: ALTER TABLE so se a coluna faltar; schema_version 1/2/3 -> 4 -> 5 -> 6 -> 7 -> 8 (D48-D51: usuarios, donos, contador por usuario) -> 9 (D54: counters.channel_override) -> 10 (D57: chat unificado: lives.chat_enabled, set_chat e worker_status aceita 'chat'); slots com URL viram o conjunto Principal; settings e worker_status sao reconstruidas; nada se perde). Os workers esperam a tabela schema_meta existir
 -- e nunca criam nem alteram tabelas.
 -- Colunas e tabelas em ingles; os nomes dos campos do JSON publico (portugues) sao os de /inscritos.json.
 
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value TEXT NOT NULL
 ) STRICT;
 
-INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '9');
+INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '10');
 
 ------------------------------------------------------------------------
 -- v8 (D48/D50/D51): usuarios, donos e contador por usuario. A SENHA nao fica aqui (admin.db, credentials).
@@ -123,7 +123,9 @@ CREATE TABLE IF NOT EXISTS lives (
         CHECK (length(text_color) = 7 AND text_color GLOB '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'),
     position   INTEGER NOT NULL DEFAULT 0,
     created_at TEXT    NOT NULL
-        CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z')
+        CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z'),
+    -- v10 (D57): interruptor "entra no chat" da live (a migracao faz ADD COLUMN idempotente)
+    chat_enabled INTEGER NOT NULL DEFAULT 0 CHECK (chat_enabled IN (0, 1))
 ) STRICT;
 CREATE INDEX IF NOT EXISTS lives_set_idx ON lives(set_id, position);
 CREATE INDEX IF NOT EXISTS sets_owner_idx ON sets(owner_id, position);
@@ -208,7 +210,7 @@ CREATE TABLE IF NOT EXISTS cookie_sets (
 -- last_error_code e um enum fechado; last_error_message e curto e NAO pode conter segredos.
 ------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS worker_status (
-    worker               TEXT PRIMARY KEY CHECK (worker IN ('lives', 'inscritos')),
+    worker               TEXT PRIMARY KEY CHECK (worker IN ('lives', 'inscritos', 'chat')),
     state                TEXT NOT NULL CHECK (state IN ('starting', 'ok', 'degraded', 'error', 'stopped')),
     last_heartbeat_at    INTEGER NOT NULL,               -- epoch (s, UTC)
     last_success_at      INTEGER,
@@ -226,6 +228,26 @@ CREATE TABLE IF NOT EXISTS worker_status (
     version              TEXT NOT NULL DEFAULT '',
     -- v9 (D56): memoria em uso pelo container do worker no ultimo batimento (cgroup); escrita SO pelo worker, lida pela api
     mem_bytes            INTEGER CHECK (mem_bytes IS NULL OR mem_bytes >= 0)
+) STRICT;
+
+------------------------------------------------------------------------
+-- v10 (D57): configuracao do chat unificado por conjunto. NENHUMA mensagem de chat e gravada. Escrita SOMENTE pela api;
+-- o worker-chat so le. Sem linha = padroes (chat desligado). enabled e a chave "Chat do conjunto" do pop-up Configurar conjunto.
+------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS set_chat (
+    set_id        INTEGER PRIMARY KEY REFERENCES sets(id) ON DELETE CASCADE,
+    enabled       INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    theme         TEXT    NOT NULL DEFAULT 'classico' CHECK (theme IN (
+        'cartoon', 'adesivo', 'pixel', 'postit', 'chiclete', 'classico', 'balao', 'vidro', 'minimal', 'terminal', 'rodape')),
+    font_size     INTEGER NOT NULL DEFAULT 18 CHECK (font_size BETWEEN 12 AND 40),
+    logo_style    TEXT    NOT NULL DEFAULT 'cor' CHECK (logo_style IN ('cor', 'mono', 'sigla')),
+    name_color    TEXT    NOT NULL DEFAULT 'usuario' CHECK (name_color IN ('usuario', 'plataforma', 'branco')),
+    lifetime_s    INTEGER NOT NULL DEFAULT 0 CHECK (lifetime_s BETWEEN 0 AND 300),
+    show_roles    INTEGER NOT NULL DEFAULT 1 CHECK (show_roles IN (0, 1)),
+    hide_commands INTEGER NOT NULL DEFAULT 1 CHECK (hide_commands IN (0, 1)),
+    ignored_users TEXT    NOT NULL DEFAULT 'nightbot,streamelements,moobot,streamlabs,botrix' CHECK (length(ignored_users) <= 500),
+    max_rate      INTEGER NOT NULL DEFAULT 8 CHECK (max_rate BETWEEN 1 AND 50),
+    updated_at    INTEGER NOT NULL
 ) STRICT;
 
 ------------------------------------------------------------------------

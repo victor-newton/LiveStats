@@ -124,6 +124,7 @@ class LiveCreate(_Partial):
 class LiveUpdate(_Partial):
     url: LiveUrl = None  # type: ignore[assignment]
     label: Label = None  # type: ignore[assignment]
+    chat_enabled: StrictBool = None  # type: ignore[assignment]  # D57: interruptor "entra no chat"
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "LiveUpdate":
@@ -180,6 +181,67 @@ class CounterWrite(BaseModel):
         if not self.model_fields_set:
             raise ValueError("Informe ao menos um campo")
         if any(getattr(self, name) is None for name in self.model_fields_set - {"channel_id"}):
+            raise ValueError("Valor nulo nao e permitido")
+        return self
+
+
+# ---------------------------------------------------------------------------- v5: chat unificado (D57)
+CHAT_THEMES = ("cartoon", "adesivo", "pixel", "postit", "chiclete", "classico", "balao", "vidro", "minimal", "terminal", "rodape")
+IGNORED_USERS_MAX = 500
+_IGNORED_NAME = re.compile(r"[a-z0-9_.-]{1,40}")
+_SEPARATORS = re.compile(r"[,\s]+")
+
+
+def normalize_ignored_users(value: str | list[str]) -> list[str]:
+    """Lista ou texto separado por virgula/espaco -> nomes em minusculas, sem repeticao, cada um ``[a-z0-9_.-]{1,40}``, total <= 500."""
+    if isinstance(value, str):
+        pieces = _SEPARATORS.split(value)
+    else:
+        pieces = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("Cada nome deve ser texto")
+            pieces.extend(_SEPARATORS.split(item))
+    names: list[str] = []
+    for piece in pieces:
+        name = piece.lower()
+        if not name:
+            continue
+        if _IGNORED_NAME.fullmatch(name) is None:
+            raise ValueError("Nome invalido: use de 1 a 40 caracteres entre letras, digitos, '.', '_' e '-'")
+        if name not in names:
+            names.append(name)
+    if len(",".join(names)) > IGNORED_USERS_MAX:
+        raise ValueError(f"A lista de ignorados deve ter no maximo {IGNORED_USERS_MAX} caracteres")
+    return names
+
+
+class ChatWrite(BaseModel):
+    """Qualquer subconjunto (nao vazio) da configuracao do chat do conjunto. Nulo nao e permitido."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: StrictBool = None  # type: ignore[assignment]
+    theme: Literal[CHAT_THEMES] = None  # type: ignore[valid-type,assignment]
+    font_size: Annotated[StrictInt, Field(ge=12, le=40)] = None  # type: ignore[assignment]
+    logo_style: Literal["cor", "mono", "sigla"] = None  # type: ignore[assignment]
+    name_color: Literal["usuario", "plataforma", "branco"] = None  # type: ignore[assignment]
+    lifetime_s: Annotated[StrictInt, Field(ge=0, le=300)] = None  # type: ignore[assignment]
+    show_roles: StrictBool = None  # type: ignore[assignment]
+    hide_commands: StrictBool = None  # type: ignore[assignment]
+    ignored_users: Annotated[StrictStr | list[StrictStr], Field(max_length=2000)] = None  # type: ignore[assignment]
+    max_rate: Annotated[StrictInt, Field(ge=1, le=50)] = None  # type: ignore[assignment]
+
+    @field_validator("ignored_users", mode="after")
+    @classmethod
+    def _ignored(cls, value: str | list[str]) -> list[str]:
+        return normalize_ignored_users(value)
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "ChatWrite":
+        if not self.model_fields_set:
+            raise ValueError("Informe ao menos um campo")
+        if any(getattr(self, name) is None for name in self.model_fields_set):
             raise ValueError("Valor nulo nao e permitido")
         return self
 

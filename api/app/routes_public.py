@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
+from . import chat as chats
 from . import db
 from .clock import timestamp_publico
 from .deps import AppState, get_state
@@ -162,6 +163,17 @@ def public_live(live_id: int, state: AppState = Depends(get_state)) -> Response:
 @router.get("/api/public/sets/{set_id:int}")
 def public_set(set_id: int, state: AppState = Depends(get_state)) -> Response:
     return _json(_set_body(state, set_id))
+
+
+@router.get("/api/public/chat/{set_id:int}")
+def public_chat(set_id: int, state: AppState = Depends(get_state)) -> Response:
+    """D57: so a aparencia do overlay de chat (nada do dono, filtros ou lives); 404 se o conjunto nao existe."""
+    if not _valid_id(set_id):
+        raise HTTPException(status_code=404, detail=SET_NOT_FOUND)
+    with db.connection(db.open_shared, state.settings.db_path) as conn:
+        if conn.execute("SELECT 1 FROM sets WHERE id = ?", (set_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail=SET_NOT_FOUND)
+        return _json(dumps(chats.public_appearance(conn, set_id)))
 
 
 def _subscribers_extended(state: AppState, counter_id: int) -> Response:

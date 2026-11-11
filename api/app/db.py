@@ -20,6 +20,8 @@ _SHARED_READ = {
     "subscriber_reading", "worker_status", "cookie_sets",
     # v8, D48-D52: usuarios, contadores, estado por contador (escrito pelo worker) e trilha de auditoria
     "users", "counters", "counter_status", "audit_log",
+    # v10, D57: configuracao do chat por conjunto (a api escreve; o worker-chat so le)
+    "set_chat",
     # v6, D43: a api le tudo do historico e da saude
     "live_samples", "set_peaks", "subscriber_samples", "live_reads", "health_minutes", "events",
 }
@@ -27,6 +29,7 @@ _SHARED_WRITE = {
     # tabela -> acoes permitidas
     "sets": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
     "lives": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
+    "set_chat": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},  # DELETE: CASCADE ao apagar o conjunto
     "live_stats": {sqlite3.SQLITE_DELETE},  # so apaga (URL da live mudou); quem grava e o worker-lives
     "users": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
     "counters": {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE},
@@ -140,7 +143,7 @@ _COOKIE_SETS_ADDED_COLUMNS = (  # versao 4 (D37)
     ("source", "TEXT NOT NULL DEFAULT 'admin' CHECK (source IN ('admin', 'worker'))"),
     ("renewed_from", "INTEGER CHECK (renewed_from IS NULL OR renewed_from >= 1)"),
 )
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 
 
 
@@ -291,6 +294,24 @@ def _migrate_worker_memory(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE worker_status ADD COLUMN mem_bytes INTEGER CHECK (mem_bytes IS NULL OR mem_bytes >= 0)")
 
 
+def _migrate_chat(conn: sqlite3.Connection, schema_sql: str) -> None:
+    """v9 -> v10 (D57): ``lives.chat_enabled`` (ADD COLUMN so se faltar) e ``worker_status`` reconstruida para aceitar o worker 'chat'.
+
+    ``set_chat`` ja veio do esquema (``CREATE TABLE IF NOT EXISTS``). A reconstrucao copia todas as linhas e colunas existentes
+    e so acontece se o CHECK ainda nao conhece 'chat' (idempotente). Roda dentro da transacao de ``_migrate_shared``.
+    """
+    if "chat_enabled" not in _columns(conn, "lives"):
+        conn.execute("ALTER TABLE lives ADD COLUMN chat_enabled INTEGER NOT NULL DEFAULT 0 CHECK (chat_enabled IN (0, 1))")
+    if "'chat'" not in (_table_sql(conn, "worker_status") or ""):
+        current = _columns(conn, "worker_status")
+        wanted = (
+            "worker, state, last_heartbeat_at, last_success_at, consecutive_failures, interval_seconds, "
+            "next_attempt_at, last_error_code, last_error_message, auth_state, cookies_applied_id, version, mem_bytes"
+        )
+        copied = ", ".join(c for c in wanted.split(", ") if c in current)
+        _rebuild(conn, "worker_status", _ddl_from_schema(schema_sql, "worker_status"), copied)
+
+
 def _migrate_settings_to_counter(conn: sqlite3.Connection) -> None:
     """A aparencia do contador (``settings.subs_font/subs_text_color``) vai para ``counters(1)``; ``settings`` deixa de existir."""
     if _table_sql(conn, "settings") is None:
@@ -305,7 +326,7 @@ def _migrate_settings_to_counter(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_shared(conn: sqlite3.Connection, schema_sql: str) -> None:
-    """Leva um banco compartilhado v1..v8 a v9 (idempotente; nada se perde). Roda so no banco compartilhado.
+    """Leva um banco compartilhado v1..v9 a v10 (idempotente; nada se perde). Roda so no banco compartilhado.
 
     As tabelas novas (sets, lives, channel_info; v6: historico, saude e eventos; v8: users, counters, counter_status, audit_log) ja foram
     criadas por ``CREATE TABLE IF NOT EXISTS`` no esquema. O ``live_stats`` de formato anterior (coluna ``slot``) bloqueou o
@@ -339,6 +360,7 @@ def _migrate_shared(conn: sqlite3.Connection, schema_sql: str) -> None:
         _migrate_counter_tables(conn, schema_sql)
         _migrate_channel_override(conn)
         _migrate_worker_memory(conn)
+        _migrate_chat(conn, schema_sql)
         _migrate_settings_to_counter(conn)
         version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
         if version is not None and version[0] != SCHEMA_VERSION:

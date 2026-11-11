@@ -1,6 +1,6 @@
 # LiveStats - esqueleto do compose (contrato T1; T7 completa Dockerfiles, nginx e metadados x-casaos).
 # Regras que T7 NAO pode alterar:
-#   - nomes dos 4 servicos, redes, volume e o mapeamento secret -> container
+#   - nomes dos 5 servicos, redes, volume e o mapeamento secret -> container
 #   - o volume livestats-admin e montado SOMENTE na api; os workers nao o enxergam
 #   - nenhum segredo em `environment:` (so caminhos *_FILE e configuracao nao secreta)
 #   - endurecimento de todos os servicos (usuario nao-root, read_only, cap_drop ALL, no-new-privileges)
@@ -119,6 +119,7 @@ services:
         # "livestats-web" nao funciona como destino do NPM; use este IP. Tem de ser livre e fora do .0/.1/.255.
         ipv4_address: ${WEB_EDGE_IP:-172.29.80.2}
       internal: {}                      # fala com a api
+      chat: {}                          # alcanca o SSE do worker-chat (8090)
     tmpfs:
       - /tmp:size=16m,mode=1777
       - /var/cache/nginx:size=64m,uid=101,gid=101
@@ -248,11 +249,55 @@ services:
       retries: 3
       start_period: 60s
 
+  # ---------------------------------------------------------------- worker-chat (chat unificado, D57)
+  worker-chat:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: worker_chat/Dockerfile
+    image: livestats/worker-chat:local
+    container_name: livestats-worker-chat
+    user: "10001:10001"
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      DB_PATH: /data/livestats.db
+      MAX_CHAT_LIVES_TOTAL: ${MAX_CHAT_LIVES_TOTAL:-30}   # conexoes de chat (plataforma, canal) ao mesmo tempo
+      MAX_CHAT_CLIENTS: ${MAX_CHAT_CLIENTS:-200}          # overlays (conexoes SSE) ao mesmo tempo; acima disso, 503
+      MAX_YT_CHAT_TABS: ${MAX_YT_CHAT_TABS:-6}            # abas do Chromium (uma por live do YouTube) ao mesmo tempo
+      HOME: /home/app
+    # Sem secrets e sem `ports:`: o SSE (8090) so e alcancado pelo Nginx do web, pela rede `chat` (so web e worker-chat; ela nao
+    # tem a api, que continua fora do alcance de qualquer worker). A saida (Twitch, Kick e o Chromium do YouTube) vai pela
+    # egress. O banco vem pelo volume, nao pela rede. Nenhuma mensagem e gravada: so o batimento (worker_status 'chat').
+    volumes:
+      - livestats-data:/data
+    networks:
+      - chat                            # o web alcanca o SSE (8090); rede interna so deles, sem a api
+      - egress                          # saida para a internet
+    shm_size: "256mb"                   # Chromium do YouTube (uma aba por live) e do plano B do Kick
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /home/app:size=64m,uid=10001,gid=10001
+    healthcheck:
+      test: ["CMD", "python", "-m", "worker_chat.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 # -------------------------------------------------------------------- redes
 networks:
-  # web <-> api. internal: true => sem rota para fora (a api nao tem internet).
+  # web <-> api. internal: true => sem rota para fora (a api nao tem internet). Nenhum worker entra aqui.
   internal:
     name: livestats-internal
+    driver: bridge
+    internal: true
+  # web <-> worker-chat (SSE 8090), so os dois. internal: true => sem rota para fora; o worker-chat sai pela egress. Fica
+  # separada da `internal` para o worker-chat NAO alcancar a api (SEC-11: nenhum worker alcanca a api).
+  chat:
+    name: livestats-chat
     driver: bridge
     internal: true
   # Onde o web publica 8080/8081 (rede interna nao publica portas). Sem NAT de saida:

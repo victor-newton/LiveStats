@@ -35,7 +35,7 @@ for c in $SERVICOS; do
 done
 
 titulo "Heartbeat dos workers (mesma checagem do healthcheck)"
-for par in "livestats-worker-lives worker_lives.healthcheck" "livestats-worker-inscritos worker_inscritos.healthcheck"; do
+for par in "livestats-worker-lives worker_lives.healthcheck" "livestats-worker-inscritos worker_inscritos.healthcheck" "livestats-worker-chat worker_chat.healthcheck"; do
   # shellcheck disable=SC2086
   set -- $par
   if docker_ exec "$1" python -m "$2" >/dev/null 2>&1; then

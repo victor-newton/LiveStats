@@ -7,6 +7,7 @@ Estatísticas de lives do **YouTube**, da **Twitch** e do **Kick** reunidas em c
 - **Conjuntos de lives:** agrupe lives de qualquer plataforma. O LiveStats soma os espectadores, acompanha os likes (YouTube) contra uma meta e guarda o histórico para o gráfico.
 - **Sem chave de API:** as lives são lidas das páginas públicas das plataformas, no intervalo que você escolher (de 5 a 15 segundos).
 - **JSON e overlays:** cada live e cada conjunto tem um endereço JSON e overlays de likes e de espectadores, com a cor e a fonte que você escolher.
+- **Chat unificado:** junta num overlay só o chat das lives do YouTube, da Twitch e do Kick de um conjunto, com o logo da plataforma ao lado do nome de quem escreveu, emotes de cada plataforma e 11 temas. Nenhuma mensagem é guardada.
 - **Contador de inscritos:** lê o número de inscritos do seu canal no YouTube Studio (você escolhe qual canal da conta) e entrega em JSON e num overlay animado.
 - **Vários usuários:** o administrador (mestre) cria contas; cada pessoa tem os próprios conjuntos, lives e contador, sem ver os dos outros.
 - **Painel de qualquer lugar (opcional):** além da rede local, dá para abrir o painel pela internet atrás do Nginx Proxy Manager, com senha, HTTPS e limite de tentativas por pessoa.
@@ -176,6 +177,25 @@ Ao lado ficam as **configurações**: nome no painel, meta de likes, **cor da li
 
 Os links usam o endereço informado em `--public-base-url`. Sem ele, o painel mostra o endereço pelo qual você abriu a página.
 
+### Chat do conjunto
+
+![Chat do conjunto](docs/imagens/chat-conjunto.png)
+
+O chat unificado junta o chat das lives de um conjunto num overlay só, com o logo da plataforma ao lado do nome de quem escreveu.
+
+1. Em **Configurar conjunto**, ligue **Chat do conjunto** e salve. Conjunto com o chat desligado não gasta nada de processamento.
+
+   ![Chave do chat em Configurar conjunto](docs/imagens/chat-configurar.png)
+
+2. No fim da página do conjunto aparece o cartão **Chat do conjunto**. Ligue as lives que entram no chat, escolha o tema e ajuste a aparência: tamanho do texto, quanto tempo cada mensagem fica na tela (ou só até sair da tela), ícone da plataforma (colorido, branco ou sigla), cor do nome, cargos (moderador, VIP, inscrito, membro), esconder comandos que começam com `!`, limite de mensagens por segundo e bots ignorados. Clique em **Salvar chat**.
+3. Copie o endereço do overlay e coloque no OBS ou no vMix (veja [Usar no OBS e no vMix](#usar-no-obs-e-no-vmix)).
+
+O chat só é lido enquanto a live está **ao vivo** e o overlay está aberto em algum lugar. Nenhuma mensagem é guardada: ela aparece no overlay e some. Mensagens apagadas pela moderação somem do overlay também. Em chat muito rápido, o limite por segundo vale e moderadores, VIPs, inscritos e membros passam na frente.
+
+![Temas do chat](docs/imagens/chat-temas.png)
+
+Temas: **Cartoon**, **Adesivo**, **Pixel**, **Post-it**, **Chiclete**, **Clássico**, **Balão**, **Vidro**, **Minimal**, **Terminal** e **Rodapé** (letreiro horizontal). Para usar outro tema só numa cena, acrescente `&tema=` ao endereço (por exemplo `&tema=pixel`).
+
 ### Contador de inscritos
 
 ![Contador](docs/imagens/inscritos.png)
@@ -269,6 +289,8 @@ Estes endereços **não pedem login**, podem ser usados direto no OBS, no vMix o
 | `/overlay/live.html?live={id}&metrica=views` | Overlay de espectadores de uma live |
 | `/overlay/live.html?conjunto={id}&metrica=likes` | Overlay de likes e meta do conjunto |
 | `/overlay/live.html?conjunto={id}&metrica=views` | Overlay de espectadores do conjunto |
+| `/overlay/chat.html?conjunto={id}` | Overlay do chat unificado do conjunto (opcional: `&tema=cartoon`, `adesivo`, `pixel`, `postit`, `chiclete`, `classico`, `balao`, `vidro`, `minimal`, `terminal` ou `rodape`) |
+| `/api/public/chat/{id}` | Aparência do chat do conjunto (tema, tamanho, ícone, cor do nome); as mensagens não ficam em endereço nenhum |
 | `/inscritos.json` | Inscritos do canal do mestre (formato fixo, simples de usar) |
 | `/api/public/subscribers` | O mesmo, acrescido de `font` e `text_color` do contador |
 | `/contador` | Overlay animado do contador de inscritos do mestre |
@@ -346,7 +368,7 @@ Os overlays têm fundo transparente. Nos prints abaixo, o fundo quadriculado é 
 
 1. Em **Fontes**, clique em **+** e escolha **Navegador**.
 2. Em **URL**, cole o link do overlay copiado do painel (por exemplo `http://IP-DO-SERVIDOR:8080/overlay/live.html?conjunto=1&metrica=views`).
-3. Ajuste largura e altura (por exemplo 800 x 200). O fundo já é transparente.
+3. Ajuste largura e altura (por exemplo 800 x 200). O fundo já é transparente. Para o overlay do chat, algo como 400 x 800 (o tema Rodapé fica melhor largo e baixo, por exemplo 1920 x 120).
 
 **Overlays no vMix**
 

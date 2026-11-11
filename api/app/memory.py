@@ -98,6 +98,7 @@ def memory_block(
         ("api", own),
         ("worker-lives", from_heartbeat("lives")),
         ("worker-inscritos", from_heartbeat("inscritos")),
+        ("worker-chat", from_heartbeat("chat")),  # D57
         ("web", None),
     ]
     return {
