@@ -48,11 +48,12 @@ export const state = {
   /** @type {any} */
   health: null,
   /** setId -> {range, data} (histórico do conjunto no período em uso) */
-  /** @type {Map<number, {range: number, data: any}>} */
+  /** @type {Map<number, {range: number | string, data: any}>} */
   hist: new Map(),
   /** setId -> {at, values} (minigráfico da Visão geral, atualizado a cada 30 s) */
   /** @type {Map<number, {at: number, values: number[]}>} */
   sparks: new Map(),
+  /** @type {number | string} */
   range: 60,
   publicBase: '',
   /** endereço do painel mostrado na Conta (PUBLIC_ADMIN_URL, se o servidor o informar; senão a origem atual) */

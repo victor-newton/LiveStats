@@ -152,6 +152,7 @@ services:
       USER_POOL_SIZE: ${USER_POOL_SIZE:-1}           # so para o painel mestre exibir o pool (o worker-inscritos usa o mesmo valor; D51)
       USER_COUNTER_INTERVAL: ${USER_COUNTER_INTERVAL:-60}
       LIVE_INTERVAL: ${LIVE_INTERVAL:-10}            # para estimar leituras por minuto no painel mestre
+      HISTORY_RETENTION_DAYS: ${HISTORY_RETENTION_DAYS:-14}   # D59: maior periodo que o grafico pode exportar (1 a 90 dias)
       COOKIE_PUBLIC_KEY_FILE: /run/secrets/cookie_public_key
       ADMIN_PASSWORD_HASH_FILE: /run/secrets/admin_password_hash
       ADMIN_EXTERNAL_ACCESS: ${ADMIN_EXTERNAL_ACCESS:-0}   # D49: com 1 o bloqueio por tentativas vale por IP e por usuario
@@ -187,6 +188,7 @@ services:
     environment:
       DB_PATH: /data/livestats.db
       LIVE_INTERVAL: ${LIVE_INTERVAL:-10}   # segundos entre leituras de cada live, em paralelo (5 a 15; D42)
+      HISTORY_RETENTION_DAYS: ${HISTORY_RETENTION_DAYS:-14}   # D59: dias que uma sessao encerrada fica no historico (1 a 90)
       KICK_BROWSER: ${KICK_BROWSER:-1}      # 1 = fallback com Chromium so para o Kick se o Cloudflare bloquear o httpx (D39)
       HOME: /home/app
     # Sem secrets: o worker-lives le paginas publicas (D39). Egress: so HTTPS para youtube.com,

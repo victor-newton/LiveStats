@@ -121,7 +121,7 @@ Depois do login, siga o tutorial abaixo: crie o primeiro conjunto, adicione as l
 Em dez minutos você tem uma live no ar dentro do OBS. Os nomes em **negrito** são botões e abas do painel.
 
 1. **Crie um conjunto.** Aba **Conjuntos › Novo conjunto**. Dê um nome (por exemplo "Maratona de Sábado"), uma meta de likes (opcional) e escolha a fonte e a cor do texto dos overlays. Clique em **Salvar**.
-2. **Adicione as lives.** Abra o conjunto e clique em **Adicionar live**. Cole o link da transmissão: YouTube (vídeo, `/live` ou `@canal/live`), Twitch (`twitch.tv/canal`) ou Kick (`kick.com/canal`). A plataforma é reconhecida sozinha. Se a live ainda não começou, ela fica "agendada" ou "offline" e passa a "ao vivo" sozinha.
+2. **Adicione as lives.** Abra o conjunto e clique em **Adicionar live**. Cole o link da transmissão: YouTube (vídeo, ou canal como `youtube.com/@canal`, que acompanha sempre a live ativa do canal), Twitch (`twitch.tv/canal`) ou Kick (`kick.com/canal`). A plataforma é reconhecida sozinha. Se a live ainda não começou, ela fica "agendada" ou "offline" e passa a "ao vivo" sozinha.
 3. **Confira os números.** Em alguns segundos o conjunto mostra espectadores agora, likes contra a meta, o gráfico e a rosca de participação.
 4. **Copie o link do overlay.** Clique numa live (ou use os links do rodapé do conjunto, que somam todas) e use **Copiar** em *Overlay de likes / meta* ou *Overlay de espectadores*. Ajuste cor, fonte e meta na própria live e veja a **prévia**.
 5. **Coloque no OBS.** Em **Fontes › + › Navegador**, cole o link, use a largura e a altura do seu layout e marque *Atualizar navegador quando a cena ficar ativa*. O fundo é transparente. Detalhes em [Usar no OBS e no vMix](#usar-no-obs-e-no-vmix).
@@ -161,7 +161,7 @@ Um **conjunto** reúne lives de qualquer plataforma que você quer mostrar junta
 
 ![Adicionar live](docs/imagens/adicionar-live.png)
 
-Para adicionar uma live, cole o link do YouTube (vídeo, `/live` ou `@canal/live`), da Twitch (`twitch.tv/canal`) ou do Kick (`kick.com/canal`); a plataforma aparece sozinha. O nome no painel é opcional. Se a transmissão ainda não começou, a live fica como "agendada" ou "offline" e passa a "ao vivo" sozinha.
+Para adicionar uma live, cole o link do YouTube (vídeo, ou canal como `youtube.com/@canal`, que acompanha sempre a live ativa do canal), da Twitch (`twitch.tv/canal`) ou do Kick (`kick.com/canal`); a plataforma aparece sozinha. O nome no painel é opcional. Se a transmissão ainda não começou, a live fica como "agendada" ou "offline" e passa a "ao vivo" sozinha.
 
 ### Links, cores e prévia de cada live
 
@@ -178,6 +178,8 @@ Ao lado ficam as **configurações**: nome no painel, meta de likes, **cor da li
 Os links usam o endereço informado em `--public-base-url`. Sem ele, o painel mostra o endereço pelo qual você abriu a página.
 
 ### Chat do conjunto
+
+No YouTube, a live pode ser cadastrada pelo link do canal (`@canal` ou `/channel/UC...`): o chat acompanha a live que estiver ativa e troca sozinho quando começar outra.
 
 ![Chat do conjunto](docs/imagens/chat-conjunto.png)
 
@@ -209,6 +211,10 @@ A aba **Contador** controla o contador de inscritos do canal do YouTube:
 - os **links do contador** (overlay `/contador`, JSON de inscritos e JSON com a aparência) ficam no fim da tela, com **Copiar**.
 
 ![Conectando ao Studio](docs/imagens/contador-conectando.png)
+
+### Histórico e exportar PNG
+
+O gráfico do conjunto guarda a live inteira: 12 horas de live, 12 horas para ver (faixa **Toda a live**). Nas últimas 24 h o histórico tem todos os pontos; depois vira um ponto por minuto, e sessões encerradas ficam por `HISTORY_RETENTION_DAYS` dias (padrão 14, no `.env`). Quando todas as lives estão fora do ar (depois de 10 min de folga) o gráfico para de contar e fica parado, com o aviso "parado desde HH:MM". O botão **Exportar PNG**, ao lado do seletor, baixa um período específico (De/Até, ou "Sessão inteira" e "Última hora") numa imagem 1600x800 no mesmo estilo do gráfico.
 
 ### Saúde
 
@@ -289,6 +295,8 @@ Estes endereços **não pedem login**, podem ser usados direto no OBS, no vMix o
 | `/overlay/live.html?live={id}&metrica=views` | Overlay de espectadores de uma live |
 | `/overlay/live.html?conjunto={id}&metrica=likes` | Overlay de likes e meta do conjunto |
 | `/overlay/live.html?conjunto={id}&metrica=views` | Overlay de espectadores do conjunto |
+| `.../overlay/live.html?...&metrica=views&icone=1` | O mesmo de espectadores, com o ícone da plataforma ao lado do número (no conjunto, os ícones das plataformas ao vivo) |
+| `/overlay/live.html?conjunto={id}&metrica=views&plataforma=youtube` | Espectadores só de uma plataforma (`youtube`, `twitch` ou `kick`); aceita `&icone=1`. No painel, o botão **Icone** liga isso no endereço copiado |
 | `/overlay/chat.html?conjunto={id}` | Overlay do chat unificado do conjunto (opcional: `&tema=cartoon`, `adesivo`, `pixel`, `postit`, `chiclete`, `classico`, `balao`, `vidro`, `minimal`, `terminal` ou `rodape`) |
 | `/api/public/chat/{id}` | Aparência do chat do conjunto (tema, tamanho, ícone, cor do nome); as mensagens não ficam em endereço nenhum |
 | `/inscritos.json` | Inscritos do canal do mestre (formato fixo, simples de usar) |

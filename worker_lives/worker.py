@@ -101,6 +101,8 @@ class Worker:
         self._last_status: db.StatusRow | None = None
         self._last_heartbeat = 0.0
         self._schema_seen = False
+        self._ao_vivo_em: dict[int, int] = {}  # D59: conjunto -> última leitura com live ao vivo (só em memória)
+        self._primeira_limpeza = True
         self._metas: dict[int, db.LiveRow] = {}  # lives do passo atual (id -> linha), para nomes e conjuntos
         self._saude: dict[int, list[int]] = {}  # minuto -> [leituras, soma_ms, max_ms, ok, erros] (D43)
         self._ultima_limpeza = 0.0
@@ -288,10 +290,21 @@ class Worker:
         self._tocados.add(minuto)
         codigo_erro = res.erro.code if res.erro else None
         for live_id in live_ids:
-            if res.erro is None:
+            if res.erro is None and self._sessao_ativa(conn, live_id, at):
                 db.write_sample(conn, live_id, at, row.viewers, row.likes)
             db.write_read(conn, live_id, at, int(res.proxima), res.latency_ms, codigo_erro)
             self._evento_de_mudanca(conn, live_id, row, anteriores.get(live_id), at)
+
+    def _sessao_ativa(self, conn: sqlite3.Connection, live_id: int, at: int) -> bool:
+        """D59: só grava amostra enquanto o conjunto tem live ao vivo (ou até 10 min depois da última); com tudo off o gráfico para."""
+        meta = self._metas.get(live_id)
+        if meta is None:
+            return False
+        if db.set_has_live(conn, meta.set_id):
+            self._ao_vivo_em[meta.set_id] = at
+            return True
+        visto = self._ao_vivo_em.get(meta.set_id)
+        return visto is not None and at - visto <= db.GRACE_SECONDS
 
     def _evento_de_mudanca(
         self, conn: sqlite3.Connection, live_id: int, row: db.Reading, antes: tuple[str, str | None] | None, at: int
@@ -316,10 +329,13 @@ class Worker:
             db.write_health(conn, minuto, round(soma / max(1, leituras)), maximo, ok, erros)
 
     def _limpar(self, conn: sqlite3.Connection, agora: float) -> None:
-        """Uma vez por minuto: amostras > 7200 s, saúde > 2 h e picos > 30 dias."""
+        """Uma vez por minuto: compacta > 24 h, apaga sessões além da retenção, saúde > 2 h e picos > 30 dias."""
         if agora - self._ultima_limpeza < 60:
             return
-        db.cleanup(conn, int(agora), day_sp(agora - db.PEAKS_KEEP_DAYS * 86400))
+        db.cleanup(
+            conn, int(agora), day_sp(agora - db.PEAKS_KEEP_DAYS * 86400), self.config.retention_days, full=self._primeira_limpeza
+        )
+        self._primeira_limpeza = False
         self._ultima_limpeza = agora
 
     # ------------------------------------------------------------------ status

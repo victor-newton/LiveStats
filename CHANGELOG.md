@@ -2,6 +2,22 @@
 
 Todas as mudanças relevantes do LiveStats ficam neste arquivo. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [3.2.0] - 2026-11-11
+
+### Adicionado
+
+- **YouTube por canal ou por vídeo**: o link do canal (`youtube.com/@canal` ou `/channel/UC…`, com ou sem `/live`) acompanha sempre a live que estiver ao vivo no canal; o link do vídeo lê aquela live exata. O pop-up Adicionar live mostra qual modo será usado.
+- Overlay de espectadores com ícone da plataforma (`&icone=1`) e, no conjunto, soma de uma plataforma só (`&plataforma=youtube`, `twitch` ou `kick`).
+- Botão **Icone** ao lado do Copiar nos links de espectadores, e uma linha de espectadores por plataforma em **Links do conjunto**.
+- Chat do YouTube agora funciona também com link de canal (`@canal` ou `/channel/UC...`): acompanha a live ativa.
+
+- **Histórico da live inteira**: as estatísticas ficam guardadas pelo tempo todo da live (12 h de live, 12 h no gráfico). Nova faixa "Toda a live" no gráfico do conjunto. Resolução completa nas últimas 24 h e um ponto por minuto depois disso; sessões encerradas ficam por `HISTORY_RETENTION_DAYS` dias (padrão 14).
+- **Exportar PNG**: botão ao lado do seletor do gráfico para baixar um período específico (1600x800, no mesmo estilo do gráfico).
+
+### Alterado
+
+- Com todas as lives off (depois de 10 min de folga) o LiveStats para de gravar pontos e o gráfico fica parado, com o aviso "parado desde HH:MM".
+
 ## [3.1.0] - 2026-11-11
 
 ### Adicionado

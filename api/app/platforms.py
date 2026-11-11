@@ -87,8 +87,13 @@ def _youtube(seg: list[str], query: str) -> str | None:
         return values[0] if len(values) == 1 and _VIDEO_ID.fullmatch(values[0]) else None
     if len(seg) == 2 and seg[0] in ("live", "shorts"):
         return seg[1] if _VIDEO_ID.fullmatch(seg[1]) else None
+    # Link de canal (com ou sem /live): o leitor sempre abre o /live do canal, que acompanha a live ativa.
+    if len(seg) == 1 and _HANDLE.fullmatch(seg[0]):
+        return seg[0]
     if len(seg) == 2 and seg[1] == "live" and _HANDLE.fullmatch(seg[0]):
         return seg[0]
+    if len(seg) == 2 and seg[0] == "channel" and _CHANNEL_ID.fullmatch(seg[1]):
+        return seg[1]
     if len(seg) == 3 and seg[0] == "channel" and seg[2] == "live" and _CHANNEL_ID.fullmatch(seg[1]):
         return seg[1]
     return None

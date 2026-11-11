@@ -72,6 +72,12 @@ def record_event(conn: sqlite3.Connection, now: float, level: str, code: str, me
 RANGES = {5: 10, 30: 30, 60: 60, 120: 60}  # range_min -> step_s
 STALE_S = 45  # uma live sem amostra nova continua somando por ate 45 s (uma leitura perdida nao abre um buraco)
 CHANGE_WINDOW_S = 15 * 60
+# D59: sessao inteira. O worker grava enquanto houver live ao vivo (+10 min de folga) e para; a api so descobre a sessao pelas lacunas.
+SESSION_GAP_S = 180  # lacuna maior entre amostras separa duas sessoes (igual ao worker-lives)
+STOP_AFTER_S = 120  # sem live ao vivo e sem amostra nova ha mais que isso: o grafico esta parado
+MAX_POINTS = 800  # pontos por resposta de sessao/periodo (reamostrado por balde, com maximo e minimo)
+COMPACT_AFTER_S = 86400  # depois de 24 h o worker guarda 1 amostra por minuto: a tolerancia de "amostra velha" sobe
+COMPACT_STALE_S = 150
 
 
 def day_of(epoch: float) -> str:
@@ -99,22 +105,132 @@ def _total_at(samples: dict[int, list[tuple[int, int | None, int | None]]], t: i
     return total if seen else None
 
 
-def set_history(conn: sqlite3.Connection, set_id: int, range_min: int, now: float) -> dict[str, Any]:
-    step = RANGES[range_min]
+def _session_start(conn: sqlite3.Connection, live_ids: list[int]) -> int | None:
+    """Primeira amostra da sessao mais recente (depois da ultima lacuna > ``SESSION_GAP_S``); None sem amostras."""
+    marks = ",".join("?" * len(live_ids))
+    row = conn.execute(  # noqa: S608 (so "?" montados)
+        f"SELECT MIN(at), MAX(gap_at) FROM (SELECT at, CASE WHEN at - LAG(at) OVER (ORDER BY at) > ? THEN at END AS gap_at"
+        f" FROM (SELECT DISTINCT at FROM live_samples WHERE live_id IN ({marks})))",
+        (SESSION_GAP_S, *live_ids),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return int(row[1]) if row[1] is not None else int(row[0])
+
+
+def _bucket_step(start: int, end: int) -> int:
+    """Tamanho do balde (s) para caber em ``MAX_POINTS`` pontos, contando a amostra que cai exatamente em ``end``."""
+    return max(1, -(-(max(0, end - start) + 1) // MAX_POINTS))
+
+
+def _period_points(
+    conn: sqlite3.Connection, live_ids: list[int], start: int, end: int, now: int
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Pontos de ``start`` a ``end`` em baldes (<= ``MAX_POINTS``): maximo e minimo de espectadores e maximo de likes por balde."""
+    if not live_ids or end < start:
+        return [], None
+    marks = ",".join("?" * len(live_ids))
+    rows = conn.execute(  # noqa: S608 (so "?" montados)
+        f"SELECT live_id, at, viewers, likes FROM live_samples WHERE live_id IN ({marks}) AND at >= ? AND at <= ? ORDER BY at, live_id",
+        (*live_ids, start - COMPACT_STALE_S, end),
+    ).fetchall()
+    step = _bucket_step(start, end)
+    state: dict[int, tuple[int, int | None, int | None]] = {}
+    buckets: dict[int, list[Any]] = {}
+    stamps: set[int] = set()
+    peak_v, peak_at = -1, start
+    for live_id, at, v, lk in rows:
+        state[live_id] = (at, v, lk)
+        if at < start:
+            continue
+        stale = STALE_S if at >= now - COMPACT_AFTER_S else COMPACT_STALE_S
+        total, likes, has_likes = 0, 0, False
+        for a, vv, ll in state.values():
+            if at - a <= stale:
+                total += vv or 0
+                if ll is not None:
+                    likes += ll
+                    has_likes = True
+        stamps.add(at)
+        if total > peak_v:
+            peak_v, peak_at = total, at
+        slot = buckets.setdefault((at - start) // step, [total, total, likes if has_likes else None])
+        slot[0], slot[1] = max(slot[0], total), min(slot[1], total)
+        if has_likes:
+            slot[2] = likes if slot[2] is None else max(slot[2], likes)
+    points = [
+        {"at": start + k * step, "viewers": b[0], "viewers_min": b[1], "likes": b[2]} for k, b in sorted(buckets.items())
+    ]
+    if not stamps:
+        return [], None
+    summary = {"samples": len(stamps), "duration_s": max(stamps) - min(stamps), "peak_viewers": peak_v, "peak_at": peak_at}
+    return points, summary
+
+
+def set_history(
+    conn: sqlite3.Connection,
+    set_id: int,
+    range_min: int | None,
+    now: float,
+    *,
+    whole: bool = False,
+    t_from: int | None = None,
+    t_to: int | None = None,
+    retention_days: int = 14,
+) -> dict[str, Any]:
+    """Historico do conjunto: janela fixa (``range_min``), sessao inteira (``whole``) ou periodo (``t_from``/``t_to``).
+
+    D59: com tudo off o worker para de gravar; a janela deixa de seguir "agora" e termina na ultima amostra (``stopped_since``)."""
     now_i = int(now)
-    last_bucket = now_i - now_i % step
+    live_ids = [r[0] for r in conn.execute("SELECT id FROM lives WHERE set_id = ?", (set_id,))]
+    last_at: int | None = None
+    live_now = False
+    if live_ids:
+        marks = ",".join("?" * len(live_ids))
+        last_row = conn.execute(f"SELECT MAX(at) FROM live_samples WHERE live_id IN ({marks})", live_ids).fetchone()  # noqa: S608
+        last_at = int(last_row[0]) if last_row and last_row[0] is not None else None
+        live_now = conn.execute(
+            f"SELECT 1 FROM live_stats WHERE status = 'ao_vivo' AND live_id IN ({marks}) LIMIT 1", live_ids  # noqa: S608
+        ).fetchone() is not None
+    stopped = last_at is not None and not live_now and now_i - last_at > STOP_AFTER_S
+    stopped_since = last_at if stopped else None
+    peak_row = conn.execute(
+        "SELECT viewers, at FROM set_peaks WHERE set_id = ? AND day = ?", (set_id, day_of(now_i))
+    ).fetchone()
+    peak_today = {"viewers": peak_row[0], "at": peak_row[1]} if peak_row else None
+    common = {"stopped_since": stopped_since, "retention_days": retention_days, "peak_today": peak_today}
+
+    if whole or t_from is not None:
+        if whole:
+            start = _session_start(conn, live_ids) if live_ids else None
+            end = last_at
+            mode = "session"
+        else:
+            start, end = t_from, t_to
+            mode = "period"
+        if start is None or end is None:
+            return {"range_min": None, "mode": mode, "step_s": 1, "points": [], "from": None, "to": None, "summary": None,
+                    "change_15m_pct": None, **common}
+        points, summary = _period_points(conn, live_ids, start, end, now_i)
+        step = _bucket_step(start, end)
+        return {"range_min": None, "mode": mode, "step_s": step, "points": points, "from": start, "to": end, "summary": summary,
+                "change_15m_pct": None, **common}
+
+    assert range_min is not None
+    step = RANGES[range_min]
+    anchor = last_at if stopped_since is not None and last_at is not None else now_i
+    last_bucket = anchor - anchor % step
     count = range_min * 60 // step
     first_bucket = last_bucket - (count - 1) * step
-    live_ids = [r[0] for r in conn.execute("SELECT id FROM lives WHERE set_id = ?", (set_id,))]
 
     samples: dict[int, list[tuple[int, int | None, int | None]]] = {live_id: [] for live_id in live_ids}
-    since = min(first_bucket, now_i - CHANGE_WINDOW_S - STALE_S) - STALE_S
+    since = min(first_bucket, anchor - CHANGE_WINDOW_S - STALE_S) - STALE_S
     if live_ids:
         marks = ",".join("?" * len(live_ids))
         for row in conn.execute(  # noqa: S608 (so "?" montados)
             f"SELECT live_id, at, viewers, likes FROM live_samples WHERE live_id IN ({marks}) AND at >= ? AND at <= ? "
             "ORDER BY live_id, at",
-            (*live_ids, since, now_i),
+            (*live_ids, since, anchor),
         ):
             samples[row[0]].append((row[1], row[2], row[3]))
 
@@ -148,17 +264,18 @@ def set_history(conn: sqlite3.Connection, set_id: int, range_min: int, now: floa
             previous = {**previous, "at": start}
             points.append(previous)
 
-    peak_row = conn.execute(
-        "SELECT viewers, at FROM set_peaks WHERE set_id = ? AND day = ?", (set_id, day_of(now_i))
-    ).fetchone()
-    current, before = _total_at(samples, now_i), _total_at(samples, now_i - CHANGE_WINDOW_S)
-    change = round((current - before) / before * 100, 1) if current is not None and before else None
+    current, before = _total_at(samples, anchor), _total_at(samples, anchor - CHANGE_WINDOW_S)
+    change = round((current - before) / before * 100, 1) if current is not None and before and not stopped else None
     return {
         "range_min": range_min,
+        "mode": "range",
         "step_s": step,
         "points": points,
-        "peak_today": {"viewers": peak_row[0], "at": peak_row[1]} if peak_row else None,
+        "from": first_bucket if points else None,
+        "to": last_bucket if points else None,
+        "summary": None,
         "change_15m_pct": change,
+        **common,
     }
 
 

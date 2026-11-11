@@ -192,6 +192,33 @@ function detect() {
   );
   nameIn.placeholder = `Automático: ${r.replace(/^@/, '')} · ${PLATFORM_NAME[plat]}`;
   box.dataset.platform = PLATFORM_CLASS[plat];
+  if (plat === 'youtube') youtubeMode(box, u);
+}
+
+/** Opção de modo (só informativa: o modo vem do tipo do link, o painel não consulta o YouTube). */
+function modeOption(selected, title, text) {
+  return h('div', { class: `mode-opt${selected ? ' sel' : ' off'}`, role: 'radio', 'aria-checked': String(selected), 'aria-disabled': selected ? null : 'true' },
+    h('span', { class: 'mode-dot' }), h('div', null, h('b', { text: title }), h('span', { text })));
+}
+
+/**
+ * YouTube: mostra como a live será acompanhada. Link de vídeo = essa live exata; link de canal
+ * (@canal ou /channel/UC...) = sempre a live ativa do canal.
+ * @param {HTMLElement} box @param {string} u
+ */
+function youtubeMode(box, u) {
+  const video = /[?&]v=[\w-]{11}|youtu\.be\/[\w-]{11}|\/(live|shorts)\/[\w-]{11}/.test(u);
+  const channel = !video && /youtube\.com\/(@[\w.-]+|channel\/UC[\w-]{22})/.test(u);
+  if (!video && !channel) return;
+  const opts = video
+    ? [modeOption(true, 'Esta live exata', 'Lê só este vídeo. Quando ela acabar, a live fica "encerrada" no painel.'),
+      modeOption(false, 'Sempre a live ativa do canal', 'Disponível ao colar o link do canal.')]
+    : [modeOption(true, 'Sempre a live ativa do canal', 'Acompanha a live que estiver ao vivo no canal. Quando uma nova começar, entra sozinha, sem trocar o link.'),
+      modeOption(false, 'Uma live específica', 'Disponível ao colar o link do vídeo (youtube.com/watch?v=…).')];
+  box.append(h('div', { class: 'mode' },
+    h('div', { class: 'mode-t', text: 'Como vai acompanhar' }),
+    h('div', { class: 'mode-list', role: 'radiogroup', 'aria-label': 'Como acompanhar' }, ...opts),
+    h('div', { class: 'mode-tip', text: video ? 'Quer que acompanhe o canal inteiro? Cole o link do canal, como youtube.com/@canal.' : 'Quer só uma transmissão? Cole o link do vídeo dela.' })));
 }
 
 /** @param {any} set */

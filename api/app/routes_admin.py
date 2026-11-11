@@ -312,27 +312,60 @@ def get_set(
         return _one_set(conn, ctx, set_id)
 
 
-def _range_param(value: str | None) -> int:
-    if value is None or value not in {str(r) for r in history.RANGES}:  # comparação exata: "030" ou "5.0" não valem
-        raise ValidationFailed([{"loc": ["query", "range"], "msg": "Use 5, 30, 60 ou 120", "type": "enum"}])
+_RANGE_MSG = "Use 5, 30, 60, 120 ou sessao"
+_EPOCH_MAX = 4_102_444_800  # 2100-01-01
+
+
+def _epoch_param(value: str | None, name: str) -> int | None:
+    if value is None:
+        return None
+    if not (value.isascii() and value.isdigit()) or len(value) > 11 or int(value) > _EPOCH_MAX or (len(value) > 1 and value[0] == "0"):
+        raise ValidationFailed([{"loc": ["query", name], "msg": f"Use {name} como epoch em segundos (só dígitos)", "type": "int_parsing"}])
     return int(value)
+
+
+def _history_params(
+    value: str | None, t_from: str | None, t_to: str | None, retention_days: int
+) -> tuple[int | None, bool, int | None, int | None]:
+    """D59: ``range`` (5/30/60/120/sessao) OU ``from``+``to`` (epoch). Devolve (range_min, toda a live, from, to)."""
+    start, end = _epoch_param(t_from, "from"), _epoch_param(t_to, "to")
+    if start is not None or end is not None:
+        if value is not None:
+            raise ValidationFailed([{"loc": ["query", "range"], "msg": "Use range ou from/to, não os dois", "type": "value_error"}])
+        if start is None or end is None:
+            raise ValidationFailed([{"loc": ["query", "from" if start is None else "to"], "msg": "Informe from e to juntos", "type": "missing"}])
+        if end <= start:
+            raise ValidationFailed([{"loc": ["query", "to"], "msg": "O fim precisa ser depois do início", "type": "value_error"}])
+        if end - start > retention_days * 86400:
+            raise ValidationFailed([{"loc": ["query", "to"], "msg": f"O período máximo é de {retention_days} dias (retenção do histórico)", "type": "value_error"}])
+        return None, False, start, end
+    if value == "sessao":
+        return None, True, None, None
+    if value is None or value not in {str(r) for r in history.RANGES}:  # comparação exata: "030" ou "5.0" não valem
+        raise ValidationFailed([{"loc": ["query", "range"], "msg": _RANGE_MSG, "type": "enum"}])
+    return int(value), False, None, None
 
 
 @router.get("/sets/{set_id}/history")
 def get_set_history(
     set_id: int = Path(ge=1, le=_ID_MAX),
     range: str | None = Query(default=None, max_length=8),  # noqa: A002 (nome do parametro na URL)
+    from_: str | None = Query(default=None, alias="from", max_length=12),
+    to: str | None = Query(default=None, max_length=12),
     ctx: Ctx = Depends(require_session),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
-    range_min = _range_param(range)
+    retention = state.settings.history_retention_days
+    range_min, whole, t_from, t_to = _history_params(range, from_, to, retention)
     owner = _scope(ctx)
     with db.connection(db.open_shared, state.settings.db_path) as conn:
         if conn.execute(
             "SELECT 1 FROM sets WHERE id = ? AND (? IS NULL OR owner_id = ?)", (set_id, owner, owner)
         ).fetchone() is None:
             raise HTTPException(status_code=404, detail="Conjunto não encontrado")
-        return history.set_history(conn, set_id, range_min, state.clock.now())
+        return history.set_history(
+            conn, set_id, range_min, state.clock.now(), whole=whole, t_from=t_from, t_to=t_to, retention_days=retention
+        )
 
 
 @router.get("/subscribers/history")

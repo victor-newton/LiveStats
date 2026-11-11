@@ -142,7 +142,7 @@
       <div class="field">
         <label for="addUrl">Link da live</label>
         <input id="addUrl" type="text" inputmode="url" maxlength="2048" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://youtube.com/watch?v=…, twitch.tv/canal ou kick.com/canal">
-        <span class="hint">YouTube (vídeo, /live ou @canal/live), Twitch ou Kick. A plataforma aparece sozinha.</span>
+        <span class="hint">YouTube (vídeo ou canal, como youtube.com/@canal), Twitch ou Kick. A plataforma aparece sozinha.</span>
       </div>
       <div class="detect" id="detect" aria-live="polite"></div>
       <div class="field"><label for="addName">Nome no painel (opcional)</label><input id="addName" type="text" maxlength="60" autocomplete="off"><span class="hint">Vazio = nome automático. Pode trocar depois.</span></div>
@@ -151,6 +151,23 @@
     <div class="dlg-f">
       <button type="button" class="btn" data-close>Cancelar</button>
       <button type="submit" class="btn btn-primary" id="addSave">Adicionar live</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgExport" aria-labelledby="dlgExportT">
+  <form id="exportForm" novalidate>
+    <div class="dlg-h"><h3 id="dlgExportT">Exportar gráfico em PNG</h3><button type="button" class="btn btn-ghost btn-icon" data-close aria-label="Fechar">✕</button></div>
+    <div class="dlg-b">
+      <div class="field"><label for="expFrom">De</label><input id="expFrom" type="datetime-local" step="60"></div>
+      <div class="field"><label for="expTo">Até</label><input id="expTo" type="datetime-local" step="60"></div>
+      <div class="card-tools"><button type="button" class="btn" id="expSession">Sessão inteira</button><button type="button" class="btn" id="expHour">Última hora</button></div>
+      <p class="hint" id="expSummary" aria-live="polite"></p>
+      <p class="msg err" id="expErr" role="alert" hidden></p>
+    </div>
+    <div class="dlg-f">
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button type="submit" class="btn btn-primary" id="expSave" disabled>Baixar PNG</button>
     </div>
   </form>
 </dialog>

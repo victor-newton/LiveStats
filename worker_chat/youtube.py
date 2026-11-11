@@ -9,18 +9,24 @@ HTML: depois de trocar o seletor do chat de "Principais mensagens" para "Chat ao
     apaga as do autor (`clear` com o id do canal dele).
 Historico: tudo que a pagina ja trazia (respostas das consultas feitas ate a troca do seletor e a primeira resposta valida
 depois dela, que devolve as ultimas ~80 mensagens do "Chat ao vivo") e DESCARTADO; so o que chega depois e entregue. Aba presa (90 s sem nenhuma resposta) e reaberta.
+Ref de CANAL (`@handle` ou `UC...`, que acompanha a live ativa do canal; D58): o id do video e resolvido por
+`GET <base>/<ref>/live` (httpx, mesmo cookie), lendo `ytInitialPlayerResponse.videoDetails.videoId` com `isLive` verdadeiro;
+cache de 60 s por canal; a cada passo da aba o canal e reresolvido e, se o id mudou (live nova), a aba antiga fecha e a nova
+abre; sem live ativa o canal simplesmente nao conecta (sem erro). Ref de video continua como antes.
 O cookie de consentimento fixo (D39) evita a pagina de consentimento. Imagens/midia/fontes sao bloqueadas no contexto.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from urllib.parse import quote, urlsplit
 
+import httpx
 from playwright.async_api import BrowserContext, Page, Request, Response
 
 from worker_chat.backoff import STABLE_SECONDS, Backoff
@@ -44,6 +50,10 @@ log = logging.getLogger("worker_chat.youtube")
 PLATFORM = "youtube"
 CODE = PLATFORM_CODES[PLATFORM]
 VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
+CHANNEL_RE = re.compile(r"@[A-Za-z0-9._-]{3,30}|UC[A-Za-z0-9_-]{22}")
+RESOLVE_TTL = 60.0  # D58: cache do video ao vivo de cada canal
+RESOLVE_TIMEOUT = 15.0
+RESOLVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 GET_LIVE_CHAT = "youtubei/v1/live_chat/get_live_chat"
 # Cookie de consentimento fixo (o mesmo de `worker_lives/leitores.py`): evita a pagina de consentimento (D39).
 CONSENT_COOKIES = {"SOCS": "CAI", "CONSENT": "YES+cb"}
@@ -151,6 +161,23 @@ def normalize_text_message(renderer: object) -> ChatMessage | None:
     )
 
 
+def live_video_id(html: str) -> str | None:
+    """Id do video ao vivo na pagina `/live` de um canal: `ytInitialPlayerResponse.videoDetails` com `isLive` verdadeiro."""
+    marker = html.find("ytInitialPlayerResponse")
+    start = html.find("{", marker) if marker >= 0 else -1
+    if start < 0:
+        return None
+    try:
+        player, _ = json.JSONDecoder().raw_decode(html, start)
+    except ValueError:
+        return None
+    details = _dict(_dict(player).get("videoDetails"))
+    video_id = details.get("videoId")
+    if details.get("isLive") is True and isinstance(video_id, str) and VIDEO_ID_RE.fullmatch(video_id):
+        return video_id
+    return None
+
+
 @dataclass(frozen=True)
 class Posted:
     msg: ChatMessage
@@ -249,6 +276,7 @@ class YoutubeConnector:
         self._invalid = 0
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._tabs: dict[str, _Tab] = {}
+        self._resolved: dict[str, tuple[float, str | None]] = {}  # canal -> (valido ate, id do video ao vivo ou None)
         self._failing: dict[str, str] = {}  # ref -> codigo do ultimo erro da aba
         self._last_error: str | None = None
         self._context: BrowserContext | None = None
@@ -257,7 +285,7 @@ class YoutubeConnector:
 
     # ------------------------------------------------------------------------------------- interface
     def want(self, refs: frozenset[str]) -> None:
-        valid = frozenset(r for r in refs if VIDEO_ID_RE.fullmatch(r))
+        valid = frozenset(r for r in refs if VIDEO_ID_RE.fullmatch(r) or CHANNEL_RE.fullmatch(r))
         self._invalid = len(refs) - len(valid)
         if valid != self._wanted:
             self._wanted = valid
@@ -316,6 +344,31 @@ class YoutubeConnector:
             except BrowserError as exc:
                 log.warning("YouTube: falha ao fechar o contexto (%s)", type(exc).__name__)
 
+    # ------------------------------------------------------------------------------ canal -> video
+    async def _resolve(self, ref: str) -> str | None:
+        """Id do video a abrir para `ref`: o proprio id (video) ou a live ativa do canal (cache de 60 s); `None` = sem live."""
+        if VIDEO_ID_RE.fullmatch(ref):
+            return ref
+        now = self._clock.monotonic()
+        cached = self._resolved.get(ref)
+        if cached is not None and now < cached[0]:
+            return cached[1]
+        path = f"/channel/{ref}/live" if ref.startswith("UC") else f"/{quote(ref, safe='@')}/live"
+        headers = {"User-Agent": RESOLVE_UA, "Cookie": "; ".join(f"{k}={v}" for k, v in CONSENT_COOKIES.items())}
+        try:
+            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=RESOLVE_TIMEOUT) as http:
+                resp = await http.get(f"{self._base}{path}")
+        except httpx.HTTPError as exc:
+            raise TabFailed("network_error") from exc
+        if resp.status_code == 404:
+            video_id = None  # canal inexistente: tratado como sem live
+        elif resp.status_code != 200:
+            raise TabFailed("http_error")
+        else:
+            video_id = live_video_id(resp.text)
+        self._resolved[ref] = (now + RESOLVE_TTL, video_id)
+        return video_id
+
     # -------------------------------------------------------------------------------------- aba
     async def _tab_loop(self, ref: str) -> None:
         """Mantem a aba da live: reabre se ela cair ou ficar presa; falha de abertura = backoff (dobra ate 2 min)."""
@@ -341,7 +394,12 @@ class YoutubeConnector:
                 await self._clock.sleep(backoff.next())
 
     async def _tab_session(self, ref: str) -> None:
-        """Uma abertura da aba. Volta (sem erro) quando ela fica presa; qualquer outra saida e excecao."""
+        """Uma abertura da aba. Volta (sem erro) quando ela fica presa, a live do canal mudou ou o canal nao tem live; qualquer
+        outra saida e excecao."""
+        video = await self._resolve(ref)
+        if video is None:
+            await self._clock.sleep(WATCH_STEP)  # canal sem live ativa: nao conecta, tenta de novo quando o cache expirar
+            return
         context = await self._get_context()
         try:
             page = await context.new_page()
@@ -354,7 +412,7 @@ class YoutubeConnector:
             page.on("request", lambda request: self._on_request(tab, request))
             page.on("response", lambda response: tab.spawn(self._on_response(tab, response)))
             page.on("crash", lambda *_: setattr(tab, "crashed", True))
-            await page.goto(f"{self._base}/live_chat?v={quote(ref, safe='')}", wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            await page.goto(f"{self._base}/live_chat?v={quote(video, safe='')}", wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
             host = urlsplit(page.url).hostname or ""
             if host.startswith("consent.") or "/sorry/" in page.url:
                 raise TabFailed("blocked")  # pagina de consentimento ou verificacao no lugar do chat
@@ -363,6 +421,14 @@ class YoutubeConnector:
                 await self._clock.sleep(WATCH_STEP)
                 if tab.crashed or page.is_closed():
                     raise TabFailed("network_error")
+                if not VIDEO_ID_RE.fullmatch(ref):
+                    try:
+                        current = await self._resolve(ref)
+                    except TabFailed:
+                        current = video  # falha momentanea ao consultar o canal: mantem a aba
+                    if current != video:
+                        log.info("YouTube: a live do canal mudou; aba trocada")
+                        return
                 if self._clock.monotonic() - tab.last_response >= STUCK_AFTER:
                     log.warning("YouTube: aba sem resposta ha %d s; reaberta [network_error]", int(STUCK_AFTER))
                     return

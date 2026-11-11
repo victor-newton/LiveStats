@@ -25,6 +25,7 @@ import {
   fmt, fmtDec, hhmm, reduced, safeColor, setText, toEpoch, PLATFORM_NAME, PLATFORM_CLASS,
 } from './util.js';
 import { openAddLive, openConfigSet } from './dialogs.js';
+import { openExportPng } from './exportpng.js';
 import { initChat, renderChat, resetChat } from './chat.js';
 
 const ERROR_TEXTS = {
@@ -36,7 +37,7 @@ const ERROR_TEXTS = {
   rate_limited: 'limite de requisições',
   invalid_response: 'resposta inválida',
 };
-const RANGES = [[5, 'Últimos 5 min'], [30, 'Últimos 30 min'], [60, 'Última hora'], [120, 'Últimas 2 horas']];
+const RANGES = [[5, 'Últimos 5 min'], [30, 'Últimos 30 min'], [60, 'Última hora'], [120, 'Últimas 2 horas'], ['sessao', 'Toda a live']];
 const STATE_TEXT = /** @type {Record<string, string>} */ ({
   ao_vivo: 'ao vivo', encerrada: 'encerrada', agendada: 'agendada', offline: 'offline', erro: 'erro',
 });
@@ -113,6 +114,9 @@ export function initConjunto() {
     id: 'range', label: 'Período do gráfico', className: 'select', value: String(state.range), options: RANGES.map(([v, t]) => ({ value: String(v), text: String(t) })),
   }).el;
   R.tChart = h('span', { class: 'trend', hidden: true });
+  R.stopped = h('span', { class: 'stopped-tag', id: 'chartStopped', hidden: true });
+  R.exportBtn = h('button', { class: 'btn', type: 'button', id: 'btnExport', text: 'Exportar PNG' });
+  R.exportBtn.addEventListener('click', () => { const set = setById(state.route.setId); if (set) void openExportPng(set); });
   R.lineTip = infoTip('Soma das lives do conjunto.', { label: 'Sobre o gráfico' });
   R.lineSub = h('span', { id: 'lineSub', class: 'sr-only', text: 'Soma das lives do conjunto.' });
   R.svg = /** @type {SVGElement} */ (document.createElementNS('http://www.w3.org/2000/svg', 'svg'));
@@ -132,8 +136,8 @@ export function initConjunto() {
         h('div', { class: 'legend' },
           h('span', null, h('i', { class: 'lg views' }), 'Espectadores'),
           h('span', null, h('i', { class: 'lg likes' }), 'Likes')),
-        R.range)),
-    h('div', { class: 'chart-sub' }, R.lineTip, R.lineSub, R.tChart),
+        R.range, R.exportBtn)),
+    h('div', { class: 'chart-sub' }, R.lineTip, R.lineSub, R.tChart, R.stopped),
     h('div', { class: 'chart-box' }, R.svg, R.tip));
 
   // cartão alto: rosca
@@ -223,8 +227,9 @@ export async function fetchExtra() {
 }
 
 async function changeRange() {
-  const v = Number(/** @type {HTMLButtonElement} */ (R.range).value);
-  if (![5, 30, 60, 120].includes(v)) return;
+  const raw = /** @type {HTMLButtonElement} */ (R.range).value;
+  const v = raw === 'sessao' ? 'sessao' : Number(raw);
+  if (![5, 30, 60, 120, 'sessao'].includes(v)) return;
   state.range = v;
   pendingAnimate = true;
   if (!reduced()) R.svg.classList.add('out');
@@ -244,17 +249,23 @@ function renderChart(first) {
   const data = hs && hs.range === state.range ? hs.data : null;
   const pts = data ? data.points : [];
   const last = pts.length ? pts[pts.length - 1] : null;
-  const key = `${set ? set.id : 0}|${state.range}|${pts.length}|${last ? `${last.at}:${last.viewers}:${last.likes}` : ''}`;
+  const key = `${set ? set.id : 0}|${state.range}|${data ? data.stopped_since : ''}|${pts.length}|${last ? `${last.at}:${last.viewers}:${last.likes}` : ''}`;
   if (key === chartKey && !first && !pendingAnimate) return;
   const animate = first || pendingAnimate;
   pendingAnimate = false;
   chartKey = key;
   /** @type {HTMLButtonElement} */ (R.range).value = String(state.range);
   const step = data && typeof data.step_s === 'number' ? data.step_s : 60;
-  const stepText = `Soma das lives do conjunto, um ponto a cada ${STEP_TEXT[/** @type {10 | 30 | 60} */ (step)] || `${step} s`}.`;
+  const whole = data && data.mode === 'session';
+  const stepText = whole
+    ? `Soma das lives do conjunto, a sessão inteira (cada ponto guarda o pico de ${step} s).`
+    : `Soma das lives do conjunto, um ponto a cada ${STEP_TEXT[/** @type {10 | 30 | 60} */ (step)] || `${step} s`}.`;
   setTxt(R.lineSub, stepText);
   setInfoTip(R.lineTip, stepText);
   setTrend(R.tChart, data ? data.change_15m_pct : null);
+  const since = data && typeof data.stopped_since === 'number' ? data.stopped_since : null;
+  R.stopped.hidden = since === null;
+  setTxt(R.stopped, since === null ? '' : `parado desde ${hhmm(since)}`);
   const vs = pts.map((/** @type {any} */ p) => (typeof p.viewers === 'number' ? p.viewers : 0));
   setTxt(R.kAvg, vs.length ? fmt(vs.reduce((a, b) => a + b, 0) / vs.length) : '—');
   setTxt(R.kMax, vs.length ? fmt(Math.max(...vs)) : '—');
@@ -303,7 +314,7 @@ function buildLive(live, set) {
   // ---- detalhe: links + configurações
   const base = state.publicBase;
   const linksBox = h('div', { class: 'detail-box links-box' }, h('h4', { text: `Links desta live (#${id})` }));
-  for (const ep of liveEndpoints(id)) linksBox.appendChild(linkItem(ep.label, `${base}${ep.path}`));
+  for (const ep of liveEndpoints(id)) linksBox.appendChild(linkItem(ep.label, `${base}${ep.path}`, 'link-item', ep.icone === true));
   const urlIn = /** @type {HTMLInputElement} */ (h('input', { id: `lv${id}-url`, type: 'text', inputmode: 'url', maxlength: 2048, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' }));
   const nameIn = /** @type {HTMLInputElement} */ (h('input', { id: `lv${id}-name`, type: 'text', maxlength: 60, autocomplete: 'off' }));
   const goalIn = /** @type {HTMLInputElement} */ (h('input', { id: `lv${id}-goal`, type: 'text', inputmode: 'numeric', autocomplete: 'off', class: 'num' }));
@@ -519,10 +530,11 @@ export function render(first) {
   R.empty.hidden = lives.length > 0;
 
   // links do conjunto
-  const lk = `${set.id}|${state.publicBase}`;
+  const plataformas = [...new Set(lives.map((l) => l.platform))];
+  const lk = `${set.id}|${state.publicBase}|${[...plataformas].sort().join(',')}`;
   if (lk !== linksKey) {
     linksKey = lk;
-    R.links.replaceChildren(...setEndpoints(set.id).map((ep) => linkItem(ep.label, `${state.publicBase}${ep.path}`, 'link-card')));
+    R.links.replaceChildren(...setEndpoints(set.id, plataformas).map((ep) => linkItem(ep.label, `${state.publicBase}${ep.path}`, 'link-card', ep.icone === true)));
   }
 
   renderChat(set);

@@ -231,6 +231,12 @@ function emptyChart(svg, text, w, hgt) {
   svg.replaceChildren(s('text', { x: w / 2, y: hgt / 2, 'text-anchor': 'middle', class: 'chart-empty', text }));
 }
 
+/** @param {number} epoch */
+function dayHm(epoch) {
+  const d = new Date(epoch * 1000);
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${hhmm(epoch)}`;
+}
+
 /**
  * Gráfico de linha suave: espectadores (eixo esquerdo) e likes (eixo direito).
  * @param {SVGElement} svg
@@ -282,10 +288,11 @@ export function lineChart(svg, points, opts) {
     if (hasLikes) svg.appendChild(s('text', { x: W - R + 8, y: yy + 4, 'text-anchor': 'start', class: 'ax-likes', text: fmt((lMax * k) / 4) }));
   }
   const withSec = opts.stepS < 60;
+  const longSpan = points[n - 1].at - points[0].at > 20 * 3600;  // D59: sessão de mais de 20 h mostra o dia
   for (let k = 0; k <= 5; k++) {
     const i = Math.round((k / 5) * (n - 1));
     svg.appendChild(s('text', {
-      x: x(i), y: H - 8, 'text-anchor': k === 0 ? 'start' : k === 5 ? 'end' : 'middle', text: hhmm(points[i].at, withSec),
+      x: x(i), y: H - 8, 'text-anchor': k === 0 ? 'start' : k === 5 ? 'end' : 'middle', text: longSpan ? dayHm(points[i].at) : hhmm(points[i].at, withSec),
     }));
   }
   const pv = pathOf(v, x, yv);

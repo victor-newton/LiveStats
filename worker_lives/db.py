@@ -25,7 +25,9 @@ WRITE_TABLES = frozenset({"live_stats", "worker_status"}) | _V6_TABLES
 
 _READ_COLUMNS = {"sets": frozenset({"id"})}  # tabelas legíveis só em certas colunas (a FK de set_peaks)
 
-SAMPLES_KEEP_SECONDS = 7200  # D43: amostras com mais de 2 h saem
+GRACE_SECONDS = 600  # D59: folga de 10 min sem nenhuma live do conjunto ao vivo, ainda gravada na mesma sessão
+SESSION_GAP_SECONDS = 180  # D59: lacuna maior que isso entre amostras separa duas sessões
+FULL_RESOLUTION_SECONDS = 86400  # D59: até 24 h as amostras ficam como foram lidas; depois, 1 por minuto por live
 HEALTH_KEEP_SECONDS = 7200
 PEAKS_KEEP_DAYS = 30
 EVENTS_KEEP = 500
@@ -179,9 +181,66 @@ def update_peaks(conn: sqlite3.Connection, day: str, at: int) -> None:
     )
 
 
-def cleanup(conn: sqlite3.Connection, now: int, oldest_peak_day: str) -> None:
-    """D43, uma vez por minuto: amostras > 7200 s, saúde > 2 h e picos > 30 dias."""
-    conn.execute("DELETE FROM live_samples WHERE at < ?", (now - SAMPLES_KEEP_SECONDS,))
+def set_has_live(conn: sqlite3.Connection, set_id: int) -> bool:
+    """D59: há alguma live do conjunto `ao_vivo` agora (já com a leitura em andamento gravada)?"""
+    return conn.execute(
+        "SELECT 1 FROM lives l JOIN live_stats s ON s.live_id = l.id WHERE l.set_id = ? AND s.status = 'ao_vivo' LIMIT 1",
+        (set_id,),
+    ).fetchone() is not None
+
+
+def session_start(conn: sqlite3.Connection, set_id: int) -> int:
+    """D59: início da sessão mais recente do conjunto (primeira amostra depois da última lacuna > 3 min); 0 se não há lacuna."""
+    row = conn.execute(
+        "SELECT MAX(at) FROM (SELECT at, at - LAG(at) OVER (ORDER BY at) AS gap FROM"
+        " (SELECT DISTINCT at FROM live_samples WHERE live_id IN (SELECT id FROM lives WHERE set_id = ?))) WHERE gap > ?",
+        (set_id, SESSION_GAP_SECONDS),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def _prune_sessions(conn: sqlite3.Connection, now: int, retention_days: int) -> None:
+    """D59: apaga amostras mais velhas que a retenção, exceto as da sessão ativa (a que ainda recebe amostras)."""
+    cut = now - retention_days * 86400
+    ativos = [
+        int(r[0]) for r in conn.execute(
+            "SELECT l.set_id FROM lives l JOIN live_samples s ON s.live_id = l.id GROUP BY l.set_id HAVING MAX(s.at) >= ?",
+            (now - SESSION_GAP_SECONDS,),
+        )
+    ]
+    marks = ",".join("?" * len(ativos))
+    conn.execute(  # noqa: S608 (so "?" montados)
+        f"DELETE FROM live_samples WHERE at < ? AND live_id NOT IN (SELECT id FROM lives WHERE set_id IN ({marks}))",
+        (cut, *ativos),
+    )
+    for set_id in ativos:  # na sessão ativa só o que veio de sessões anteriores à ativa pode sair
+        antigas = conn.execute(
+            "SELECT 1 FROM live_samples WHERE at < ? AND live_id IN (SELECT id FROM lives WHERE set_id = ?) LIMIT 1", (cut, set_id)
+        ).fetchone()
+        if antigas is None:
+            continue
+        limite = min(cut, session_start(conn, set_id))
+        conn.execute(
+            "DELETE FROM live_samples WHERE at < ? AND live_id IN (SELECT id FROM lives WHERE set_id = ?)", (limite, set_id)
+        )
+
+
+def _compact(conn: sqlite3.Connection, now: int, full: bool) -> None:
+    """D59: amostras com mais de 24 h ficam com a primeira de cada minuto por live (a janela repetida a cada minuto é curta)."""
+    cut = now - FULL_RESOLUTION_SECONDS
+    low = 0 if full else cut - 3 * 3600
+    conn.execute(
+        "DELETE FROM live_samples WHERE at < :cut AND at >= :low AND at > ("
+        " SELECT MIN(s2.at) FROM live_samples s2 WHERE s2.live_id = live_samples.live_id"
+        " AND s2.at >= live_samples.at - live_samples.at % 60 AND s2.at < live_samples.at - live_samples.at % 60 + 60)",
+        {"cut": cut, "low": low},
+    )
+
+
+def cleanup(conn: sqlite3.Connection, now: int, oldest_peak_day: str, retention_days: int = 14, full: bool = False) -> None:
+    """D43/D59, uma vez por minuto: compacta amostras > 24 h, apaga sessões encerradas além da retenção, saúde > 2 h e picos > 30 dias."""
+    _compact(conn, now, full)
+    _prune_sessions(conn, now, retention_days)
     conn.execute("DELETE FROM health_minutes WHERE worker = 'lives' AND minute < ?", (now - HEALTH_KEEP_SECONDS,))
     conn.execute("DELETE FROM set_peaks WHERE day < ?", (oldest_peak_day,))
 

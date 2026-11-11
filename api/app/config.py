@@ -47,6 +47,7 @@ class Settings:
     user_counter_interval: int = 60
     live_interval: int = 10
     public_admin_url: str | None = None
+    history_retention_days: int = 14  # D59
 
     def __repr__(self) -> str:  # nunca imprimir segredos
         return "Settings(...)"
@@ -185,4 +186,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         user_counter_interval=_load_int(env, "USER_COUNTER_INTERVAL", 60, 30, 3600),
         live_interval=_load_int(env, "LIVE_INTERVAL", 10, 1, 3600),
         public_admin_url=_load_url(env, "PUBLIC_ADMIN_URL"),
+        history_retention_days=_load_int(env, "HISTORY_RETENTION_DAYS", 14, 1, 90),
     )

@@ -41,17 +41,33 @@ export function clearToast() {
  * @param {string} label
  * @param {string} url
  * @param {string} [cls] classe do contêiner
+ * @param {boolean} [comIcone] acrescenta o interruptor "Icone" à esquerda do Copiar: ligado, o endereço
+ *   mostrado e o copiado ganham `&icone=1` (estado só em memória, padrão desligado; D58)
  * @returns {HTMLElement}
  */
-export function linkItem(label, url, cls = 'link-item') {
+export function linkItem(label, url, cls = 'link-item', comIcone = false) {
   const code = h('code', { class: 'ep-url', text: url });
+  const atual = () => (sw !== null && sw.getAttribute('aria-checked') === 'true' ? `${url}&icone=1` : url);
+  /** @type {HTMLElement | null} */
+  let sw = null;
+  /** @type {HTMLElement | null} */
+  let grupoIcone = null;
+  if (comIcone) {
+    sw = h('button', { type: 'button', class: 'chat-switch', role: 'switch', 'aria-checked': 'false', 'aria-label': `Icone de ${label}` });
+    const botao = sw;
+    botao.addEventListener('click', () => {
+      botao.setAttribute('aria-checked', String(botao.getAttribute('aria-checked') !== 'true'));
+      code.textContent = atual();
+    });
+    grupoIcone = h('span', { class: 'ep-icone' }, h('span', { class: 'ep-icone-rotulo', text: 'Icone' }), botao);
+  }
   const btn = h('button', { type: 'button', class: 'btn copy ep-copy', 'aria-label': `Copiar ${label}`, text: 'Copiar' });
   /** @type {number | null} */
   let timer = null;
   btn.addEventListener('click', async () => {
     let msg = 'Copiado';
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(atual());
     } catch (e) {
       const sel = window.getSelection();
       if (sel) sel.selectAllChildren(code);
@@ -62,7 +78,9 @@ export function linkItem(label, url, cls = 'link-item') {
     if (timer !== null) clearTimeout(timer);
     timer = window.setTimeout(() => { btn.textContent = 'Copiar'; btn.classList.remove('done'); }, COPIED_MS);
   });
-  return h('div', { class: `${cls} ep` }, h('span', { class: 'link-text' }, h('b', { class: 'ep-label', text: label }), code), btn);
+  const texto = h('span', { class: 'link-text' }, h('b', { class: 'ep-label', text: label }), code);
+  if (grupoIcone === null) return h('div', { class: `${cls} ep` }, texto, btn);
+  return h('div', { class: `${cls} ep ep-com-icone` }, texto, grupoIcone, btn);
 }
 
 export { collapse } from './collapse.js';
