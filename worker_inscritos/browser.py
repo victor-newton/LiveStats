@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -24,6 +25,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from .config import extrair_channel_id
 from .cookies import filtrar_sessao, normalizar_cookies
+from .vigia import Vigia, matar_chromium
 
 log = logging.getLogger("worker_inscritos.browser")
 
@@ -155,6 +157,16 @@ class Timings:
     nav_timeout: float = 60.0  # teto de cada navegacao
 
 
+class StudioPresoError(PlaywrightError):
+    """D60: a chamada ao Chromium estourou o prazo duro e o navegador foi morto pelo vigia (sem dados sensiveis)."""
+
+    def __init__(self) -> None:
+        super().__init__("prazo duro da carga estourado")
+
+
+DEFAULT_HARD_TIMEOUT = 120.0
+
+
 def is_login_url(url: str) -> bool:
     """Mesma regra do original: login perdido se a URL contem accounts.google.com ou signin."""
     return "accounts.google.com" in url or "signin" in url.lower()
@@ -169,7 +181,11 @@ class BrowserSession:
         timings: Timings | None = None,
         stop: threading.Event | None = None,
         debug_dir: str | None = None,
+        hard_timeout: float = DEFAULT_HARD_TIMEOUT,
+        killer: Callable[[], int] = matar_chromium,
     ):
+        self.hard_timeout = hard_timeout  # D60: prazo total de cada carga/leitura (STUDIO_HARD_TIMEOUT)
+        self._killer = killer
         self.www_base_url = www_base_url
         self.studio_home_url = studio_home_url
         self.studio_url_for = studio_url_for
@@ -184,6 +200,22 @@ class BrowserSession:
         self.page: Page | None = None
         self._crashed = False
         self.context_renewed = False  # True quando o contexto foi recriado (cookies perdidos)
+
+    @contextmanager
+    def _prazo(self) -> Iterator[None]:
+        """D60: vigia da chamada. Vencido o prazo, o Chromium e morto e a chamada bloqueada levanta `StudioPresoError`."""
+        vigia = Vigia(self.hard_timeout, self._killer)
+        vigia.iniciar()
+        try:
+            yield
+        except PlaywrightError as exc:
+            if vigia.estourou and not isinstance(exc, StudioPresoError):
+                raise StudioPresoError() from exc
+            raise
+        finally:
+            vigia.cancelar()
+        if vigia.estourou:  # terminou junto com o prazo, mas o navegador ja foi morto: estado nao confiavel
+            raise StudioPresoError()
 
     # ------------------------------------------------------------------ ciclo de vida
     def start(self) -> None:
@@ -248,6 +280,10 @@ class BrowserSession:
     # ------------------------------------------------------------------ carga
     def load_page(self, cookies: list[dict[str, Any]]) -> None:
         """Fluxo do original: youtube.com, espera, apaga cookies, insere, abre o Studio, espera carregar."""
+        with self._prazo():
+            self._load_page(cookies)
+
+    def _load_page(self, cookies: list[dict[str, Any]]) -> None:
         self._ensure_ready()
         assert self.page is not None and self.context is not None
         t = self.timings
@@ -266,11 +302,12 @@ class BrowserSession:
 
         False se o contexto foi recriado (navegador caiu): ele esta vazio e o chamador deve reinjetar os cookies.
         """
-        self._ensure_ready()
-        if self.context_renewed:
-            return False
-        self._open_studio()
-        return True
+        with self._prazo():
+            self._ensure_ready()
+            if self.context_renewed:
+                return False
+            self._open_studio()
+            return True
 
     def _open_studio(self) -> None:
         assert self.page is not None
@@ -376,7 +413,8 @@ class BrowserSession:
         contador nao existe e a pagina mostra o erro "voce nao tem permissao" do Studio (pt-BR ou ingles).
         """
         assert self.page is not None
-        url, bruto, sem_permissao = self.page.evaluate(_JS_LER_PAGINA)
+        with self._prazo():
+            url, bruto, sem_permissao = self.page.evaluate(_JS_LER_PAGINA)
         return str(url), (str(bruto) if bruto else None), bool(sem_permissao) and not bruto
 
     def read_counter(self) -> str | None:

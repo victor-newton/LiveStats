@@ -27,6 +27,9 @@ DEFAULT_SCRAPE_INTERVAL = 10
 DEFAULT_RELOAD_INTERVAL = 60  # D47
 MIN_RELOAD_INTERVAL = 15
 MAX_RELOAD_INTERVAL = 3600
+DEFAULT_STUDIO_HARD_TIMEOUT = 120  # D60: prazo total (s) de cada carga do Studio; vencido, o Chromium e reiniciado
+MIN_STUDIO_HARD_TIMEOUT = 30
+MAX_STUDIO_HARD_TIMEOUT = 600
 DEFAULT_USER_POOL_SIZE = 1  # D51: paginas do pool dos contadores de usuario (0 desliga)
 MAX_USER_POOL_SIZE = 8
 DEFAULT_USER_COUNTER_INTERVAL = 60  # D51: segundos entre leituras de cada contador de usuario
@@ -56,6 +59,7 @@ class Config:
     www_base_url: str
     studio_base_url: str
     reload_interval: int = DEFAULT_RELOAD_INTERVAL  # D47: 0 desliga; segundos entre reaberturas do Studio
+    studio_hard_timeout: int = DEFAULT_STUDIO_HARD_TIMEOUT  # D60
     user_pool_size: int = DEFAULT_USER_POOL_SIZE  # D51: 0 desliga os contadores de usuario
     user_counter_interval: int = DEFAULT_USER_COUNTER_INTERVAL
     max_user_counters: int = DEFAULT_MAX_USER_COUNTERS
@@ -177,6 +181,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         public_key_file=pub_file,
         scrape_interval=_ler_intervalo(env),
         reload_interval=_ler_recarga(env),
+        studio_hard_timeout=_ler_inteiro(
+            env, "STUDIO_HARD_TIMEOUT", DEFAULT_STUDIO_HARD_TIMEOUT, MIN_STUDIO_HARD_TIMEOUT, MAX_STUDIO_HARD_TIMEOUT
+        ),
         user_pool_size=_ler_inteiro(env, "USER_POOL_SIZE", DEFAULT_USER_POOL_SIZE, 1, MAX_USER_POOL_SIZE, permite_zero=True),
         user_counter_interval=_ler_inteiro(
             env, "USER_COUNTER_INTERVAL", DEFAULT_USER_COUNTER_INTERVAL, MIN_USER_COUNTER_INTERVAL, MAX_USER_COUNTER_INTERVAL

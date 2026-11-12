@@ -23,7 +23,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from . import __version__, memoria
-from .browser import BrowserSession, Timings, is_login_url
+from .browser import BrowserSession, StudioPresoError, Timings, is_login_url
 from .config import Config
 from .cookies import (
     CookieDecryptError,
@@ -35,6 +35,7 @@ from .cookies import (
 )
 from .numero import filtrar_numero, valor_aceito, valor_inteiro
 from .saude import Saude
+from .vigia import MSG_PRESO
 from .store import CounterStatusRow, StatusRow, Store, connect, iso_utc
 
 log = logging.getLogger("worker_inscritos")
@@ -55,6 +56,7 @@ MSG_NO_ACCESS = "A conta dos cookies nao tem acesso a este canal"
 MSG_COUNTER = "Contador nao encontrado na pagina"
 MSG_INVALID = "Valor invalido lido na pagina"
 MSG_BROWSER = "Erro no navegador"
+MAX_FALHAS_HONESTAS = 3  # D60: a partir daqui o painel diz que o Studio nao respondeu
 MSG_NETWORK = "Falha de rede ao abrir o YouTube"
 MSG_DB = "Erro ao acessar o banco de dados"
 MSG_EV_LOGIN = "Login perdido no YouTube Studio: atualize os cookies"
@@ -106,6 +108,8 @@ class Worker:
         self.consecutive_failures = 0  # idem, mas so zera no sucesso (vai ao worker_status)
         self.last_value: str | None = None
         self.last_success_at: int | None = None
+        self._preso = False  # D60: a ultima carga estourou o prazo duro e o navegador foi reiniciado
+        self._visto_id: int | None = None  # D60: ultimo cookie_sets.id visto (id novo zera as falhas)
         self.last_open_at: float | None = None  # D47: ultima abertura do Studio (carga ou reabertura)
 
         self._saude: dict[int, list[int]] = {}  # D43: minuto -> [leituras, soma_ms, max_ms, ok, erros]
@@ -122,13 +126,28 @@ class Worker:
             last_success_at=self.last_success_at,
             consecutive_failures=self.consecutive_failures,
             interval_seconds=self.config.scrape_interval,
-            last_error_code="config_error" if self.error_code == CODE_NO_ACCESS else self.error_code,
-            last_error_message=self.error_message,
+            last_error_code="config_error" if self.error_code == CODE_NO_ACCESS else self._erro_visivel()[0],
+            last_error_message=self._erro_visivel()[1],
             auth_state=self.auth_state,
             cookies_applied_id=self.applied_id,
             version=__version__,
             mem_bytes=memoria.container_memory_bytes(),
         )
+
+    def _erro_visivel(self) -> tuple[str | None, str | None]:
+        """D60: carga presa ou 3+ falhas seguidas de rede/navegador viram 'O Studio nao respondeu' (codigo ja permitido)."""
+        if self.error_code in ("network_error", "browser_error") and (
+            self._preso or self.consecutive_failures >= MAX_FALHAS_HONESTAS
+        ):
+            return "network_error", MSG_PRESO
+        return self.error_code, self.error_message
+
+    def _falha_navegador(self, exc: PlaywrightError) -> tuple[str, str]:
+        if isinstance(exc, StudioPresoError):
+            self._preso = True
+            self.studio_stale = True  # reabre ja no proximo ciclo (o navegador foi recriado, os cookies vem do banco)
+            return "network_error", MSG_PRESO
+        return ("network_error", MSG_NETWORK) if _is_network_error(exc) else ("browser_error", MSG_BROWSER)
 
     def _counter_row(self) -> CounterStatusRow:
         agora = self.clock()
@@ -141,8 +160,8 @@ class Worker:
             last_attempt_at=int(agora),
             next_read_at=int(agora) + self.config.scrape_interval,
             consecutive_failures=self.consecutive_failures,
-            last_error_code=self.error_code,
-            last_error_message=self.error_message,
+            last_error_code=self._erro_visivel()[0],
+            last_error_message=self._erro_visivel()[1],
             cookies_applied_id=self.applied_id,
             loads_last_hour=len(self._cargas),
         )
@@ -223,9 +242,7 @@ class Worker:
             self.session.load_page(cookies)
         except PlaywrightError as exc:
             self.applied_id = None  # tenta de novo no proximo ciclo
-            code, msg = (
-                ("network_error", MSG_NETWORK) if _is_network_error(exc) else ("browser_error", MSG_BROWSER)
-            )
+            code, msg = self._falha_navegador(exc)
             log.error("[AUTH] erro ao carregar a pagina (%s)", type(exc).__name__)
             self.consecutive_failures += 1
             self._set("degraded", code, msg)
@@ -239,6 +256,7 @@ class Worker:
         self.last_renewal_at = _epoch(row.created_at) if row.source == "worker" else None
         self.studio_stale = False
         self.falhas = 0
+        self._preso = False
         return True
 
     def _decrypt_failed(self, set_id: int) -> None:
@@ -284,7 +302,7 @@ class Worker:
         except PlaywrightError as exc:
             log.error("[AUTH] erro ao recarregar a pagina (%s)", type(exc).__name__)
             self.consecutive_failures += 1
-            self._set("degraded", *(("network_error", MSG_NETWORK) if _is_network_error(exc) else ("browser_error", MSG_BROWSER)))
+            self._set("degraded", *self._falha_navegador(exc))
             self.publish()
             return
         log.warning("[BROWSER] contexto recriado - reinjetando os cookies do banco")
@@ -340,6 +358,12 @@ class Worker:
         if set_id == self.failed_id:
             self.publish()  # mesmo conjunto que ja falhou: o estado de erro segue valendo
             return
+        if set_id != self._visto_id:
+            # D60: conjunto novo no banco nao espera as falhas/cargas do anterior: aplica ja, com contagem e backoff zerados.
+            if self._visto_id is not None:
+                self.consecutive_failures = self.falhas = 0
+                self._preso = False
+            self._visto_id = set_id
         if set_id != self.applied_id:
             log.info("[COOKIES] conjunto novo - recarregando pagina...")
             if not self._apply_cookie_set(set_id):
@@ -373,7 +397,7 @@ class Worker:
         except PlaywrightError as exc:
             log.warning("[!] Erro ao ler a pagina (%s)", type(exc).__name__)
             self._saude_leitura(inicio, ok=False)
-            self._read_failure("browser_error", MSG_BROWSER)
+            self._read_failure(*self._falha_navegador(exc))
             return
 
         # A URL vem da mesma pagina de onde o texto foi lido: nada lido numa pagina de login e gravado.
@@ -419,6 +443,7 @@ class Worker:
         self.last_success_at = int(agora)
         self.consecutive_failures = 0
         self.falhas = 0
+        self._preso = False
         self._set("ok", None, None, "ok")
         try:
             with self.store.transaction():
@@ -473,7 +498,7 @@ class Worker:
         if novo_id is None:
             log.info("[COOKIES] renovacao descartada: ha um conjunto mais novo")
             return
-        self.applied_id = novo_id
+        self.applied_id = self._visto_id = novo_id
         self.applied_hash = novo_hash
         self.last_renewal_at = agora
         log.info("[COOKIES] sessao renovada: %d cookies", len(atuais))
@@ -528,5 +553,6 @@ def criar_worker(
         timings or Timings(),
         stop=stop,
         debug_dir=config.debug_dir if config.debug_screenshot else None,
+        hard_timeout=config.studio_hard_timeout,
     )
     return Worker(config, private_key, public_key, store, session, clock=clock, stop=stop, saude=saude)

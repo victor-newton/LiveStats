@@ -54,6 +54,7 @@ from .cookies import (
 from .numero import filtrar_numero, valor_aceito, valor_inteiro
 from .saude import Saude
 from .store import CounterStatusRow, Store, connect, iso_utc
+from .vigia import MSG_PRESO, matar_chromium
 from .worker import (
     MAX_COOKIES,
     MSG_BROWSER,
@@ -300,6 +301,12 @@ class UserPool:
             iniciadas.append(tarefa)
         return iniciadas
 
+    def _matar_navegador(self) -> None:
+        try:
+            matar_chromium()
+        except Exception as exc:  # noqa: BLE001
+            log.error("[BROWSER] nao foi possivel encerrar o navegador (%s)", type(exc).__name__)
+
     def _marcar(
         self, cid: int, st: _Estado, state: str, message: str, auth_state: str | None, code: str | None, agora: float
     ) -> None:
@@ -347,7 +354,11 @@ class UserPool:
                 comeco = self.clock()
                 st.last_attempt_at = int(comeco)
                 try:
-                    await self._ler_e_gravar(cid, st, comeco, inicio)
+                    await asyncio.wait_for(self._ler_e_gravar(cid, st, comeco, inicio), self.config.studio_hard_timeout)
+                except asyncio.TimeoutError:  # D60: carga presa; o Chromium e morto e relancado na proxima leitura
+                    log.error("[BROWSER] carga presa; navegador reiniciado")
+                    self._matar_navegador()
+                    self._falha(cid, st, comeco, inicio, "network_error", MSG_PRESO, "degraded")
                 except sqlite3.Error as exc:
                     log.error("[POOL] erro de banco na leitura (%s)", type(exc).__name__)
                     self._falha(cid, st, comeco, inicio, "db_error", MSG_DB, "degraded")
@@ -402,8 +413,8 @@ class UserPool:
                 self.pages_open -= 1
         finally:
             try:
-                await contexto.close()
-            except PlaywrightError as exc:
+                await asyncio.wait_for(contexto.close(), 15)  # D60: fechar um contexto morto nao pode prender a leitura
+            except (PlaywrightError, asyncio.TimeoutError) as exc:
                 log.debug("[POOL] erro ao fechar o contexto (%s)", type(exc).__name__)
             self.contexts_closed += 1
 
@@ -570,6 +581,8 @@ class UserPool:
     ) -> None:
         """Falha de UM contador: backoff proprio (dobra ate 10 min); evento so na mudanca de auth_state."""
         st.failures += 1
+        if code in ("network_error", "browser_error") and st.failures >= 3:
+            code, message = "network_error", MSG_PRESO  # D60: estado honesto no painel
         mudou_auth = auth in ("login_required", "decrypt_failed") and st.auth_state != auth
         if auth is not None:
             st.auth_state = auth

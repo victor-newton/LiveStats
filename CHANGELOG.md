@@ -2,6 +2,12 @@
 
 Todas as mudanças relevantes do LiveStats ficam neste arquivo. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto usa [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [3.2.1] - 2026-11-12
+
+### Corrigido
+
+- Contador de inscritos que ficava em "Conectando" quando o Studio travava: cada carga tem prazo de 120 s (`STUDIO_HARD_TIMEOUT`); vencido, o navegador é reiniciado, cookies novos são aplicados na hora e o painel avisa que o Studio não respondeu.
+
 ## [3.2.0] - 2026-11-11
 
 ### Adicionado

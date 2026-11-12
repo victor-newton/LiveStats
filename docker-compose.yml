@@ -227,6 +227,7 @@ services:
       COOKIE_PUBLIC_KEY_FILE: /run/secrets/cookie_public_key   # D37: so cifra a sessao renovada
       SCRAPE_INTERVAL: ${SCRAPE_INTERVAL:-10}
       STUDIO_RELOAD_INTERVAL: ${STUDIO_RELOAD_INTERVAL:-60}   # D47: reabre o Studio a cada N s (0 desliga) e le quedas
+      STUDIO_HARD_TIMEOUT: ${STUDIO_HARD_TIMEOUT:-120}        # D60: prazo duro (30 a 600 s) de cada carga do Studio; vencido, reinicia o Chromium
       USER_POOL_SIZE: ${USER_POOL_SIZE:-1}                    # D51: paginas do pool dos contadores de usuario (0 desliga)
       USER_COUNTER_INTERVAL: ${USER_COUNTER_INTERVAL:-60}     # D51: segundos entre leituras de cada contador de usuario (30 a 3600)
       MAX_USER_COUNTERS: ${MAX_USER_COUNTERS:-20}             # D51: contadores de usuario ativos ao mesmo tempo
